@@ -1,152 +1,124 @@
 # persona-orchestrate — architecture
 
-*Typed workspace coordination for agents working in the Persona ecosystem.*
+*Persona orchestration machinery: role claims, activity, lane/run
+coordination, and the daemon boundary that replaces the transitional
+workspace lock helper.*
 
-`persona-orchestrate` models the workspace coordination protocol as Rust state:
-roles, claims, role-visible lock projections, and handoff tasks. It is the
-typed successor to `~/primary/tools/orchestrate`.
+> Status: the repo and ordinary contract exist. The library owns a
+> sema-backed claim/activity store today. The long-lived daemon and
+> thin CLI are still scaffolded; `~/primary/tools/orchestrate` remains
+> the live workspace helper until the daemon is wired.
 
 ---
 
 ## 0 · TL;DR
 
-This repo coordinates agents and workspace scopes. It is not the Persona
-runtime router, harness delivery engine, or main database owner.
+`persona-orchestrate` is the component that owns orchestration
+machinery. `persona-mind` owns mind state: work graph, thoughts,
+relations, memories, and policy truth. Orchestrate owns role claims,
+activity, lane/run coordination, scope movement, and the execution
+machinery that will sit between mind, router, and harness.
+
+The current implemented slice is the ordinary
+`signal-persona-orchestrate` request/reply surface plus a Rust library
+that persists claims and activity in `persona-orchestrate.redb` through
+`sema-engine`. The shell-era lock files are compatibility projections;
+they are not the durable source of truth.
 
 ```mermaid
 flowchart LR
-    "agent" -->|"claim command"| "OrchestrationState"
-    "OrchestrationState" -->|"lock projection"| "role lock files"
-    "OrchestrationState" -->|"handoff task"| "task projection"
-    "OrchestrationState" -->|"orchestrate-owned state"| "persona-sema"
+    cli["persona-orchestrate CLI (thin)"]
+    daemon["persona-orchestrate daemon"]
+    store["persona-orchestrate.redb"]
+    contract["signal-persona-orchestrate"]
+
+    cli -->|"one Signal peer"| daemon
+    daemon -->|"OrchestrateRequest / OrchestrateReply"| contract
+    daemon -->|"sema-engine"| store
 ```
 
 ## 1 · Component Surface
 
-`persona-orchestrate` exposes:
+This repo contains:
 
-- a **library crate** (`persona-orchestrate`) that consumes
-  the `signal-persona-orchestrate` contract, opens
-  `orchestrate.redb` through `persona-sema`, and dispatches
-  typed requests to handlers;
-- a **binary crate** (`orchestrate`) — the CLI agents
-  invoke per call; takes one Nota record on argv (per
-  `lojix-cli`'s discipline), prints one Nota record on
-  stdout;
-- typed `sema::Table<K, V>` constants for the runtime
-  state (`CLAIMS`, `ACTIVITIES`, `META`);
-- claim/release/handoff handlers with overlap detection;
-- the activity log: `ActivitySubmission` writers,
-  `ActivityQuery` readers;
-- lock-file projection writers (regenerate `<role>.lock`
-  files on every claim/release/handoff for backward
-  compatibility);
-- the `RoleObservation` snapshot builder.
+- a library crate, `persona_orchestrate`, that consumes
+  `signal-persona-orchestrate` and dispatches typed
+  `OrchestrateRequest` values;
+- sema-backed `claims`, `activities`, and `activity_next_slot`
+  tables;
+- claim, release, handoff, role-observation, activity-submission,
+  and activity-query handlers;
+- a scaffold `persona-orchestrate-daemon` binary.
 
-Channel: `signal-persona-orchestrate` (request/reply,
-six request kinds + eight reply kinds; see that crate's
-`ARCHITECTURE.md`).
+The full triad shape is daemon + thin CLI + `signal-*` contract. The
+contract crate is in `signal-persona-orchestrate`. This repo owns the
+runtime and state side of that boundary.
 
-The contract repo lands first; this component implements
-against it. Per
-`~/primary/reports/designer/93-persona-orchestrate-rust-rewrite-and-activity-log.md`,
-designer creates the contract, operator/assistant fills
-the handlers.
+## 2 · State And Ownership
 
-## 2 · State and Ownership
+`persona-orchestrate` owns:
 
-This component owns workspace coordination state — roles, claims, handoff
-tasks, lock projections. The state lives in this component's **own redb
-file** (e.g. `orchestrate.redb`), opened through `persona-sema` (which uses
-the workspace's `sema` database library underneath). Lock files on disk are
-projections of the typed records, regenerated from the database on commit.
+- active role claims;
+- claim handoff state;
+- activity records and store-stamped activity slots;
+- eventual lane registry, run lifecycle, scheduling, and supervision
+  state.
 
-While primary still uses plain lock files (`tools/orchestrate`), this repo
-models the typed replacement. BEADS remains a transitional shared task
-substrate and is never modeled as an exclusive lock.
+It does not own:
 
-Per `~/primary/reports/designer/92-sema-as-database-library-architecture-revamp.md`:
-sema is a library; this component owns its own sema-managed database, the
-same way every other state-bearing component does (criome, persona-router,
-persona-harness, future mentci).
+- mind graph, memories, thoughts, relations, or decisions;
+- router delivery queues and channel state;
+- harness/terminal process execution;
+- BEADS internals.
 
-## 3 · Boundaries
+Durable state lives in this component's own redb file, opened through
+`sema-engine`. No other component opens that database directly.
 
-This repo owns:
-
-- agent role and claim state;
-- claim/release command surfaces;
-- workspace handoff tasks;
-- projections compatible with the current orchestration protocol.
-
-This repo does not own:
-
-- runtime Persona delivery (`persona-router`);
-- harness lifecycle (`persona-harness`);
-- typed table mechanics (`persona-sema` for table layouts; `sema`
-  for the kernel underneath);
-- BEADS internals or BEADS exclusivity.
-
-## 4 · Invariants
-
-- Every agent knows its role before claiming.
-- Claims prevent overlapping file ownership; BEADS is never claimed.
-- Lock files are projections, not the source of durable typed truth.
-- Open task checks are coordination visibility, not locking.
-- The CLI takes **one Nota record on argv** (lojix-cli
-  discipline). No flags, no subcommands, no env-var dispatch.
-  New behavior lands as a typed positional field on
-  `OrchestrateRequest`, never as a flag.
-- `Activity::stamped_at` is **store-supplied** at commit
-  time, never agent-supplied (per ESSENCE
-  infrastructure-mints rule).
-- Subscriptions emit only **after** redb commit completes
-  (per assistant/90 §"Emit After Commit"; v1 has no
-  subscriptions yet — request/reply only).
-- Concurrent CLI invocations serialize cleanly through
-  redb's MVCC; multiple readers run in parallel.
-
-## 5 · Runtime tables
+## 3 · Runtime Tables
 
 | Table | Key | Value | Purpose |
 |---|---|---|---|
-| `CLAIMS` | `(RoleName, ScopeReference)` byte-encoded | `ClaimEntry` | Active claims, one row per (role, scope) pair |
-| `ACTIVITIES` | `u64` (slot) | `Activity` | Append-only activity log |
-| `META` | `&str` | `u64` | Slot counter for activities; future schema-version meta |
+| `claims` | `"<role>|<scope-kind>:<scope>"` | `StoredClaim` | Active role claims. |
+| `activities` | `u64` | `StoredActivity` | Store-stamped activity log. |
+| `activity_next_slot` | `"next"` | `u64` | Next activity slot. |
 
-Composite keys are byte-encoded with explicit ordering
-(per `~/primary/reports/assistant/90-rkyv-redb-design-research.md`
-§"Do Not Store Arbitrary rkyv Archives as redb Keys" — keys
-are designed, not rkyv-encoded).
+Keys are explicit strings, not arbitrary rkyv archives. Values are
+typed Rust records archived by the sema storage layer.
 
-## Code Map
+## 4 · Constraints
+
+- The ordinary wire surface is `signal-persona-orchestrate`.
+- The runtime store is `persona-orchestrate.redb`.
+- Activity timestamps are minted by the store, never supplied by the
+  caller.
+- Claim conflicts reject overlapping path scopes across different
+  roles.
+- Task scopes overlap only by exact task token.
+- Handoff moves ownership atomically from source role to target role.
+- `RoleObservation` returns all known role statuses plus recent
+  activity.
+- The CLI, once wired, talks only to the `persona-orchestrate` daemon.
+
+## 5 · Code Map
 
 ```text
-src/lib.rs            module entry; library surface
-src/error.rs          typed Error enum (thiserror)
-src/state.rs          OrchestrateState handle (opens orchestrate.redb)
-src/tables.rs         typed sema::Table<K, V> constants
-src/claim.rs          RoleClaim / Release / Handoff handlers
-src/observation.rs    RoleObservation handler (build snapshot)
-src/activity.rs       ActivitySubmission / ActivityQuery handlers
-src/projection.rs     lock-file projection writer
-src/service.rs        frame dispatch (request → handler → reply)
-src/main.rs           CLI entry: parse Nota argv, dispatch, print Nota reply
-tests/claim_release_handoff.rs
-tests/activity_log.rs
-tests/lock_projection.rs
+src/lib.rs        public library surface and re-exports
+src/error.rs      crate error enum
+src/location.rs   redb store path wrapper
+src/tables.rs     sema-backed claim/activity tables
+src/claim.rs      claim, release, handoff, and observation handlers
+src/activity.rs   activity submission and query handlers
+src/service.rs    OrchestrateRequest dispatch
+src/main.rs       daemon scaffold
+tests/ledger.rs   sema-backed claim/activity behavior
+tests/smoke.rs    legacy claim-state smoke test
 ```
 
 ## See Also
 
-- `~/primary/reports/designer/93-persona-orchestrate-rust-rewrite-and-activity-log.md`
-  — design report grounding this rewrite.
-- `~/primary/protocols/orchestration.md` — the current
-  protocol; updated post-Rust-impl.
-- `../signal-persona-orchestrate/ARCHITECTURE.md` — the
-  contract this component consumes.
-- `../persona-sema/ARCHITECTURE.md` — typed table layer.
-- `../persona/ARCHITECTURE.md` — apex.
-- `~/primary/reports/assistant/90-rkyv-redb-design-research.md`
-  — production sema-interface research informing table
-  design.
+- `../signal-persona-orchestrate/ARCHITECTURE.md` — ordinary wire
+  contract.
+- `../persona/ARCHITECTURE.md` — Persona component topology.
+- `../persona-mind/ARCHITECTURE.md` — mind state boundary.
+- `~/primary/skills/component-triad.md` — daemon + thin CLI +
+  `signal-*` contract shape.
