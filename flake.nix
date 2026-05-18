@@ -1,62 +1,80 @@
 {
-  description = "Typed orchestration state for Persona agents.";
+  description = "persona-orchestrate — Persona orchestration machinery daemon and client.";
 
   inputs = {
-    nixpkgs.url = "github:LiGoldragon/nixpkgs?ref=main";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
-    { self, nixpkgs }:
-    let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
-      forSystems = function: nixpkgs.lib.genAttrs systems (system: function system nixpkgs.legacyPackages.${system});
-    in
     {
-      packages = forSystems (
-        system: pkgs:
-        {
-          default = pkgs.rustPlatform.buildRustPackage {
-            pname = "persona-orchestrate";
-            version = "0.1.0";
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
-            meta.mainProgram = "persona-orchestrate-daemon";
-          };
-        }
-      );
-
-      checks = forSystems (
-        system: pkgs:
-        {
-          default = self.packages.${system}.default;
-        }
-      );
-
-      apps = forSystems (
-        system: pkgs:
-        {
-          default = {
-            type = "app";
-            program = "${self.packages.${system}.default}/bin/persona-orchestrate-daemon";
-          };
-        }
-      );
-
-      devShells = forSystems (
-        system: pkgs:
-        {
-          default = pkgs.mkShell {
-            packages = [
-              pkgs.cargo
-              pkgs.clippy
-              pkgs.rust-analyzer
-              pkgs.rustc
-              pkgs.rustfmt
-            ];
-          };
-        }
-      );
-
-      formatter = forSystems (system: pkgs: pkgs.nixfmt);
-    };
+      self,
+      nixpkgs,
+      flake-utils,
+      fenix,
+      crane,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        toolchain = fenix.packages.${system}.fromToolchainFile {
+          file = ./rust-toolchain.toml;
+          sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
+        };
+        craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+        src = craneLib.cleanCargoSource ./.;
+        commonArgs = {
+          inherit src;
+          strictDeps = true;
+        };
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      in
+      {
+        packages.default = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        checks = {
+          build = craneLib.cargoBuild (commonArgs // { inherit cargoArtifacts; });
+          test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
+          test-doc = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--doc";
+            }
+          );
+          doc = craneLib.cargoDoc (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              RUSTDOCFLAGS = "-D warnings";
+            }
+          );
+          fmt = craneLib.cargoFmt { inherit src; };
+          clippy = craneLib.cargoClippy (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+            }
+          );
+        };
+        apps.default = flake-utils.lib.mkApp {
+          drv = self.packages.${system}.default;
+          name = "persona-orchestrate-daemon";
+        };
+        devShells.default = pkgs.mkShell {
+          name = "persona-orchestrate";
+          packages = [
+            pkgs.jujutsu
+            pkgs.pkg-config
+            toolchain
+          ];
+        };
+      }
+    );
 }
