@@ -89,6 +89,8 @@ typed Rust records archived by the sema storage layer.
 
 - The ordinary wire surface is `signal-persona-orchestrate`.
 - The runtime store is `persona-orchestrate.redb`.
+- `OrchestrateService` serializes request handling until the daemon
+  actor becomes the long-lived sequencing owner.
 - Activity timestamps are minted by the store, never supplied by the
   caller.
 - Claim conflicts reject overlapping path scopes across different
@@ -97,6 +99,9 @@ typed Rust records archived by the sema storage layer.
 - Handoff moves ownership atomically from source role to target role.
 - `RoleObservation` returns all known role statuses plus recent
   activity.
+- Role snapshots include every current workspace lane, including
+  second-operator-assistant, second-designer-assistant, and
+  second-system-assistant.
 - The CLI, once wired, talks only to the `persona-orchestrate` daemon.
 
 ## 5 · Code Map
@@ -110,7 +115,7 @@ src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
 src/service.rs    OrchestrateRequest dispatch
 src/main.rs       daemon scaffold
-tests/ledger.rs   sema-backed claim/activity behavior
+tests/ledger.rs   sema-backed claim/activity behavior and boundary witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

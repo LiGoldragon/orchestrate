@@ -493,7 +493,7 @@ dependencies = [
 [[package]]
 name = "signal-persona-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#a45176d1c14272f8a4e7b603f5b218950a6a2b92"
+source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#0251c8881a0f014c5bdf8ce7cef092112a4ba697"
 dependencies = [
  "nota-codec",
  "rkyv",

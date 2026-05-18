@@ -171,3 +171,67 @@ fn activity_submission_query_and_observation_are_store_stamped() {
         "carve out orchestration machinery"
     );
 }
+
+#[test]
+fn role_observation_includes_current_workspace_lanes() {
+    let fixture = Fixture::new("orchestrate-roles");
+
+    let snapshot = fixture
+        .service
+        .handle(persona_orchestrate::OrchestrateRequest::RoleObservation(
+            RoleObservation,
+        ))
+        .expect("observe");
+    let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
+        panic!("expected role snapshot");
+    };
+    let roles = snapshot
+        .roles
+        .iter()
+        .map(|status| status.role)
+        .collect::<Vec<_>>();
+
+    assert_eq!(roles, RoleName::ALL);
+    assert!(roles.contains(&RoleName::SecondOperatorAssistant));
+    assert!(roles.contains(&RoleName::SecondDesignerAssistant));
+    assert!(roles.contains(&RoleName::SecondSystemAssistant));
+}
+
+#[test]
+fn activity_path_prefix_matches_path_boundaries() {
+    let fixture = Fixture::new("orchestrate-prefix");
+    let persona_scope = path("/git/github.com/LiGoldragon/persona");
+    let persona_orchestrate_scope = path("/git/github.com/LiGoldragon/persona-orchestrate");
+
+    for scope in [persona_scope.clone(), persona_orchestrate_scope] {
+        fixture
+            .service
+            .handle(persona_orchestrate::OrchestrateRequest::ActivitySubmission(
+                ActivitySubmission {
+                    role: RoleName::OperatorAssistant,
+                    scope,
+                    reason: reason("prefix boundary witness"),
+                },
+            ))
+            .expect("activity");
+    }
+
+    let list = fixture
+        .service
+        .handle(persona_orchestrate::OrchestrateRequest::ActivityQuery(
+            ActivityQuery {
+                limit: 10,
+                filters: vec![ActivityFilter::PathPrefix(
+                    WirePath::from_absolute_path("/git/github.com/LiGoldragon/persona")
+                        .expect("prefix"),
+                )],
+            },
+        ))
+        .expect("query");
+    let OrchestrateReply::ActivityList(list) = list else {
+        panic!("expected activity list");
+    };
+
+    assert_eq!(list.records.len(), 1);
+    assert_eq!(list.records[0].scope, persona_scope);
+}

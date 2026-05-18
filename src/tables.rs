@@ -82,12 +82,11 @@ impl OrchestrateTables {
         let slot = self.next_activity_slot()?;
         let stamped_at = StoreClock::system().timestamp()?;
         let activity = StoredActivity::new(slot.value(), role, scope, reason, stamped_at);
-        self.engine.storage_kernel().write(|transaction| {
+        Ok(self.engine.storage_kernel().write(|transaction| {
             ACTIVITIES.insert(transaction, slot.value(), &activity)?;
             ACTIVITY_NEXT_SLOT.insert(transaction, ACTIVITY_NEXT_SLOT_KEY, &slot.next_value())?;
-            Ok(())
-        })?;
-        Ok(activity)
+            Ok(activity)
+        })?)
     }
 
     pub fn activity_records(&self) -> Result<Vec<StoredActivity>> {

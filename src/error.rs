@@ -12,4 +12,7 @@ pub enum Error {
 
     #[error("sema engine: {0}")]
     SemaEngine(#[from] sema_engine::Error),
+
+    #[error("orchestrate service sequence lock was poisoned")]
+    ServiceSequencePoisoned,
 }

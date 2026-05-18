@@ -2,8 +2,9 @@
 
 Typed workspace orchestration state for Persona agents.
 
-This crate models role ownership, claimed scopes, handoff tasks, and the typed
-replacement for primary workspace lock files.
+This crate models role ownership, claimed scopes, handoffs, and the activity
+log that replaces primary workspace lock files over time.
 
-It is not Persona's main daemon database. Runtime Persona state belongs behind
-`persona-store`; this crate models collaborative workspace coordination.
+It is not Persona's central mind database. Work graph state, thoughts,
+relations, and policy truth belong in `persona-mind`; this crate owns
+collaborative orchestration machinery in `persona-orchestrate.redb`.
