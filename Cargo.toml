@@ -16,11 +16,17 @@ path = "src/lib.rs"
 name = "persona-orchestrate-daemon"
 path = "src/main.rs"
 
+[[bin]]
+name = "persona-orchestrate"
+path = "src/bin/persona-orchestrate.rs"
+
 [dependencies]
 sema                        = { git = "https://github.com/LiGoldragon/sema.git" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git" }
 signal-persona-orchestrate = { git = "https://github.com/LiGoldragon/signal-persona-orchestrate.git", branch = "main" }
 owner-signal-persona-orchestrate = { git = "https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git", branch = "main" }
+signal-core                 = { git = "https://github.com/LiGoldragon/signal-core.git" }
+nota-codec                  = { git = "https://github.com/LiGoldragon/nota-codec.git", branch = "main" }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 

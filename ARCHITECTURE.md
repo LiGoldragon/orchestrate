@@ -6,9 +6,11 @@ daemon boundary that replaces the transitional workspace lock helper.*
 
 > Status: the repo, ordinary contract, owner contract, sema-backed
 > claim/activity store, dynamic role registry, raw role-creation path,
-> and local repository-index refresh exist. The long-lived daemon,
-> real Signal sockets, lock-file projection from daemon state, and
-> GitHub/ghq-backed report-repository creation are still missing.
+> and local repository-index refresh exist. The daemon and CLI binaries
+> now fail closed until the socket runtime is implemented; there is no
+> direct-store CLI. Real Signal sockets, lock-file projection from
+> daemon state, and GitHub/ghq-backed report-repository creation are
+> still missing.
 > `tools/orchestrate` remains the live workspace helper until the
 > daemon becomes the source of truth.
 
@@ -65,8 +67,11 @@ This runtime repo contains:
   and activity-query handlers;
 - owner-request handlers for role creation, role retirement, and
   local repository-index refresh;
-- a raw CLI binary carried by the current `persona-orchestrate-daemon`
-  target while the real daemon/socket split is pending.
+- a daemon binary scaffold that accepts one NOTA config argument and
+  fails closed until the socket runtime exists;
+- a thin CLI client that accepts one NOTA request argument, encodes it
+  as a Signal frame, and connects only to the `persona-orchestrate`
+  daemon sockets.
 
 The full component surface is:
 
@@ -180,6 +185,9 @@ are never the source of truth once the daemon is live.
 
 - The CLI accepts exactly one NOTA request and talks to exactly one
   Signal peer: the `persona-orchestrate` daemon.
+- The CLI never opens `persona-orchestrate.redb`, sema-engine, or the
+  in-process `OrchestrateService`; all state mutation and reads cross
+  the daemon boundary.
 - The daemon's external traffic is Signal frames only.
 - The daemon has one typed actor per Signal contract socket.
 - The ordinary socket accepts ordinary frames; the owner socket
@@ -229,8 +237,12 @@ src/activity.rs   activity submission and query handlers
 src/role.rs       owner role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
 src/service.rs    ordinary and owner request dispatch
-src/main.rs       raw direct-store CLI while daemon/socket split is pending
+src/main.rs       daemon scaffold, one NOTA config argument, fail-closed
+src/bin/persona-orchestrate.rs
+                  thin CLI, one NOTA request argument, Signal to daemon only
 tests/ledger.rs   sema-backed claim/activity/role/repository witnesses
+tests/architecture.rs
+                  CLI boundary source-scan witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

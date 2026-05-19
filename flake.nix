@@ -56,6 +56,13 @@
                 "--test ledger repository_refresh_indexes_local_checkouts_and_workspace_links";
             }
           );
+          test-cli-boundary = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--test architecture";
+            }
+          );
           test-doc = craneLib.cargoTest (
             commonArgs
             // {

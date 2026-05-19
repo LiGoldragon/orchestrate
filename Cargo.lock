@@ -275,10 +275,12 @@ dependencies = [
 name = "persona-orchestrate"
 version = "0.1.0"
 dependencies = [
+ "nota-codec",
  "owner-signal-persona-orchestrate",
  "rkyv",
  "sema",
  "sema-engine",
+ "signal-core",
  "signal-persona-orchestrate",
  "tempfile",
  "thiserror",
