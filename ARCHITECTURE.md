@@ -30,6 +30,38 @@ The current implemented slice is the usable triad skeleton: ordinary
 `persona-orchestrate` CLI that sends Signal frames to the daemon
 sockets.
 
+## MUST IMPLEMENT — signal architecture migration
+
+This runtime is pending the signal architecture migration named in
+`primary/reports/designer/238-signal-architecture-redirection-contract-local-verbs.md`
+and implemented by
+`primary/reports/designer/239-signal-architecture-migration-plan.md`.
+The current daemon and CLI are useful runtime work, but the contract
+surface still depends on `signal-core` and public `SignalVerb`
+wrapping.
+
+Required refactor after `signal-frame`, `signal-sema`, and the updated
+`signal_channel!` macro are available:
+
+- replace `signal-core` imports and frame types with `signal-frame`;
+- consume contract-local operation roots from
+  `signal-persona-orchestrate` and
+  `owner-signal-persona-orchestrate`;
+- lower contract operations to Sema effects inside the runtime
+  executor, not in the contract crates;
+- add the public observer hook for inbound contract operations and
+  outbound Sema effects;
+- retire tests that assert `SignalVerb` mapping and replace them with
+  contract-operation round trips plus deterministic lowering witnesses.
+
+The daemon/CLI boundary does not change: the CLI remains a thin
+NOTA-to-Signal adapter and the daemon remains the only process that
+opens `persona-orchestrate.redb`.
+
+**Note to remover:** when the refactor lands, remove this section and
+add a `## Migration history — contract-local verbs (2026-05-XX)`
+paragraph noting the shape change.
+
 ```mermaid
 flowchart TB
     mind["persona-mind<br/>state + policy truth"]
