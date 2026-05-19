@@ -1,5 +1,7 @@
 pub mod activity;
 pub mod claim;
+pub mod configuration;
+pub mod daemon;
 pub mod error;
 pub mod layout;
 pub mod location;
@@ -10,6 +12,8 @@ pub mod tables;
 
 pub use activity::ActivityLedger;
 pub use claim::{ClaimLedger, ClaimState};
+pub use configuration::DaemonConfiguration;
+pub use daemon::OrchestrateDaemon;
 pub use error::{Error, Result};
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;

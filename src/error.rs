@@ -7,6 +7,12 @@ pub enum Error {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("nota: {0}")]
+    Nota(#[from] nota_codec::Error),
+
+    #[error("signal frame: {0}")]
+    SignalFrame(#[from] signal_core::FrameError),
+
     #[error("system time: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 
@@ -24,4 +30,16 @@ pub enum Error {
 
     #[error("path is not valid UTF-8")]
     PathIsNotUtf8,
+
+    #[error("socket path exists and is not a socket: {0}")]
+    SocketPathIsNotSocket(String),
+
+    #[error("daemon socket handler expected a request frame")]
+    SocketExpectedRequestFrame,
+
+    #[error("daemon socket thread panicked")]
+    DaemonThreadPanicked,
+
+    #[error("signal frame is too large: {length} bytes")]
+    FrameTooLarge { length: usize },
 }

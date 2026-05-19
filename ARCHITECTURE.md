@@ -6,13 +6,13 @@ daemon boundary that replaces the transitional workspace lock helper.*
 
 > Status: the repo, ordinary contract, owner contract, sema-backed
 > claim/activity store, dynamic role registry, raw role-creation path,
-> and local repository-index refresh exist. The daemon and CLI binaries
-> now fail closed until the socket runtime is implemented; there is no
-> direct-store CLI. Real Signal sockets, lock-file projection from
-> daemon state, and GitHub/ghq-backed report-repository creation are
-> still missing.
+> local repository-index refresh, daemon socket runtime, and thin CLI
+> client exist. The CLI has no direct-store path. Lock-file projection
+> from daemon state and GitHub/ghq-backed report-repository creation
+> are still missing.
 > `tools/orchestrate` remains the live workspace helper until the
-> daemon becomes the source of truth.
+> daemon projects compatibility lock files and is supervised as a
+> workspace service.
 
 ## 0 - TL;DR
 
@@ -23,14 +23,12 @@ mechanics that make work run: claims, handoffs, activity, agent-run
 lifecycle, spawn plans, scope acquisition, executor capacity,
 scheduling, escalation, and the lane registry.
 
-The current implemented slice is an ordinary
-`signal-persona-orchestrate` request/reply surface plus a Rust
-library that persists claims and activity in `persona-orchestrate.redb`
-through `sema-engine`. The destination is the full component triad:
-long-lived daemon, thin `persona-orchestrate` CLI, ordinary
-`signal-persona-orchestrate`, owner-only
-`owner-signal-persona-orchestrate`, and one sema-engine database split
-into policy and working tables.
+The current implemented slice is the usable triad skeleton: ordinary
+`signal-persona-orchestrate` request/reply surface, owner-only
+`owner-signal-persona-orchestrate`, a daemon that owns the
+`persona-orchestrate.redb` sema store, and a thin
+`persona-orchestrate` CLI that sends Signal frames to the daemon
+sockets.
 
 ```mermaid
 flowchart TB
@@ -44,8 +42,8 @@ flowchart TB
     harness["persona-harness"]
     locks["orchestrate/*.lock<br/>temporary projection"]
 
-    cli --> ordinary
-    ordinary --> daemon
+    cli -- "ordinary/owner Signal frames" --> daemon
+    daemon -- "ordinary surface" --> ordinary
     mind --> owner
     owner --> daemon
     daemon --> store
@@ -67,8 +65,9 @@ This runtime repo contains:
   and activity-query handlers;
 - owner-request handlers for role creation, role retirement, and
   local repository-index refresh;
-- a daemon binary scaffold that accepts one NOTA config argument and
-  fails closed until the socket runtime exists;
+- a daemon binary that accepts one NOTA config argument, binds ordinary
+  and owner Unix sockets, decodes Signal frames, dispatches to the
+  service, and writes Signal replies;
 - a thin CLI client that accepts one NOTA request argument, encodes it
   as a Signal frame, and connects only to the `persona-orchestrate`
   daemon sockets.
@@ -229,6 +228,9 @@ are never the source of truth once the daemon is live.
 ```text
 src/lib.rs        public library surface and re-exports
 src/error.rs      crate error enum
+src/configuration.rs
+                  daemon NOTA config record
+src/daemon.rs     ordinary/owner socket listeners and frame dispatch
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/tables.rs     sema-backed claim/activity/role/repository tables
@@ -237,12 +239,14 @@ src/activity.rs   activity submission and query handlers
 src/role.rs       owner role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
 src/service.rs    ordinary and owner request dispatch
-src/main.rs       daemon scaffold, one NOTA config argument, fail-closed
+src/main.rs       daemon binary, one NOTA config argument
 src/bin/persona-orchestrate.rs
                   thin CLI, one NOTA request argument, Signal to daemon only
 tests/ledger.rs   sema-backed claim/activity/role/repository witnesses
 tests/architecture.rs
                   CLI boundary source-scan witnesses
+tests/daemon_cli.rs
+                  production daemon + production CLI socket witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

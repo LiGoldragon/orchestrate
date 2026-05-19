@@ -63,6 +63,13 @@
               cargoTestExtraArgs = "--test architecture";
             }
           );
+          test-daemon-cli = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--test daemon_cli";
+            }
+          );
           test-doc = craneLib.cargoTest (
             commonArgs
             // {
