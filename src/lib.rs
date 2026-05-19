@@ -6,6 +6,7 @@ pub mod error;
 pub mod layout;
 pub mod location;
 pub mod lock_projection;
+pub mod lowering;
 pub mod repository;
 pub mod role;
 pub mod service;
@@ -19,6 +20,7 @@ pub use error::{Error, Result};
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
+pub use lowering::{LoweredOperation, OperationLowering};
 pub use owner_signal_persona_orchestrate::{
     CreateRoleOrder, OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
     RetireRoleOrder,
@@ -27,8 +29,9 @@ pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
 pub use signal_persona_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, HarnessKind, OrchestrateReply,
-    OrchestrateRequest, RoleClaim, RoleHandoff, RoleIdentifier, RoleName, RoleObservation,
-    RoleRelease, ScopeReason, ScopeReference, TaskToken, TimestampNanos, WirePath,
+    ActivityFilter, ActivityQuery, ActivitySubmission, HarnessKind, ObservationClosed,
+    ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
+    OrchestrateReply, OrchestrateRequest, RoleClaim, RoleHandoff, RoleIdentifier, RoleName,
+    RoleObservation, RoleRelease, ScopeReason, ScopeReference, TaskToken, TimestampNanos, WirePath,
 };
 pub use tables::{OrchestrateTables, StoredActivity, StoredClaim, StoredRepository, StoredRole};

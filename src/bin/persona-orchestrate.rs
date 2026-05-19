@@ -7,7 +7,7 @@ use owner_signal_persona_orchestrate::{
     Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody, OwnerOrchestrateReply,
     OwnerOrchestrateRequest,
 };
-use signal_core::{
+use signal_frame::{
     ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload, SessionEpoch, SubReply,
 };
 use signal_persona_orchestrate::{

@@ -11,7 +11,7 @@ use owner_signal_persona_orchestrate::{
     OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
 use persona_orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
-use signal_core::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
+use signal_frame::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
 use signal_persona_orchestrate::{
     OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest, RoleClaim,
     RoleObservation, ScopeReason, ScopeReference,
@@ -129,7 +129,7 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
     let fixture = DaemonFixture::start("persona-orchestrate-cli-role");
     let role = role("primary-orchestrate-daemon-zxq9-never-collide");
 
-    let output = fixture.cli(OwnerOrchestrateRequest::CreateRoleOrder(CreateRoleOrder {
+    let output = fixture.cli(OwnerOrchestrateRequest::Create(CreateRoleOrder {
         role: role.clone(),
         harness: HarnessKind::Codex,
     }));
@@ -146,7 +146,7 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
     assert!(Path::new(created.report_repository_path.as_str()).is_dir());
     assert!(Path::new(created.report_lane_path.as_str()).exists());
 
-    let output = fixture.cli(OrchestrateRequest::RoleObservation(RoleObservation));
+    let output = fixture.cli(OrchestrateRequest::Observe(RoleObservation));
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -160,7 +160,7 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
         |status| status.role.as_wire_token() == "primary-orchestrate-daemon-zxq9-never-collide"
     ));
 
-    let output = fixture.cli(OrchestrateRequest::RoleClaim(RoleClaim {
+    let output = fixture.cli(OrchestrateRequest::Claim(RoleClaim {
         role,
         scopes: vec![ScopeReference::Path(
             WirePath::from_absolute_path("/tmp/primary-orchestrate-daemon-zxq9-never-collide")
@@ -188,10 +188,7 @@ fn ordinary_socket_rejects_owner_frame() {
     let fixture = DaemonFixture::start("persona-orchestrate-owner-reject");
     let frame = OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Request {
         exchange: exchange(),
-        request: OwnerOrchestrateRequest::RefreshRepositoryIndexOrder(
-            RefreshRepositoryIndexOrder {},
-        )
-        .into_request(),
+        request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
     });
     let mut stream = UnixStream::connect(&fixture.ordinary_socket).expect("connect ordinary");
     stream
@@ -209,7 +206,7 @@ fn owner_socket_rejects_ordinary_frame() {
     let fixture = DaemonFixture::start("persona-orchestrate-ordinary-reject");
     let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
         exchange: exchange(),
-        request: OrchestrateRequest::RoleObservation(RoleObservation).into_request(),
+        request: OrchestrateRequest::Observe(RoleObservation).into_request(),
     });
     let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
     stream

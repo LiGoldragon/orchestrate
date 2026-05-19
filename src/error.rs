@@ -11,7 +11,7 @@ pub enum Error {
     Nota(#[from] nota_codec::Error),
 
     #[error("signal frame: {0}")]
-    SignalFrame(#[from] signal_core::FrameError),
+    SignalFrame(#[from] signal_frame::FrameError),
 
     #[error("system time: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),

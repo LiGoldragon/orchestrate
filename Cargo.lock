@@ -262,11 +262,11 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "owner-signal-persona-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#d9210f9a37e1191cbd186a0ee55ed467ed0a276d"
+source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#8267d61bcc3966bce5dd6b4231445b9ccfbbb0c5"
 dependencies = [
  "nota-codec",
  "rkyv",
- "signal-core",
+ "signal-frame",
  "signal-persona-orchestrate",
  "thiserror",
 ]
@@ -280,8 +280,9 @@ dependencies = [
  "rkyv",
  "sema",
  "sema-engine",
- "signal-core",
+ "signal-frame",
  "signal-persona-orchestrate",
+ "signal-sema",
  "tempfile",
  "thiserror",
 ]
@@ -513,13 +514,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-persona-orchestrate"
+name = "signal-frame"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#46cb6f569396ed4f80c7d3192f3caaba7b78ea15"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#4bdf1e1e706477c213259c8f661ee2787d48377c"
 dependencies = [
  "nota-codec",
  "rkyv",
- "signal-core",
+ "signal-frame-macros",
+ "thiserror",
+]
+
+[[package]]
+name = "signal-frame-macros"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#4bdf1e1e706477c213259c8f661ee2787d48377c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "signal-persona-orchestrate"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#c48116ccee2a73688ad64931e09dde5839f31c25"
+dependencies = [
+ "nota-codec",
+ "rkyv",
+ "signal-frame",
+ "signal-sema",
+ "thiserror",
+]
+
+[[package]]
+name = "signal-sema"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-sema.git?branch=main#d056fc5a8a26dcd055d7f75bfde2376a9a93426b"
+dependencies = [
+ "nota-codec",
+ "rkyv",
  "thiserror",
 ]
 

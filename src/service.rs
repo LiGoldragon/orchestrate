@@ -1,5 +1,7 @@
 use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
-use signal_persona_orchestrate::{OrchestrateReply, OrchestrateRequest};
+use signal_persona_orchestrate::{
+    ObservationClosed, ObservationOpened, ObservationToken, OrchestrateReply, OrchestrateRequest,
+};
 use std::sync::Mutex;
 
 use crate::{
@@ -11,6 +13,7 @@ pub struct OrchestrateService {
     tables: OrchestrateTables,
     layout: OrchestrateLayout,
     sequence: Mutex<()>,
+    next_observation_token: Mutex<u64>,
 }
 
 impl OrchestrateService {
@@ -25,6 +28,7 @@ impl OrchestrateService {
             tables,
             layout,
             sequence: Mutex::new(()),
+            next_observation_token: Mutex::new(1),
         })
     }
 
@@ -34,29 +38,38 @@ impl OrchestrateService {
             .lock()
             .map_err(|_| Error::ServiceSequencePoisoned)?;
         match request {
-            OrchestrateRequest::RoleClaim(claim) => {
+            OrchestrateRequest::Claim(claim) => {
                 let reply = ClaimLedger::new(&self.tables).apply_claim(claim)?;
                 self.project_locks()?;
                 Ok(reply)
             }
-            OrchestrateRequest::RoleRelease(release) => {
+            OrchestrateRequest::Release(release) => {
                 let reply = ClaimLedger::new(&self.tables).apply_release(release)?;
                 self.project_locks()?;
                 Ok(reply)
             }
-            OrchestrateRequest::RoleHandoff(handoff) => {
+            OrchestrateRequest::Handoff(handoff) => {
                 let reply = ClaimLedger::new(&self.tables).apply_handoff(handoff)?;
                 self.project_locks()?;
                 Ok(reply)
             }
-            OrchestrateRequest::RoleObservation(observation) => {
+            OrchestrateRequest::Observe(observation) => {
                 ClaimLedger::new(&self.tables).observe(observation)
             }
-            OrchestrateRequest::ActivitySubmission(submission) => {
+            OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(&self.tables).submit(submission)
             }
-            OrchestrateRequest::ActivityQuery(query) => {
-                ActivityLedger::new(&self.tables).query(query)
+            OrchestrateRequest::Query(query) => ActivityLedger::new(&self.tables).query(query),
+            OrchestrateRequest::Watch(_subscription) => {
+                let token = self.next_observation_token()?;
+                Ok(OrchestrateReply::ObservationOpened(ObservationOpened {
+                    token,
+                }))
+            }
+            OrchestrateRequest::Unwatch(token) => {
+                Ok(OrchestrateReply::ObservationClosed(ObservationClosed {
+                    token,
+                }))
             }
         }
     }
@@ -67,17 +80,17 @@ impl OrchestrateService {
             .lock()
             .map_err(|_| Error::ServiceSequencePoisoned)?;
         match request {
-            OwnerOrchestrateRequest::CreateRoleOrder(order) => {
+            OwnerOrchestrateRequest::Create(order) => {
                 let reply = RoleRegistry::new(&self.tables, &self.layout).create_role(order)?;
                 self.project_locks()?;
                 Ok(reply)
             }
-            OwnerOrchestrateRequest::RetireRoleOrder(order) => {
+            OwnerOrchestrateRequest::Retire(order) => {
                 let reply = RoleRegistry::new(&self.tables, &self.layout).retire_role(order)?;
                 self.project_locks()?;
                 Ok(reply)
             }
-            OwnerOrchestrateRequest::RefreshRepositoryIndexOrder(_order) => {
+            OwnerOrchestrateRequest::Refresh(_order) => {
                 RepositoryRegistry::new(&self.tables, &self.layout).refresh()
             }
         }
@@ -93,5 +106,15 @@ impl OrchestrateService {
 
     fn project_locks(&self) -> Result<()> {
         LockProjection::new(&self.tables, &self.layout).project()
+    }
+
+    fn next_observation_token(&self) -> Result<ObservationToken> {
+        let mut next = self
+            .next_observation_token
+            .lock()
+            .map_err(|_| Error::ServiceSequencePoisoned)?;
+        let token = ObservationToken::new(*next);
+        *next += 1;
+        Ok(token)
     }
 }

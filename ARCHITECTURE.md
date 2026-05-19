@@ -30,37 +30,17 @@ The current implemented slice is the usable triad skeleton: ordinary
 `persona-orchestrate` CLI that sends Signal frames to the daemon
 sockets.
 
-## MUST IMPLEMENT — signal architecture migration
+## Migration history - contract-local verbs (2026-05-19)
 
-This runtime is pending the signal architecture migration named in
-`primary/reports/designer/238-signal-architecture-redirection-contract-local-verbs.md`
-and implemented by
-`primary/reports/designer/239-signal-architecture-migration-plan.md`.
-The current daemon and CLI are useful runtime work, but the contract
-surface still depends on `signal-core` and public `SignalVerb`
-wrapping.
+The runtime consumes `signal-frame` contracts with public
+contract-local operation roots. The old public `SignalVerb` wrapper is
+gone from both Orchestrate contracts. `OperationLowering` is the
+runtime-owned translation point from contract operations to lower
+`signal-sema::SemaOperation` effects.
 
-Required refactor after `signal-frame`, `signal-sema`, and the updated
-`signal_channel!` macro are available:
-
-- replace `signal-core` imports and frame types with `signal-frame`;
-- consume contract-local operation roots from
-  `signal-persona-orchestrate` and
-  `owner-signal-persona-orchestrate`;
-- lower contract operations to Sema effects inside the runtime
-  executor, not in the contract crates;
-- add the public observer hook for inbound contract operations and
-  outbound Sema effects;
-- retire tests that assert `SignalVerb` mapping and replace them with
-  contract-operation round trips plus deterministic lowering witnesses.
-
-The daemon/CLI boundary does not change: the CLI remains a thin
+The daemon/CLI boundary did not change: the CLI remains a thin
 NOTA-to-Signal adapter and the daemon remains the only process that
 opens `persona-orchestrate.redb`.
-
-**Note to remover:** when the refactor lands, remove this section and
-add a `## Migration history — contract-local verbs (2026-05-XX)`
-paragraph noting the shape change.
 
 ```mermaid
 flowchart TB
@@ -95,6 +75,8 @@ This runtime repo contains:
   `activity_next_slot` tables;
 - claim, release, handoff, role-observation, activity-submission,
   and activity-query handlers;
+- observation subscription open/close handlers for the public
+  observer hook;
 - owner-request handlers for role creation, role retirement, and
   local repository-index refresh;
 - compatibility lock-file projection from accepted daemon state into
@@ -133,21 +115,21 @@ execution edges it controls:
 | `persona-orchestrate -> persona-router` | `owner-signal-persona-router` | orchestrate orders channel grants and retractions |
 | `persona-orchestrate -> persona-harness` | `owner-signal-persona-harness` | orchestrate orders agent-run lifecycle transitions |
 
-Observation flows back through `Subscribe` surfaces. Authority moves
-down through `Mutate` and `Retract`; current state moves up through
-subscriptions. No orchestration actor polls another component for
-state that component can push.
+Observation flows back through subscription surfaces. Authority moves
+down through owner contract operations, which the daemon lowers to
+Sema mutations or retractions internally. No orchestration actor polls
+another component for state that component can push.
 
 ## 3 - Ordinary Wire Surface
 
 `signal-persona-orchestrate` is the peer-callable surface. It carries
 requests peers and the CLI can make without owner authority:
 
-- `RoleClaim` / `RoleRelease` / `RoleHandoff`
-- `RoleObservation`
-- `ActivitySubmission` / `ActivityQuery`
-- destination additions: activity, claim, and lane-registry
-  subscriptions
+- `Claim(RoleClaim)` / `Release(RoleRelease)` /
+  `Handoff(RoleHandoff)`
+- `Observe(RoleObservation)`
+- `Submit(ActivitySubmission)` / `Query(ActivityQuery)`
+- `Watch(ObservationSubscription)` / `Unwatch(ObservationToken)`
 
 The current ordinary contract uses `RoleIdentifier` for dynamic role
 identity. `RoleName` remains as a compatibility alias only; role
@@ -158,9 +140,9 @@ creation is data in the runtime registry, not a contract enum edit.
 `owner-signal-persona-orchestrate` is the owner-only surface. The
 implemented MVP carries:
 
-- `CreateRoleOrder`
-- `RetireRoleOrder`
-- `RefreshRepositoryIndexOrder`
+- `Create(CreateRoleOrder)`
+- `Retire(RetireRoleOrder)`
+- `Refresh(RefreshRepositoryIndexOrder)`
 
 Destination additions include agent-run orders, scope acquisition
 orders, scheduling/supervision policy, escalation orders, and owner
@@ -175,8 +157,9 @@ The daemon binds a separate socket and actor for this surface.
 Durable state lives in one `persona-orchestrate.redb` opened through
 `sema-engine`. No other component opens that database directly.
 
-Policy tables change only through owner-signal `Mutate` or `Retract`
-after first-start bootstrap:
+Policy tables change only through owner-signal contract operations
+after first-start bootstrap. The daemon lowers those operations to
+Sema effects internally:
 
 | Table | Purpose |
 |---|---|
@@ -234,9 +217,14 @@ Task scopes render in bracketed human form:
   in-process `OrchestrateService`; all state mutation and reads cross
   the daemon boundary.
 - The daemon's external traffic is Signal frames only.
-- The daemon has one typed actor per Signal contract socket.
+- The daemon has one typed listener and dispatch path per Signal
+  contract socket.
 - The ordinary socket accepts ordinary frames; the owner socket
   accepts owner frames; each rejects the other's vocabulary.
+- Contract operations lower to Sema effects inside the runtime, not in
+  the contract crates.
+- Public observer subscriptions allocate typed observation tokens on
+  the ordinary socket.
 - The runtime store is `persona-orchestrate.redb`.
 - Activity timestamps and slots are minted by the store, never by the
   caller.
@@ -281,6 +269,7 @@ src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/lock_projection.rs
                   compatibility lock-file projection
+src/lowering.rs   contract-operation to Sema-effect lowering
 src/tables.rs     sema-backed claim/activity/role/repository tables
 src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
@@ -290,7 +279,7 @@ src/service.rs    ordinary and owner request dispatch
 src/main.rs       daemon binary, one NOTA config argument
 src/bin/persona-orchestrate.rs
                   thin CLI, one NOTA request argument, Signal to daemon only
-tests/ledger.rs   sema-backed claim/activity/role/repository witnesses
+tests/ledger.rs   sema-backed claim/activity/role/repository and lowering witnesses
 tests/architecture.rs
                   CLI boundary source-scan witnesses
 tests/daemon_cli.rs
@@ -302,6 +291,10 @@ tests/smoke.rs    legacy claim-state smoke test
 
 - `../signal-persona-orchestrate/ARCHITECTURE.md` - ordinary wire
   contract.
+- `../owner-signal-persona-orchestrate/ARCHITECTURE.md` - owner wire
+  contract.
+- `../signal-frame/ARCHITECTURE.md` - Signal frame kernel.
+- `../signal-sema/ARCHITECTURE.md` - lower Sema operation vocabulary.
 - `../persona/ARCHITECTURE.md` - Persona component topology.
 - `../persona-mind/ARCHITECTURE.md` - mind state boundary.
 - `/home/li/primary/orchestrate/ARCHITECTURE.md` - workspace helper

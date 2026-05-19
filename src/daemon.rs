@@ -8,13 +8,14 @@ use std::thread;
 use owner_signal_persona_orchestrate::{
     Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
 };
-use signal_core::{
-    NonEmpty, Operation, OperationFailureReason, Reply, Request, RequestRejectionReason, SubReply,
+use signal_frame::{
+    NonEmpty, OperationFailureReason, Reply, Request, RequestRejectionReason, SubReply,
 };
 use signal_persona_orchestrate::{OrchestrateFrame, OrchestrateFrameBody};
 
 use crate::{
-    DaemonConfiguration, Error, OrchestrateLayout, OrchestrateService, Result, StoreLocation,
+    DaemonConfiguration, Error, OperationLowering, OrchestrateLayout, OrchestrateService, Result,
+    StoreLocation,
 };
 
 const MAX_FRAME_LENGTH: usize = 16 * 1024 * 1024;
@@ -113,22 +114,21 @@ fn handle_ordinary_stream(
         return Err(Error::SocketExpectedRequestFrame);
     };
 
-    let reply = match single_operation(request) {
-        Ok(operation) => match service.handle(operation.payload) {
-            Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok {
-                verb: operation.verb,
-                payload,
-            })),
-            Err(_error) => Reply::aborted(
-                0,
-                OperationFailureReason::DomainRejection,
-                NonEmpty::single(SubReply::Failed {
-                    verb: operation.verb,
-                    reason: OperationFailureReason::DomainRejection,
-                    detail: None,
-                }),
-            ),
-        },
+    let reply = match single_payload(request) {
+        Ok(operation) => {
+            let _lowered = OperationLowering::ordinary(&operation);
+            match service.handle(operation) {
+                Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok { payload })),
+                Err(_error) => Reply::aborted(
+                    0,
+                    OperationFailureReason::DomainRejection,
+                    NonEmpty::single(SubReply::Failed {
+                        reason: OperationFailureReason::DomainRejection,
+                        detail: None,
+                    }),
+                ),
+            }
+        }
         Err(reason) => Reply::rejected(reason),
     };
 
@@ -144,22 +144,21 @@ fn handle_owner_stream(stream: &mut UnixStream, service: &OrchestrateService) ->
         return Err(Error::SocketExpectedRequestFrame);
     };
 
-    let reply = match single_operation(request) {
-        Ok(operation) => match service.handle_owner(operation.payload) {
-            Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok {
-                verb: operation.verb,
-                payload,
-            })),
-            Err(_error) => Reply::aborted(
-                0,
-                OperationFailureReason::DomainRejection,
-                NonEmpty::single(SubReply::Failed {
-                    verb: operation.verb,
-                    reason: OperationFailureReason::DomainRejection,
-                    detail: None,
-                }),
-            ),
-        },
+    let reply = match single_payload(request) {
+        Ok(operation) => {
+            let _lowered = OperationLowering::owner(&operation);
+            match service.handle_owner(operation) {
+                Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok { payload })),
+                Err(_error) => Reply::aborted(
+                    0,
+                    OperationFailureReason::DomainRejection,
+                    NonEmpty::single(SubReply::Failed {
+                        reason: OperationFailureReason::DomainRejection,
+                        detail: None,
+                    }),
+                ),
+            }
+        }
         Err(reason) => Reply::rejected(reason),
     };
 
@@ -168,14 +167,10 @@ fn handle_owner_stream(stream: &mut UnixStream, service: &OrchestrateService) ->
         .map_err(Error::SignalFrame)
 }
 
-fn single_operation<Payload>(
+fn single_payload<Payload>(
     request: Request<Payload>,
-) -> std::result::Result<Operation<Payload>, RequestRejectionReason>
-where
-    Payload: signal_core::RequestPayload,
-{
-    request.check()?;
-    let (head, tail) = request.operations.into_head_and_tail();
+) -> std::result::Result<Payload, RequestRejectionReason> {
+    let (head, tail) = request.payloads.into_head_and_tail();
     if tail.is_empty() {
         Ok(head)
     } else {
