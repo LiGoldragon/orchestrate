@@ -262,7 +262,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "owner-signal-persona-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#f0699482ea67081bd2540b7947e5477eb6c39a4e"
+source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#d9210f9a37e1191cbd186a0ee55ed467ed0a276d"
 dependencies = [
  "nota-codec",
  "rkyv",
