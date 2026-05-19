@@ -50,6 +50,12 @@ impl OrchestrateLayout {
     pub fn workspace_repository_link_path(&self, repository_name: &str) -> PathBuf {
         self.workspace_root.join("repos").join(repository_name)
     }
+
+    pub fn role_lock_path(&self, role: &RoleName) -> PathBuf {
+        self.workspace_root
+            .join("orchestrate")
+            .join(format!("{}.lock", role.as_wire_token()))
+    }
 }
 
 pub fn wire_path(path: &Path) -> Result<WirePath> {

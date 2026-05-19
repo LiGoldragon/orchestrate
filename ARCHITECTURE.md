@@ -8,11 +8,11 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > claim/activity store, dynamic role registry, raw role-creation path,
 > local repository-index refresh, daemon socket runtime, and thin CLI
 > client exist. The CLI has no direct-store path. Lock-file projection
-> from daemon state and GitHub/ghq-backed report-repository creation
-> are still missing.
+> from daemon state exists. GitHub/ghq-backed report-repository
+> creation is still missing.
 > `tools/orchestrate` remains the live workspace helper until the
-> daemon projects compatibility lock files and is supervised as a
-> workspace service.
+> daemon is supervised as a workspace service and the operator chooses
+> the cutover point.
 
 ## 0 - TL;DR
 
@@ -65,6 +65,8 @@ This runtime repo contains:
   and activity-query handlers;
 - owner-request handlers for role creation, role retirement, and
   local repository-index refresh;
+- compatibility lock-file projection from accepted daemon state into
+  workspace `orchestrate/<role>.lock` files;
 - a daemon binary that accepts one NOTA config argument, binds ordinary
   and owner Unix sockets, decodes Signal frames, dispatches to the
   service, and writes Signal replies;
@@ -178,7 +180,19 @@ claim state and projects lock files as compatibility output for
 human and cross-harness visibility.
 
 The projection is downstream of accepted state mutation. Lock files
-are never the source of truth once the daemon is live.
+are never the source of truth once the daemon is live. Every registered
+role gets an `orchestrate/<role>.lock` file. Empty files mean idle;
+claimed path scopes render as:
+
+```text
+<absolute-path> # <reason>
+```
+
+Task scopes render in bracketed human form:
+
+```text
+[<task-token>] # <reason>
+```
 
 ## 7 - Constraints
 
@@ -233,6 +247,8 @@ src/configuration.rs
 src/daemon.rs     ordinary/owner socket listeners and frame dispatch
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
+src/lock_projection.rs
+                  compatibility lock-file projection
 src/tables.rs     sema-backed claim/activity/role/repository tables
 src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers

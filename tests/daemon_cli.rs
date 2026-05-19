@@ -13,12 +13,14 @@ use owner_signal_persona_orchestrate::{
 use persona_orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
 use signal_core::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
 use signal_persona_orchestrate::{
-    OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest, RoleObservation,
+    OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest, RoleClaim,
+    RoleObservation, ScopeReason, ScopeReference,
 };
 use tempfile::TempDir;
 
 struct DaemonFixture {
     _temporary: TempDir,
+    workspace: PathBuf,
     ordinary_socket: PathBuf,
     owner_socket: PathBuf,
     child: Child,
@@ -54,6 +56,7 @@ impl DaemonFixture {
             .expect("daemon spawn");
         let mut fixture = Self {
             _temporary: temporary,
+            workspace,
             ordinary_socket,
             owner_socket,
             child,
@@ -156,6 +159,28 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
     assert!(snapshot.roles.iter().any(
         |status| status.role.as_wire_token() == "primary-orchestrate-daemon-zxq9-never-collide"
     ));
+
+    let output = fixture.cli(OrchestrateRequest::RoleClaim(RoleClaim {
+        role,
+        scopes: vec![ScopeReference::Path(
+            WirePath::from_absolute_path("/tmp/primary-orchestrate-daemon-zxq9-never-collide")
+                .expect("claim path"),
+        )],
+        reason: ScopeReason::from_text("daemon CLI claim projection").expect("reason"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lock_path = fixture
+        .workspace
+        .join("orchestrate")
+        .join("primary-orchestrate-daemon-zxq9-never-collide.lock");
+    assert_eq!(
+        std::fs::read_to_string(lock_path).expect("lock file"),
+        "/tmp/primary-orchestrate-daemon-zxq9-never-collide # daemon CLI claim projection\n"
+    );
 }
 
 #[test]

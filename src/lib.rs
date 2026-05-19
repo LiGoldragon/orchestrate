@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod error;
 pub mod layout;
 pub mod location;
+pub mod lock_projection;
 pub mod repository;
 pub mod role;
 pub mod service;
@@ -17,6 +18,7 @@ pub use daemon::OrchestrateDaemon;
 pub use error::{Error, Result};
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
+pub use lock_projection::LockProjection;
 pub use owner_signal_persona_orchestrate::{
     CreateRoleOrder, OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
     RetireRoleOrder,

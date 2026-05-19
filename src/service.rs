@@ -3,8 +3,8 @@ use signal_persona_orchestrate::{OrchestrateReply, OrchestrateRequest};
 use std::sync::Mutex;
 
 use crate::{
-    ActivityLedger, ClaimLedger, Error, OrchestrateLayout, OrchestrateTables, RepositoryRegistry,
-    Result, RoleRegistry, StoreLocation,
+    ActivityLedger, ClaimLedger, Error, LockProjection, OrchestrateLayout, OrchestrateTables,
+    RepositoryRegistry, Result, RoleRegistry, StoreLocation,
 };
 
 pub struct OrchestrateService {
@@ -35,13 +35,19 @@ impl OrchestrateService {
             .map_err(|_| Error::ServiceSequencePoisoned)?;
         match request {
             OrchestrateRequest::RoleClaim(claim) => {
-                ClaimLedger::new(&self.tables).apply_claim(claim)
+                let reply = ClaimLedger::new(&self.tables).apply_claim(claim)?;
+                self.project_locks()?;
+                Ok(reply)
             }
             OrchestrateRequest::RoleRelease(release) => {
-                ClaimLedger::new(&self.tables).apply_release(release)
+                let reply = ClaimLedger::new(&self.tables).apply_release(release)?;
+                self.project_locks()?;
+                Ok(reply)
             }
             OrchestrateRequest::RoleHandoff(handoff) => {
-                ClaimLedger::new(&self.tables).apply_handoff(handoff)
+                let reply = ClaimLedger::new(&self.tables).apply_handoff(handoff)?;
+                self.project_locks()?;
+                Ok(reply)
             }
             OrchestrateRequest::RoleObservation(observation) => {
                 ClaimLedger::new(&self.tables).observe(observation)
@@ -62,10 +68,14 @@ impl OrchestrateService {
             .map_err(|_| Error::ServiceSequencePoisoned)?;
         match request {
             OwnerOrchestrateRequest::CreateRoleOrder(order) => {
-                RoleRegistry::new(&self.tables, &self.layout).create_role(order)
+                let reply = RoleRegistry::new(&self.tables, &self.layout).create_role(order)?;
+                self.project_locks()?;
+                Ok(reply)
             }
             OwnerOrchestrateRequest::RetireRoleOrder(order) => {
-                RoleRegistry::new(&self.tables, &self.layout).retire_role(order)
+                let reply = RoleRegistry::new(&self.tables, &self.layout).retire_role(order)?;
+                self.project_locks()?;
+                Ok(reply)
             }
             OwnerOrchestrateRequest::RefreshRepositoryIndexOrder(_order) => {
                 RepositoryRegistry::new(&self.tables, &self.layout).refresh()
@@ -79,5 +89,9 @@ impl OrchestrateService {
 
     pub fn repositories(&self) -> Result<Vec<crate::StoredRepository>> {
         self.tables.repository_records()
+    }
+
+    fn project_locks(&self) -> Result<()> {
+        LockProjection::new(&self.tables, &self.layout).project()
     }
 }

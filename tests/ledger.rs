@@ -292,6 +292,11 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
     assert_eq!(created.harness, HarnessKind::Codex);
     assert!(std::path::Path::new(created.report_repository_path.as_str()).is_dir());
     assert!(std::path::Path::new(created.report_lane_path.as_str()).exists());
+    let lock_path = fixture
+        .workspace
+        .join("orchestrate")
+        .join("primary-orchestrate-mvp-zxq9-never-collide.lock");
+    assert_eq!(std::fs::read_to_string(&lock_path).expect("lock file"), "");
 
     let snapshot = fixture
         .service
@@ -315,12 +320,16 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
         .handle(persona_orchestrate::OrchestrateRequest::RoleClaim(
             RoleClaim {
                 role: created_status.role.clone(),
-                scopes: vec![scope],
+                scopes: vec![scope.clone()],
                 reason: reason("dynamic role owns its work"),
             },
         ))
         .expect("claim");
     assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
+    assert_eq!(
+        std::fs::read_to_string(lock_path).expect("lock file"),
+        "/tmp/primary-orchestrate-mvp-zxq9-never-collide # dynamic role owns its work\n"
+    );
 }
 
 #[test]
