@@ -32,7 +32,7 @@ impl ClaimState {
     }
 
     pub fn role(&self) -> RoleName {
-        self.role
+        self.role.clone()
     }
 }
 
@@ -65,7 +65,7 @@ impl<'tables> ClaimLedger<'tables> {
             next_entries
                 .retain(|entry| entry.role != claim.role || !scope_contains(scope, &entry.scope));
             next_entries.push(StoredClaim::new(
-                claim.role,
+                claim.role.clone(),
                 scope.clone(),
                 claim.reason.clone(),
             ));
@@ -139,7 +139,9 @@ impl<'tables> ClaimLedger<'tables> {
             .scopes
             .iter()
             .filter(|scope| !Self::role_already_owns(&entries, &handoff.to, scope))
-            .map(|scope| StoredClaim::new(handoff.to, scope.clone(), handoff.reason.clone()))
+            .map(|scope| {
+                StoredClaim::new(handoff.to.clone(), scope.clone(), handoff.reason.clone())
+            })
             .collect::<Vec<_>>();
 
         self.tables.replace_claims(&remove_keys, &insert_claims)?;
@@ -157,11 +159,14 @@ impl<'tables> ClaimLedger<'tables> {
             self.tables.activity_records()?,
             Self::ROLE_OBSERVATION_ACTIVITY_LIMIT,
         );
-        let roles = RoleName::ALL
+        let mut role_records = self.tables.role_records()?;
+        role_records.sort_by(|left, right| left.role.cmp(&right.role));
+        let roles = role_records
             .into_iter()
             .map(|role| RoleStatus {
-                role,
-                claims: Self::claims_for(&entries, role),
+                claims: Self::claims_for(&entries, &role.role),
+                role: role.role,
+                harness: role.harness,
             })
             .collect();
 
@@ -183,7 +188,7 @@ impl<'tables> ClaimLedger<'tables> {
                     })
                     .map(move |entry| ScopeConflict {
                         scope: scope.clone(),
-                        held_by: entry.role,
+                        held_by: entry.role.clone(),
                         held_reason: entry.reason.clone(),
                     })
             })
@@ -200,13 +205,13 @@ impl<'tables> ClaimLedger<'tables> {
         handoff
             .scopes
             .iter()
-            .all(|scope| Self::role_holds_exact(entries, handoff.from, scope))
+            .all(|scope| Self::role_holds_exact(entries, &handoff.from, scope))
     }
 
-    fn role_holds_exact(entries: &[StoredClaim], role: RoleName, scope: &ScopeReference) -> bool {
+    fn role_holds_exact(entries: &[StoredClaim], role: &RoleName, scope: &ScopeReference) -> bool {
         entries
             .iter()
-            .any(|entry| entry.role == role && entry.scope == *scope)
+            .any(|entry| entry.role == *role && entry.scope == *scope)
     }
 
     fn target_conflicts_for(entries: &[StoredClaim], handoff: &RoleHandoff) -> Vec<ScopeConflict> {
@@ -223,7 +228,7 @@ impl<'tables> ClaimLedger<'tables> {
                     })
                     .map(move |entry| ScopeConflict {
                         scope: scope.clone(),
-                        held_by: entry.role,
+                        held_by: entry.role.clone(),
                         held_reason: entry.reason.clone(),
                     })
             })
@@ -237,10 +242,10 @@ impl<'tables> ClaimLedger<'tables> {
         })
     }
 
-    fn claims_for(entries: &[StoredClaim], role: RoleName) -> Vec<ClaimEntry> {
+    fn claims_for(entries: &[StoredClaim], role: &RoleName) -> Vec<ClaimEntry> {
         entries
             .iter()
-            .filter(|entry| entry.role == role)
+            .filter(|entry| entry.role == *role)
             .map(|entry| ClaimEntry {
                 scope: entry.scope.clone(),
                 reason: entry.reason.clone(),

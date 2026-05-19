@@ -4,12 +4,13 @@
 coordination, scope acquisition, scheduling, escalation, and the
 daemon boundary that replaces the transitional workspace lock helper.*
 
-> Status: the repo and ordinary contract exist. The library owns a
-> sema-backed claim/activity store today. The long-lived daemon,
-> thin CLI, owner-signal contract, lane-registry table, and lock-file
-> projection from daemon state are still missing. `tools/orchestrate`
-> remains the live workspace helper until the daemon becomes the
-> source of truth.
+> Status: the repo, ordinary contract, owner contract, sema-backed
+> claim/activity store, dynamic role registry, raw role-creation path,
+> and local repository-index refresh exist. The long-lived daemon,
+> real Signal sockets, lock-file projection from daemon state, and
+> GitHub/ghq-backed report-repository creation are still missing.
+> `tools/orchestrate` remains the live workspace helper until the
+> daemon becomes the source of truth.
 
 ## 0 - TL;DR
 
@@ -58,19 +59,21 @@ This runtime repo contains:
 - a library crate, `persona_orchestrate`, that consumes
   `signal-persona-orchestrate` and dispatches typed
   `OrchestrateRequest` values;
-- sema-backed `claims`, `activities`, and `activity_next_slot`
-  tables;
+- sema-backed `claims`, `roles`, `repositories`, `activities`, and
+  `activity_next_slot` tables;
 - claim, release, handoff, role-observation, activity-submission,
   and activity-query handlers;
-- a scaffold daemon binary.
+- owner-request handlers for role creation, role retirement, and
+  local repository-index refresh;
+- a raw CLI binary carried by the current `persona-orchestrate-daemon`
+  target while the real daemon/socket split is pending.
 
 The full component surface is:
 
 ```text
 persona-orchestrate/
   src/lib.rs
-  src/bin/persona-orchestrate-daemon.rs
-  src/bin/persona-orchestrate.rs
+  src/main.rs
   bootstrap-policy.nota
 signal-persona-orchestrate/
 owner-signal-persona-orchestrate/
@@ -108,23 +111,23 @@ requests peers and the CLI can make without owner authority:
 - destination additions: activity, claim, and lane-registry
   subscriptions
 
-The current contract still uses `RoleName` for lane identity. The
-destination replaces closed role-enum churn with a typed
-`LaneIdentifier` backed by the runtime lane registry.
+The current ordinary contract uses `RoleIdentifier` for dynamic role
+identity. `RoleName` remains as a compatibility alias only; role
+creation is data in the runtime registry, not a contract enum edit.
 
 ## 4 - Owner Wire Surface
 
-`owner-signal-persona-orchestrate` is the owner-only surface to create.
-It carries mind's authority over orchestrate policy and machinery:
+`owner-signal-persona-orchestrate` is the owner-only surface. The
+implemented MVP carries:
 
-- agent-run orders: spawn, stop, pause, resume
-- scope orders: acquire, release
-- policy orders: scheduling and supervision policy
-- escalation orders
-- lane-registry orders: register lane, retract lane, update lane
-  metadata
-- owner observations and subscriptions for snapshots, agent lifecycle,
-  executor capacity, and scope events
+- `CreateRoleOrder`
+- `RetireRoleOrder`
+- `RefreshRepositoryIndexOrder`
+
+Destination additions include agent-run orders, scope acquisition
+orders, scheduling/supervision policy, escalation orders, and owner
+subscriptions for snapshots, agent lifecycle, executor capacity, and
+scope events.
 
 Owner-only operations are inexpressible on the ordinary contract.
 The daemon binds a separate socket and actor for this surface.
@@ -139,6 +142,8 @@ after first-start bootstrap:
 
 | Table | Purpose |
 |---|---|
+| `roles` | dynamic role registry, harness kind, report repository path, report lane path |
+| `repositories` | refreshed local checkout index and workspace link metadata |
 | `lane_registry` | registered lanes, assistant-of relation, beads label, metadata |
 | `scheduling_policy` | capacity caps, priorities, backpressure rules |
 | `supervision_policies` | restart, drain, and escalation policy |
@@ -148,7 +153,7 @@ Working tables are produced by operation:
 | Table | Purpose | Status |
 |---|---|---|
 | `claims` | active role claims | implemented |
-| `claim_archive` | released or replaced claims | implemented |
+| `claim_archive` | released or replaced claims | missing |
 | `activities` | store-stamped activity log | implemented |
 | `activity_next_slot` | next activity slot | implemented |
 | `agent_runs` | agent-run lifecycle records | missing |
@@ -191,6 +196,12 @@ are never the source of truth once the daemon is live.
   directory-minus-file handoff shape.
 - Lane registry changes are owner-authority operations, not contract
   enum additions.
+- Role creation records a typed harness kind beside the role
+  identifier; harness assignment is not hidden in the role string.
+- Role creation creates a report-repository path and report-lane path
+  before inserting the role record.
+- Repository refresh reads local checkouts from the configured Git
+  index root and creates workspace `repos/` links.
 - Lock files are projections of typed state, not durable authority.
 - BEADS is never an owned claim scope.
 
@@ -211,12 +222,15 @@ are never the source of truth once the daemon is live.
 src/lib.rs        public library surface and re-exports
 src/error.rs      crate error enum
 src/location.rs   redb store path wrapper
-src/tables.rs     sema-backed claim/activity tables
+src/layout.rs     workspace/git-index path policy
+src/tables.rs     sema-backed claim/activity/role/repository tables
 src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
-src/service.rs    OrchestrateRequest dispatch
-src/main.rs       daemon scaffold
-tests/ledger.rs   sema-backed claim/activity behavior and boundary witnesses
+src/role.rs       owner role creation and retirement handlers
+src/repository.rs local repository-index refresh handler
+src/service.rs    ordinary and owner request dispatch
+src/main.rs       raw direct-store CLI while daemon/socket split is pending
+tests/ledger.rs   sema-backed claim/activity/role/repository witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

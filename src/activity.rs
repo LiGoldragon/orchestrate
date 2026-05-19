@@ -70,14 +70,14 @@ impl<'filter> ActivityFilterMatch<'filter> {
 
     fn matches(&self, activity: &StoredActivity) -> bool {
         match self.filter {
-            ActivityFilter::RoleFilter(role) => activity.role == *role,
+            ActivityFilter::RoleFilter(role) => &activity.role == role,
             ActivityFilter::PathPrefix(prefix) => match &activity.scope {
                 ScopeReference::Path(path) => path_matches_prefix(path.as_str(), prefix.as_str()),
                 ScopeReference::Task(_) => false,
             },
             ActivityFilter::TaskToken(token) => match &activity.scope {
                 ScopeReference::Path(_) => false,
-                ScopeReference::Task(activity_token) => *activity_token == *token,
+                ScopeReference::Task(activity_token) => activity_token == token,
             },
         }
     }

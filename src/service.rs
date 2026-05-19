@@ -1,17 +1,29 @@
+use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
 use signal_persona_orchestrate::{OrchestrateReply, OrchestrateRequest};
 use std::sync::Mutex;
 
-use crate::{ActivityLedger, ClaimLedger, Error, OrchestrateTables, Result, StoreLocation};
+use crate::{
+    ActivityLedger, ClaimLedger, Error, OrchestrateLayout, OrchestrateTables, RepositoryRegistry,
+    Result, RoleRegistry, StoreLocation,
+};
 
 pub struct OrchestrateService {
     tables: OrchestrateTables,
+    layout: OrchestrateLayout,
     sequence: Mutex<()>,
 }
 
 impl OrchestrateService {
     pub fn open(store: &StoreLocation) -> Result<Self> {
+        Self::open_with_layout(store, OrchestrateLayout::primary_workspace())
+    }
+
+    pub fn open_with_layout(store: &StoreLocation, layout: OrchestrateLayout) -> Result<Self> {
+        let tables = OrchestrateTables::open(store)?;
+        RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
         Ok(Self {
-            tables: OrchestrateTables::open(store)?,
+            tables,
+            layout,
             sequence: Mutex::new(()),
         })
     }
@@ -41,5 +53,31 @@ impl OrchestrateService {
                 ActivityLedger::new(&self.tables).query(query)
             }
         }
+    }
+
+    pub fn handle_owner(&self, request: OwnerOrchestrateRequest) -> Result<OwnerOrchestrateReply> {
+        let _sequence = self
+            .sequence
+            .lock()
+            .map_err(|_| Error::ServiceSequencePoisoned)?;
+        match request {
+            OwnerOrchestrateRequest::CreateRoleOrder(order) => {
+                RoleRegistry::new(&self.tables, &self.layout).create_role(order)
+            }
+            OwnerOrchestrateRequest::RetireRoleOrder(order) => {
+                RoleRegistry::new(&self.tables, &self.layout).retire_role(order)
+            }
+            OwnerOrchestrateRequest::RefreshRepositoryIndexOrder(_order) => {
+                RepositoryRegistry::new(&self.tables, &self.layout).refresh()
+            }
+        }
+    }
+
+    pub fn roles(&self) -> Result<Vec<crate::StoredRole>> {
+        self.tables.role_records()
+    }
+
+    pub fn repositories(&self) -> Result<Vec<crate::StoredRepository>> {
+        self.tables.repository_records()
     }
 }

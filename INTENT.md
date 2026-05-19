@@ -11,6 +11,9 @@ Synthesised from psyche statements; not embellished.*
 - `persona-orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.
+- The immediate MVP should create dynamic roles named by the work they
+  own, create report lanes for those roles, and track enough typed
+  claim state to replace fixed assistant-lane lock files.
 
 ## Boundaries
 
@@ -26,6 +29,11 @@ Synthesised from psyche statements; not embellished.*
 - Lane definitions are data, not permanent enum variants. The
   runtime registry belongs in `persona-orchestrate` state, and owner
   authority mutates it.
+- Harness assignment is a typed role field (`Codex` or `Claude` in
+  the MVP), not information hidden inside the role string.
+- Repository management starts from local checkouts: refresh local
+  repository state, link checkouts into the workspace, and add
+  GitHub/ghq remote creation after the raw shape is useful.
 - Components can ship in raw form first. They do not need full
   cross-component wiring before agents can use them directly.
 - Claiming a directory claims everything in that directory. If an

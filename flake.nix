@@ -40,6 +40,22 @@
         checks = {
           build = craneLib.cargoBuild (commonArgs // { inherit cargoArtifacts; });
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
+          test-dynamic-role-creation = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs =
+                "--test ledger dynamic_role_creation_creates_report_lane_and_lock_identity";
+            }
+          );
+          test-repository-refresh = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs =
+                "--test ledger repository_refresh_indexes_local_checkouts_and_workspace_links";
+            }
+          );
           test-doc = craneLib.cargoTest (
             commonArgs
             // {

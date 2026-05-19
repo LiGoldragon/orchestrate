@@ -2,13 +2,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sema::{SchemaVersion, Table};
 use sema_engine::{Engine, EngineOpen};
-use signal_persona_orchestrate::{Activity, RoleName, ScopeReason, ScopeReference, TimestampNanos};
+use signal_persona_orchestrate::{
+    Activity, HarnessKind, RoleName, ScopeReason, ScopeReference, TimestampNanos, WirePath,
+};
 
 use crate::{Result, StoreLocation};
 
 const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
 
 const CLAIMS: Table<&'static str, StoredClaim> = Table::new("claims");
+const ROLES: Table<&'static str, StoredRole> = Table::new("roles");
+const REPOSITORIES: Table<&'static str, StoredRepository> = Table::new("repositories");
 const ACTIVITIES: Table<u64, StoredActivity> = Table::new("activities");
 const ACTIVITY_NEXT_SLOT: Table<&'static str, u64> = Table::new("activity_next_slot");
 const ACTIVITY_NEXT_SLOT_KEY: &str = "next";
@@ -25,6 +29,22 @@ pub struct StoredClaim {
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredRole {
+    pub role: RoleName,
+    pub harness: HarnessKind,
+    pub report_repository_path: WirePath,
+    pub report_lane_path: WirePath,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredRepository {
+    pub name: String,
+    pub path: WirePath,
+    pub active: bool,
+    pub refreshed_at: TimestampNanos,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredActivity {
     pub slot: u64,
     pub role: RoleName,
@@ -38,6 +58,8 @@ impl OrchestrateTables {
         let engine = Engine::open(EngineOpen::new(store.as_path(), ORCHESTRATE_SCHEMA_VERSION))?;
         engine.storage_kernel().write(|transaction| {
             CLAIMS.ensure(transaction)?;
+            ROLES.ensure(transaction)?;
+            REPOSITORIES.ensure(transaction)?;
             ACTIVITIES.ensure(transaction)?;
             ACTIVITY_NEXT_SLOT.ensure(transaction)?;
             Ok(())
@@ -53,6 +75,74 @@ impl OrchestrateTables {
                 .map(|(_key, claim)| claim)
                 .collect())
         })?)
+    }
+
+    pub fn role_records(&self) -> Result<Vec<StoredRole>> {
+        Ok(self.engine.storage_kernel().read(|transaction| {
+            Ok(ROLES
+                .iter(transaction)?
+                .into_iter()
+                .map(|(_key, role)| role)
+                .collect())
+        })?)
+    }
+
+    pub fn role_record(&self, role: &RoleName) -> Result<Option<StoredRole>> {
+        Ok(self
+            .engine
+            .storage_kernel()
+            .read(|transaction| ROLES.get(transaction, role.as_wire_token()))?)
+    }
+
+    pub fn insert_role(&self, role: &StoredRole) -> Result<()> {
+        self.engine.storage_kernel().write(|transaction| {
+            ROLES.insert(transaction, role.role.as_wire_token(), role)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub fn insert_role_if_missing(&self, role: &StoredRole) -> Result<()> {
+        if self.role_record(&role.role)?.is_none() {
+            self.insert_role(role)?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_role(&self, role: &RoleName) -> Result<()> {
+        self.engine.storage_kernel().write(|transaction| {
+            ROLES.remove(transaction, role.as_wire_token())?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub fn repository_records(&self) -> Result<Vec<StoredRepository>> {
+        Ok(self.engine.storage_kernel().read(|transaction| {
+            Ok(REPOSITORIES
+                .iter(transaction)?
+                .into_iter()
+                .map(|(_key, repository)| repository)
+                .collect())
+        })?)
+    }
+
+    pub fn replace_repositories(&self, repositories: &[StoredRepository]) -> Result<()> {
+        let existing = self
+            .repository_records()?
+            .into_iter()
+            .map(|repository| repository.name)
+            .collect::<Vec<_>>();
+        self.engine.storage_kernel().write(|transaction| {
+            for name in existing {
+                REPOSITORIES.remove(transaction, name.as_str())?;
+            }
+            for repository in repositories {
+                REPOSITORIES.insert(transaction, repository.name.as_str(), repository)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
     }
 
     pub fn replace_claims(
@@ -99,6 +189,10 @@ impl OrchestrateTables {
         })?)
     }
 
+    pub fn current_timestamp(&self) -> Result<TimestampNanos> {
+        StoreClock::system().timestamp()
+    }
+
     fn next_activity_slot(&self) -> Result<ActivitySlot> {
         let stored = self
             .engine
@@ -107,6 +201,33 @@ impl OrchestrateTables {
         match stored {
             Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
             None => Ok(ActivitySlot::after_records(&self.activity_records()?)),
+        }
+    }
+}
+
+impl StoredRole {
+    pub fn new(
+        role: RoleName,
+        harness: HarnessKind,
+        report_repository_path: WirePath,
+        report_lane_path: WirePath,
+    ) -> Self {
+        Self {
+            role,
+            harness,
+            report_repository_path,
+            report_lane_path,
+        }
+    }
+}
+
+impl StoredRepository {
+    pub fn new(name: String, path: WirePath, refreshed_at: TimestampNanos) -> Self {
+        Self {
+            name,
+            path,
+            active: true,
+            refreshed_at,
         }
     }
 }
@@ -148,7 +269,7 @@ impl StoredClaim {
     }
 
     pub fn key(&self) -> String {
-        ClaimKey::new(self.role, &self.scope).into_string()
+        ClaimKey::new(&self.role, &self.scope).into_string()
     }
 }
 
@@ -198,20 +319,20 @@ impl StoreClock {
 }
 
 struct ClaimKey {
-    role: RoleName,
+    role: String,
     scope: String,
 }
 
 impl ClaimKey {
-    fn new(role: RoleName, scope: &ScopeReference) -> Self {
+    fn new(role: &RoleName, scope: &ScopeReference) -> Self {
         Self {
-            role,
+            role: role.as_wire_token().to_string(),
             scope: ScopeKey::new(scope).into_string(),
         }
     }
 
     fn into_string(self) -> String {
-        format!("{}|{}", self.role.as_wire_token(), self.scope)
+        format!("{}|{}", self.role, self.scope)
     }
 }
 
