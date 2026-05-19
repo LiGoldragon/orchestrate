@@ -25,6 +25,10 @@ impl Fixture {
             .prefix(name)
             .tempdir()
             .expect("temporary directory");
+        let workspace = temporary.path().join("workspace");
+        let git_index = temporary.path().join("git-index");
+        std::fs::create_dir_all(&workspace).expect("workspace directory");
+        std::fs::create_dir_all(&git_index).expect("git index directory");
         let store = StoreLocation::new(
             temporary
                 .path()
@@ -32,7 +36,11 @@ impl Fixture {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let service = OrchestrateService::open(&store).expect("service opens");
+        let service = OrchestrateService::open_with_layout(
+            &store,
+            OrchestrateLayout::new(workspace, git_index),
+        )
+        .expect("service opens");
         Self {
             _temporary: temporary,
             service,
