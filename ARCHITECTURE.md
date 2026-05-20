@@ -34,9 +34,21 @@ sockets.
 
 The runtime consumes `signal-frame` contracts with public
 contract-local operation roots. The old public `SignalVerb` wrapper is
-gone from both Orchestrate contracts. `OperationLowering` is the
-runtime-owned translation point from contract operations to lower
-`signal-sema::SemaOperation` effects.
+gone from both Orchestrate contracts. Under the three-layer model
+affirmed 2026-05-20 (per
+`~/primary/skills/component-triad.md` §"Verbs come in three layers"
+and
+`primary/reports/designer/246-v4-bundled-fix-deep-design-with-examples.md`),
+the runtime owns its typed Component Commands (Layer 2) that lower
+contract operations to executable form, and projects them to
+payloadless `signal-sema::SemaOperation` class labels (Layer 3) for
+cross-component observation via `ToSemaOperation`. Sema classes are
+observation-only; they do not carry executable payloads on the wire.
+
+`OperationLowering` (or equivalent — likely renamed in the
+implementation work the operator is doing) is the runtime-owned
+translation point from contract operations to typed Component
+Commands.
 
 The daemon/CLI boundary did not change: the CLI remains a thin
 NOTA-to-Signal adapter and the daemon remains the only process that
