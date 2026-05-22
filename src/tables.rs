@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sema::{SchemaVersion, Table};
 use sema_engine::{Engine, EngineOpen};
 use signal_persona_orchestrate::{
-    Activity, HarnessKind, RoleName, ScopeReason, ScopeReference, TimestampNanos, WirePath,
+    Activity, HarnessKind, LaneIdentifier, LaneRegistration, RoleName, ScopeReason, ScopeReference,
+    TimestampNanos, WirePath,
 };
 
 use crate::{Result, StoreLocation};
@@ -12,6 +13,7 @@ const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
 
 const CLAIMS: Table<&'static str, StoredClaim> = Table::new("claims");
 const ROLES: Table<&'static str, StoredRole> = Table::new("roles");
+const LANE_REGISTRY: Table<&'static str, LaneRegistration> = Table::new("lane_registry");
 const REPOSITORIES: Table<&'static str, StoredRepository> = Table::new("repositories");
 const ACTIVITIES: Table<u64, StoredActivity> = Table::new("activities");
 const ACTIVITY_NEXT_SLOT: Table<&'static str, u64> = Table::new("activity_next_slot");
@@ -59,6 +61,7 @@ impl OrchestrateTables {
         engine.storage_kernel().write(|transaction| {
             CLAIMS.ensure(transaction)?;
             ROLES.ensure(transaction)?;
+            LANE_REGISTRY.ensure(transaction)?;
             REPOSITORIES.ensure(transaction)?;
             ACTIVITIES.ensure(transaction)?;
             ACTIVITY_NEXT_SLOT.ensure(transaction)?;
@@ -112,6 +115,39 @@ impl OrchestrateTables {
     pub fn remove_role(&self, role: &RoleName) -> Result<()> {
         self.engine.storage_kernel().write(|transaction| {
             ROLES.remove(transaction, role.as_wire_token())?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub fn lane_records(&self) -> Result<Vec<LaneRegistration>> {
+        Ok(self.engine.storage_kernel().read(|transaction| {
+            Ok(LANE_REGISTRY
+                .iter(transaction)?
+                .into_iter()
+                .map(|(_key, registration)| registration)
+                .collect())
+        })?)
+    }
+
+    pub fn lane_record(&self, lane: &LaneIdentifier) -> Result<Option<LaneRegistration>> {
+        Ok(self
+            .engine
+            .storage_kernel()
+            .read(|transaction| LANE_REGISTRY.get(transaction, lane.as_wire_token()))?)
+    }
+
+    pub fn insert_lane(&self, registration: &LaneRegistration) -> Result<()> {
+        self.engine.storage_kernel().write(|transaction| {
+            LANE_REGISTRY.insert(transaction, registration.lane.as_wire_token(), registration)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub fn remove_lane(&self, lane: &LaneIdentifier) -> Result<()> {
+        self.engine.storage_kernel().write(|transaction| {
+            LANE_REGISTRY.remove(transaction, lane.as_wire_token())?;
             Ok(())
         })?;
         Ok(())

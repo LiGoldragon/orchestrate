@@ -1,12 +1,15 @@
-use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
+use owner_signal_persona_orchestrate::{
+    OwnerOrchestrateReply, OwnerOrchestrateRequest, Retirement,
+};
 use signal_persona_orchestrate::{
-    ObservationClosed, ObservationOpened, ObservationToken, OrchestrateReply, OrchestrateRequest,
+    Observation, ObservationClosed, ObservationOpened, ObservationToken, OrchestrateReply,
+    OrchestrateRequest,
 };
 use std::sync::Mutex;
 
 use crate::{
-    ActivityLedger, ClaimLedger, Error, LockProjection, OrchestrateLayout, OrchestrateTables,
-    RepositoryRegistry, Result, RoleRegistry, StoreLocation,
+    ActivityLedger, ClaimLedger, Error, LaneRegistry, LockProjection, OrchestrateLayout,
+    OrchestrateTables, RepositoryRegistry, Result, RoleRegistry, StoreLocation,
 };
 
 pub struct OrchestrateService {
@@ -53,8 +56,11 @@ impl OrchestrateService {
                 self.project_locks()?;
                 Ok(reply)
             }
-            OrchestrateRequest::Observe(observation) => {
-                ClaimLedger::new(&self.tables).observe(observation)
+            OrchestrateRequest::Observe(Observation::Roles) => {
+                ClaimLedger::new(&self.tables).observe()
+            }
+            OrchestrateRequest::Observe(Observation::Lanes) => {
+                LaneRegistry::new(&self.tables).observe()
             }
             OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(&self.tables).submit(submission)
@@ -85,13 +91,22 @@ impl OrchestrateService {
                 self.project_locks()?;
                 Ok(reply)
             }
-            OwnerOrchestrateRequest::Retire(order) => {
+            OwnerOrchestrateRequest::Retire(Retirement::Role(order)) => {
                 let reply = RoleRegistry::new(&self.tables, &self.layout).retire_role(order)?;
                 self.project_locks()?;
                 Ok(reply)
             }
+            OwnerOrchestrateRequest::Retire(Retirement::Lane(lane)) => {
+                LaneRegistry::new(&self.tables).retire(lane)
+            }
             OwnerOrchestrateRequest::Refresh(_order) => {
                 RepositoryRegistry::new(&self.tables, &self.layout).refresh()
+            }
+            OwnerOrchestrateRequest::Register(request) => {
+                LaneRegistry::new(&self.tables).register(request)
+            }
+            OwnerOrchestrateRequest::SetAuthority(change) => {
+                LaneRegistry::new(&self.tables).set_authority(change)
             }
         }
     }

@@ -44,6 +44,8 @@ impl OperationLowering {
             OwnerOrchestrateRequest::Create(_) => SemaOperation::Mutate,
             OwnerOrchestrateRequest::Retire(_) => SemaOperation::Retract,
             OwnerOrchestrateRequest::Refresh(_) => SemaOperation::Mutate,
+            OwnerOrchestrateRequest::Register(_) => SemaOperation::Mutate,
+            OwnerOrchestrateRequest::SetAuthority(_) => SemaOperation::Mutate,
         };
         LoweredOperation::new(operation.operation_kind(), vec![effect])
     }

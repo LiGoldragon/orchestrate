@@ -118,8 +118,8 @@ fn handle_ordinary_stream(
         Ok(operation) => {
             let _lowered = OperationLowering::ordinary(&operation);
             match service.handle(operation) {
-                Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok { payload })),
-                Err(_error) => Reply::aborted(
+                Ok(payload) => Reply::committed(NonEmpty::single(SubReply::Ok(payload))),
+                Err(_error) => Reply::operation_aborted(
                     0,
                     OperationFailureReason::DomainRejection,
                     NonEmpty::single(SubReply::Failed {
@@ -148,8 +148,8 @@ fn handle_owner_stream(stream: &mut UnixStream, service: &OrchestrateService) ->
         Ok(operation) => {
             let _lowered = OperationLowering::owner(&operation);
             match service.handle_owner(operation) {
-                Ok(payload) => Reply::completed(NonEmpty::single(SubReply::Ok { payload })),
-                Err(_error) => Reply::aborted(
+                Ok(payload) => Reply::committed(NonEmpty::single(SubReply::Ok(payload))),
+                Err(_error) => Reply::operation_aborted(
                     0,
                     OperationFailureReason::DomainRejection,
                     NonEmpty::single(SubReply::Failed {

@@ -1,8 +1,7 @@
 use signal_persona_orchestrate::{
     Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, HandoffAcceptance, HandoffRejection,
     HandoffRejectionReason, OrchestrateReply, ReleaseAcknowledgment, RoleClaim, RoleHandoff,
-    RoleName, RoleObservation, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict,
-    ScopeReference,
+    RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,
 };
 
 use crate::{OrchestrateTables, Result, StoredActivity, StoredClaim};
@@ -153,7 +152,7 @@ impl<'tables> ClaimLedger<'tables> {
         }))
     }
 
-    pub fn observe(&self, _observation: RoleObservation) -> Result<OrchestrateReply> {
+    pub fn observe(&self) -> Result<OrchestrateReply> {
         let entries = self.tables.claim_records()?;
         let recent_activity = Self::recent_activity(
             self.tables.activity_records()?,

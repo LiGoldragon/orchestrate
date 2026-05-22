@@ -1,9 +1,11 @@
 use persona_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, CreateRoleOrder, HarnessKind,
-    ObservationSubscription, ObservationToken, OperationKind, OperationLowering, OrchestrateLayout,
-    OrchestrateReply, OrchestrateRequest, OrchestrateService, OwnerOrchestrateReply,
-    OwnerOrchestrateRequest, RefreshRepositoryIndexOrder, RoleClaim, RoleHandoff, RoleName,
-    RoleObservation, RoleRelease, ScopeReason, ScopeReference, StoreLocation, TaskToken, WirePath,
+    ActivityFilter, ActivityQuery, ActivitySubmission, CreateRoleOrder, HarnessKind, LaneAuthority,
+    LaneIdentifier, LaneRegistrationRequest, LaneRegistry, Observation, ObservationSubscription,
+    ObservationToken, OperationKind, OperationLowering, OrchestrateLayout, OrchestrateReply,
+    OrchestrateRequest, OrchestrateService, OwnerOrchestrateReply, OwnerOrchestrateRequest,
+    RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
+    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, StoreLocation, TaskToken,
+    WirePath,
 };
 use signal_sema::SemaOperation;
 use std::path::PathBuf;
@@ -98,6 +100,18 @@ fn role(value: &str) -> RoleName {
     RoleName::from_wire_token(value).expect("role")
 }
 
+fn role_token(value: &str) -> RoleToken {
+    RoleToken::from_text(value).expect("role token")
+}
+
+fn role_vector(values: &[&str]) -> Role {
+    Role::try_new(values.iter().map(|value| role_token(value)).collect()).expect("role vector")
+}
+
+fn lane(value: &str) -> LaneIdentifier {
+    LaneIdentifier::from_wire_token(value).expect("lane")
+}
+
 fn operator() -> RoleName {
     role("operator")
 }
@@ -132,6 +146,42 @@ fn current_workspace_roles() -> Vec<RoleName> {
 }
 
 #[test]
+fn lane_identifier_derivation_follows_role_vector_authority_and_ordinal() {
+    let cases = [
+        (
+            role_vector(&["Designer"]),
+            LaneAuthority::Structural,
+            0,
+            "designer",
+        ),
+        (
+            role_vector(&["Designer"]),
+            LaneAuthority::Structural,
+            1,
+            "second-designer",
+        ),
+        (
+            role_vector(&["Note", "Designer"]),
+            LaneAuthority::Support,
+            0,
+            "note-designer-assistant",
+        ),
+        (
+            role_vector(&["PersonaSignal", "Designer"]),
+            LaneAuthority::Structural,
+            0,
+            "persona-signal-designer",
+        ),
+    ];
+
+    for (role, authority, prior_count, expected) in cases {
+        let lane = LaneRegistry::derive_identifier(&role, authority, prior_count)
+            .expect("derive identifier");
+        assert_eq!(lane.as_wire_token(), expected);
+    }
+}
+
+#[test]
 fn ordinary_contract_operations_lower_to_sema_effects() {
     let cases = [
         (
@@ -159,7 +209,7 @@ fn ordinary_contract_operations_lower_to_sema_effects() {
             SemaOperation::Mutate,
         ),
         (
-            OrchestrateRequest::Observe(RoleObservation),
+            OrchestrateRequest::Observe(Observation::Roles),
             OperationKind::Observe,
             SemaOperation::Match,
         ),
@@ -214,15 +264,33 @@ fn owner_contract_operations_lower_to_sema_effects() {
             SemaOperation::Mutate,
         ),
         (
-            OwnerOrchestrateRequest::Retire(owner_signal_persona_orchestrate::RetireRoleOrder {
+            OwnerOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
                 role: role("primary-lowering-owner-retire"),
-            }),
+            })),
             owner_signal_persona_orchestrate::OwnerOperationKind::Retire,
             SemaOperation::Retract,
         ),
         (
             OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}),
             owner_signal_persona_orchestrate::OwnerOperationKind::Refresh,
+            SemaOperation::Mutate,
+        ),
+        (
+            OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+                role: role_vector(&["Designer"]),
+                authority: LaneAuthority::Structural,
+            }),
+            owner_signal_persona_orchestrate::OwnerOperationKind::Register,
+            SemaOperation::Mutate,
+        ),
+        (
+            OwnerOrchestrateRequest::SetAuthority(
+                owner_signal_persona_orchestrate::LaneAuthorityChange {
+                    lane: lane("designer"),
+                    authority: LaneAuthority::Support,
+                },
+            ),
+            owner_signal_persona_orchestrate::OwnerOperationKind::SetAuthority,
             SemaOperation::Mutate,
         ),
     ];
@@ -318,7 +386,7 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     let snapshot = fixture
         .service
         .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            RoleObservation,
+            Observation::Roles,
         ))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -384,7 +452,7 @@ fn activity_submission_query_and_observation_are_store_stamped() {
     let snapshot = fixture
         .service
         .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            RoleObservation,
+            Observation::Roles,
         ))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -403,7 +471,7 @@ fn role_observation_includes_current_workspace_lanes() {
     let snapshot = fixture
         .service
         .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            RoleObservation,
+            Observation::Roles,
         ))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -449,7 +517,7 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
     let snapshot = fixture
         .service
         .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            RoleObservation,
+            Observation::Roles,
         ))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -476,6 +544,93 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
         std::fs::read_to_string(lock_path).expect("lock file"),
         "/tmp/primary-orchestrate-mvp-zxq9-never-collide # dynamic role owns its work\n"
     );
+}
+
+#[test]
+fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
+    let fixture = Fixture::new("orchestrate-lane-registry");
+    let designer_role = role_vector(&["Designer"]);
+
+    let first = fixture
+        .service
+        .handle_owner(OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+            role: designer_role.clone(),
+            authority: LaneAuthority::Structural,
+        }))
+        .expect("register first lane");
+    let OwnerOrchestrateReply::LaneRegistered(first) = first else {
+        panic!("expected lane registered");
+    };
+    assert_eq!(first.registration.lane.as_wire_token(), "designer");
+
+    let second = fixture
+        .service
+        .handle_owner(OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+            role: designer_role,
+            authority: LaneAuthority::Structural,
+        }))
+        .expect("register second lane");
+    let OwnerOrchestrateReply::LaneRegistered(second) = second else {
+        panic!("expected lane registered");
+    };
+    assert_eq!(second.registration.lane.as_wire_token(), "second-designer");
+
+    let observed = fixture
+        .service
+        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .expect("observe lanes");
+    let OrchestrateReply::LanesObserved(observed) = observed else {
+        panic!("expected lanes observed");
+    };
+    assert_eq!(observed.lanes.len(), 2);
+    assert!(
+        observed
+            .lanes
+            .iter()
+            .any(|registration| registration.lane.as_wire_token() == "designer")
+    );
+    assert!(
+        observed
+            .lanes
+            .iter()
+            .any(|registration| registration.lane.as_wire_token() == "second-designer")
+    );
+
+    let set = fixture
+        .service
+        .handle_owner(OwnerOrchestrateRequest::SetAuthority(
+            owner_signal_persona_orchestrate::LaneAuthorityChange {
+                lane: lane("designer"),
+                authority: LaneAuthority::Support,
+            },
+        ))
+        .expect("set authority");
+    let OwnerOrchestrateReply::LaneAuthoritySet(set) = set else {
+        panic!("expected authority set");
+    };
+    assert_eq!(set.lane.as_wire_token(), "designer");
+    assert_eq!(set.authority, LaneAuthority::Support);
+
+    let retired = fixture
+        .service
+        .handle_owner(OwnerOrchestrateRequest::Retire(Retirement::Lane(lane(
+            "designer",
+        ))))
+        .expect("retire lane");
+    let OwnerOrchestrateReply::LaneRetired(retired) = retired else {
+        panic!("expected lane retired");
+    };
+    assert_eq!(retired.lane.as_wire_token(), "designer");
+
+    let observed = fixture
+        .service
+        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .expect("observe lanes");
+    let OrchestrateReply::LanesObserved(observed) = observed else {
+        panic!("expected lanes observed");
+    };
+    assert_eq!(observed.lanes.len(), 1);
+    assert_eq!(observed.lanes[0].lane.as_wire_token(), "second-designer");
 }
 
 #[test]

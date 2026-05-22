@@ -105,7 +105,7 @@ where
 {
     match reply {
         Reply::Accepted { per_operation, .. } => match per_operation.into_head() {
-            SubReply::Ok { payload, .. } => Ok(payload),
+            SubReply::Ok(payload) => Ok(payload),
             other => Err(invalid_input(format!(
                 "daemon returned non-OK subreply: {other:?}"
             ))),

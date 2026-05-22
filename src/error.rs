@@ -42,4 +42,13 @@ pub enum Error {
 
     #[error("signal frame is too large: {length} bytes")]
     FrameTooLarge { length: usize },
+
+    #[error("lane role vector must contain at least one token")]
+    EmptyLaneRole,
+
+    #[error("lane ordinal {ordinal} is unsupported")]
+    UnsupportedLaneOrdinal { ordinal: usize },
+
+    #[error("lane is not registered: {lane}")]
+    LaneNotRegistered { lane: String },
 }

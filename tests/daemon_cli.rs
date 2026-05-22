@@ -13,8 +13,8 @@ use owner_signal_persona_orchestrate::{
 use persona_orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
 use signal_frame::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
 use signal_persona_orchestrate::{
-    OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest, RoleClaim,
-    RoleObservation, ScopeReason, ScopeReference,
+    Observation, OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest,
+    RoleClaim, ScopeReason, ScopeReference,
 };
 use tempfile::TempDir;
 
@@ -146,7 +146,7 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
     assert!(Path::new(created.report_repository_path.as_str()).is_dir());
     assert!(Path::new(created.report_lane_path.as_str()).exists());
 
-    let output = fixture.cli(OrchestrateRequest::Observe(RoleObservation));
+    let output = fixture.cli(OrchestrateRequest::Observe(Observation::Roles));
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -206,7 +206,7 @@ fn owner_socket_rejects_ordinary_frame() {
     let fixture = DaemonFixture::start("persona-orchestrate-ordinary-reject");
     let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
         exchange: exchange(),
-        request: OrchestrateRequest::Observe(RoleObservation).into_request(),
+        request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
     });
     let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
     stream
