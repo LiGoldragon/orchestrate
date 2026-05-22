@@ -3,13 +3,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sema::{SchemaVersion, Table};
 use sema_engine::{Engine, EngineOpen};
 use signal_persona_orchestrate::{
-    Activity, HarnessKind, LaneIdentifier, LaneRegistration, RoleName, ScopeReason, ScopeReference,
-    TimestampNanos, WirePath,
+    Activity, ApplicationFailure, ApplicationSuccess, HarnessKind, LaneIdentifier,
+    LaneRegistration, PartialApplied, RoleName, ScopeReason, ScopeReference, TimestampNanos,
+    WirePath,
 };
 
 use crate::{Result, StoreLocation};
 
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(2);
 
 const CLAIMS: Table<&'static str, StoredClaim> = Table::new("claims");
 const ROLES: Table<&'static str, StoredRole> = Table::new("roles");
@@ -18,6 +19,9 @@ const REPOSITORIES: Table<&'static str, StoredRepository> = Table::new("reposito
 const ACTIVITIES: Table<u64, StoredActivity> = Table::new("activities");
 const ACTIVITY_NEXT_SLOT: Table<&'static str, u64> = Table::new("activity_next_slot");
 const ACTIVITY_NEXT_SLOT_KEY: &str = "next";
+const DIVERGENCES: Table<u64, StoredDivergence> = Table::new("divergences");
+const DIVERGENCE_NEXT_SLOT: Table<&'static str, u64> = Table::new("divergence_next_slot");
+const DIVERGENCE_NEXT_SLOT_KEY: &str = "next";
 
 pub struct OrchestrateTables {
     engine: Engine,
@@ -55,6 +59,14 @@ pub struct StoredActivity {
     pub stamped_at: TimestampNanos,
 }
 
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredDivergence {
+    pub slot: u64,
+    pub succeeded: Vec<ApplicationSuccess>,
+    pub failed: Vec<ApplicationFailure>,
+    pub stamped_at: TimestampNanos,
+}
+
 impl OrchestrateTables {
     pub fn open(store: &StoreLocation) -> Result<Self> {
         let engine = Engine::open(EngineOpen::new(store.as_path(), ORCHESTRATE_SCHEMA_VERSION))?;
@@ -65,6 +77,8 @@ impl OrchestrateTables {
             REPOSITORIES.ensure(transaction)?;
             ACTIVITIES.ensure(transaction)?;
             ACTIVITY_NEXT_SLOT.ensure(transaction)?;
+            DIVERGENCES.ensure(transaction)?;
+            DIVERGENCE_NEXT_SLOT.ensure(transaction)?;
             Ok(())
         })?;
         Ok(Self { engine })
@@ -225,6 +239,31 @@ impl OrchestrateTables {
         })?)
     }
 
+    pub fn append_divergence(&self, partial: PartialApplied) -> Result<StoredDivergence> {
+        let slot = self.next_divergence_slot()?;
+        let stamped_at = self.current_timestamp()?;
+        let divergence = StoredDivergence::new(slot.value(), partial, stamped_at);
+        Ok(self.engine.storage_kernel().write(|transaction| {
+            DIVERGENCES.insert(transaction, slot.value(), &divergence)?;
+            DIVERGENCE_NEXT_SLOT.insert(
+                transaction,
+                DIVERGENCE_NEXT_SLOT_KEY,
+                &slot.next_value(),
+            )?;
+            Ok(divergence)
+        })?)
+    }
+
+    pub fn divergence_records(&self) -> Result<Vec<StoredDivergence>> {
+        Ok(self.engine.storage_kernel().read(|transaction| {
+            Ok(DIVERGENCES
+                .iter(transaction)?
+                .into_iter()
+                .map(|(_slot, divergence)| divergence)
+                .collect())
+        })?)
+    }
+
     pub fn current_timestamp(&self) -> Result<TimestampNanos> {
         StoreClock::system().timestamp()
     }
@@ -236,7 +275,22 @@ impl OrchestrateTables {
             .read(|transaction| ACTIVITY_NEXT_SLOT.get(transaction, ACTIVITY_NEXT_SLOT_KEY))?;
         match stored {
             Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
-            None => Ok(ActivitySlot::after_records(&self.activity_records()?)),
+            None => Ok(ActivitySlot::after_activity_records(
+                &self.activity_records()?,
+            )),
+        }
+    }
+
+    fn next_divergence_slot(&self) -> Result<ActivitySlot> {
+        let stored = self
+            .engine
+            .storage_kernel()
+            .read(|transaction| DIVERGENCE_NEXT_SLOT.get(transaction, DIVERGENCE_NEXT_SLOT_KEY))?;
+        match stored {
+            Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
+            None => Ok(ActivitySlot::after_divergence_records(
+                &self.divergence_records()?,
+            )),
         }
     }
 }
@@ -295,6 +349,24 @@ impl StoredActivity {
     }
 }
 
+impl StoredDivergence {
+    fn new(slot: u64, partial: PartialApplied, stamped_at: TimestampNanos) -> Self {
+        Self {
+            slot,
+            succeeded: partial.succeeded,
+            failed: partial.failed,
+            stamped_at,
+        }
+    }
+
+    pub fn into_partial_applied(self) -> PartialApplied {
+        PartialApplied {
+            succeeded: self.succeeded,
+            failed: self.failed,
+        }
+    }
+}
+
 impl StoredClaim {
     pub fn new(role: RoleName, scope: ScopeReference, reason: ScopeReason) -> Self {
         Self {
@@ -318,10 +390,19 @@ impl ActivitySlot {
         Self { value }
     }
 
-    fn after_records(records: &[StoredActivity]) -> Self {
+    fn after_activity_records(records: &[StoredActivity]) -> Self {
         let value = records
             .iter()
             .map(|activity| activity.slot)
+            .max()
+            .map_or(0, |slot| slot + 1);
+        Self { value }
+    }
+
+    fn after_divergence_records(records: &[StoredDivergence]) -> Self {
+        let value = records
+            .iter()
+            .map(|divergence| divergence.slot)
             .max()
             .map_or(0, |slot| slot + 1);
         Self { value }

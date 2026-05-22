@@ -1,12 +1,15 @@
 use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
 use signal_executor::{Executor, ObserverSet};
 use signal_frame::{AcceptedOutcome, Reply, Request, RequestPayload, SubReply};
-use signal_persona_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest};
+use signal_persona_orchestrate::{
+    ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied,
+};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::{
     Error, LockProjection, OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor,
     OrdinaryLowering, OwnerCommandExecutor, OwnerLowering, Result, RoleRegistry, StoreLocation,
+    StoredDivergence,
 };
 
 pub struct OrchestrateService {
@@ -83,6 +86,14 @@ impl OrchestrateService {
 
     pub fn repositories(&self) -> Result<Vec<crate::StoredRepository>> {
         self.tables.repository_records()
+    }
+
+    pub fn record_partial_application(&self, partial: PartialApplied) -> Result<OrchestrateReply> {
+        crate::DivergenceLedger::new(&self.tables).record_partial_application(partial)
+    }
+
+    pub fn divergences(&self) -> Result<Vec<StoredDivergence>> {
+        self.tables.divergence_records()
     }
 
     pub(crate) fn tables(&self) -> &OrchestrateTables {

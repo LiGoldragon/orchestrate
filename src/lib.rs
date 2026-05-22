@@ -2,6 +2,7 @@ pub mod activity;
 pub mod claim;
 pub mod configuration;
 pub mod daemon;
+pub mod divergence;
 pub mod error;
 pub mod execution;
 pub mod lane;
@@ -18,6 +19,7 @@ pub use activity::ActivityLedger;
 pub use claim::{ClaimLedger, ClaimState};
 pub use configuration::DaemonConfiguration;
 pub use daemon::OrchestrateDaemon;
+pub use divergence::DivergenceLedger;
 pub use error::{Error, Result};
 pub use execution::{
     OrdinaryCommand, OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering, OwnerCommand,
@@ -37,10 +39,14 @@ pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
 pub use signal_persona_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, HarnessKind, LaneAuthority, LaneIdentifier,
-    LaneRegistration, LanesObserved, Observation, ObservationClosed, ObservationEvent,
-    ObservationOpened, ObservationSubscription, ObservationToken, OperationKind, OrchestrateReply,
-    OrchestrateRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName, RoleObservation,
-    RoleRelease, RoleToken, ScopeReason, ScopeReference, TaskToken, TimestampNanos, WirePath,
+    ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
+    ApplicationFailureReason, ApplicationSuccess, DownstreamComponent, HarnessKind, LaneAuthority,
+    LaneIdentifier, LaneRegistration, LanesObserved, Observation, ObservationClosed,
+    ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
+    OrchestrateReply, OrchestrateRequest, PartialApplied, Role, RoleClaim, RoleHandoff,
+    RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
+    TaskToken, TimestampNanos, WirePath,
 };
-pub use tables::{OrchestrateTables, StoredActivity, StoredClaim, StoredRepository, StoredRole};
+pub use tables::{
+    OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredRepository, StoredRole,
+};

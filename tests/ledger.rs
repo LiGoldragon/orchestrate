@@ -1,11 +1,12 @@
 use persona_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, CreateRoleOrder, HarnessKind, LaneAuthority,
-    LaneIdentifier, LaneRegistrationRequest, LaneRegistry, Observation, ObservationSubscription,
-    ObservationToken, OperationKind, OperationLowering, OrchestrateLayout, OrchestrateReply,
-    OrchestrateRequest, OrchestrateService, OwnerOrchestrateReply, OwnerOrchestrateRequest,
-    RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
-    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, StoreLocation, TaskToken,
-    WirePath,
+    ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
+    ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
+    HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry, Observation,
+    ObservationSubscription, ObservationToken, OperationKind, OperationLowering, OrchestrateLayout,
+    OrchestrateReply, OrchestrateRequest, OrchestrateService, OwnerOrchestrateReply,
+    OwnerOrchestrateRequest, PartialApplied, RefreshRepositoryIndexOrder, RetireRoleOrder,
+    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
+    ScopeReference, StoreLocation, TaskToken, WirePath,
 };
 use signal_sema::SemaOperation;
 use std::path::PathBuf;
@@ -462,6 +463,38 @@ fn activity_submission_query_and_observation_are_store_stamped() {
         snapshot.recent_activity[0].reason.as_str(),
         "carve out orchestration machinery"
     );
+}
+
+#[test]
+fn partial_downstream_failure_records_divergence_and_returns_typed_reply() {
+    let fixture = Fixture::new("orchestrate-divergence");
+    let partial = PartialApplied {
+        succeeded: vec![ApplicationSuccess {
+            component: DownstreamComponent::Router,
+            detail: reason("channel 42 installed"),
+        }],
+        failed: vec![ApplicationFailure {
+            component: DownstreamComponent::Harness,
+            reason: ApplicationFailureReason::Unreachable,
+            detail: reason("codex-7 transcript is gone"),
+        }],
+    };
+
+    let reply = fixture
+        .service
+        .record_partial_application(partial.clone())
+        .expect("record partial application");
+
+    let OrchestrateReply::PartialApplied(observed) = reply else {
+        panic!("expected partial applied reply");
+    };
+    assert_eq!(observed, partial);
+
+    let divergences = fixture.service.divergences().expect("stored divergences");
+    assert_eq!(divergences.len(), 1);
+    assert_eq!(divergences[0].slot, 0);
+    assert_eq!(divergences[0].clone().into_partial_applied(), partial);
+    assert!(divergences[0].stamped_at.value() > 0);
 }
 
 #[test]

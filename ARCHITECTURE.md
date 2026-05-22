@@ -194,6 +194,7 @@ Working tables are produced by operation:
 | `agent_executors` | registered execution capacity | missing |
 | `scope_acquisitions` | scope request/adjudication flow | missing |
 | `channel_grants` | channel rights ordered through router | missing |
+| `divergences` | partial downstream mutation successes/failures recorded for recovery | implemented |
 | `escalation_state` | blocked work and user-decision state | missing |
 
 The first-start policy seed is `bootstrap-policy.nota`. Once policy
@@ -253,6 +254,9 @@ Task scopes render in bracketed human form:
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path
   before inserting the role record.
+- A fanned-out Mutate that has at least one downstream success and at
+  least one downstream failure records a divergence and returns a typed
+  `PartialApplied` reply instead of rolling back the successful leg.
 - Repository refresh reads local checkouts from the configured Git
   index root and creates workspace `repos/` links.
 - Lock files are projections of typed state, not durable authority.
@@ -277,6 +281,7 @@ src/error.rs      crate error enum
 src/configuration.rs
                   daemon NOTA config record
 src/daemon.rs     ordinary/owner socket listeners and frame dispatch
+src/divergence.rs partial downstream application recorder
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/lock_projection.rs
@@ -292,6 +297,7 @@ src/main.rs       daemon binary, one NOTA config argument
 src/bin/persona-orchestrate.rs
                   thin CLI, one NOTA request argument, Signal to daemon only
 tests/ledger.rs   sema-backed claim/activity/role/repository and lowering witnesses
+                  plus the first record-divergence partial-failure witness
 tests/architecture.rs
                   CLI boundary source-scan witnesses
 tests/daemon_cli.rs

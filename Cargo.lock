@@ -288,7 +288,7 @@ dependencies = [
 [[package]]
 name = "nota-codec"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/nota-codec.git?branch=main#c861cee597180b9ae707b6bac036695d6f926b5a"
+source = "git+https://github.com/LiGoldragon/nota-codec.git?branch=main#538555e895529e2884b7d37d20c66aadc2a49c08"
 dependencies = [
  "camino",
  "nota-derive",
@@ -314,7 +314,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "owner-signal-persona-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#5e6e8cc758c91ab06482b6e5bca5dd04b4521068"
+source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#92a8ef58fb4c2bde1dbde6ce01cde49ac4ffdcc5"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -603,7 +603,7 @@ dependencies = [
 [[package]]
 name = "signal-persona-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#5863d3390a3cae3604abc62d9e955ef08e14e36f"
+source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#6ee08b48ffab5e2c40c4edf62f8cfd7b6d29a9b1"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -615,7 +615,7 @@ dependencies = [
 [[package]]
 name = "signal-sema"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-sema.git?branch=main#22b036a095857b42a81556666e093f03bf4533a1"
+source = "git+https://github.com/LiGoldragon/signal-sema.git?branch=main#9968ffad5e494954a06a4d61721e5df904bc0c67"
 dependencies = [
  "nota-codec",
  "rkyv",

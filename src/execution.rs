@@ -58,7 +58,8 @@ impl ToSemaOutcome for OrdinaryEffect {
             | Self::Reply(OrchestrateReply::ActivityAcknowledgment(_)) => SemaOutcome::Asserted,
             Self::Reply(OrchestrateReply::ReleaseAcknowledgment(_))
             | Self::Reply(OrchestrateReply::ObservationClosed(_)) => SemaOutcome::Retracted,
-            Self::Reply(OrchestrateReply::HandoffAcceptance(_)) => SemaOutcome::Mutated,
+            Self::Reply(OrchestrateReply::HandoffAcceptance(_))
+            | Self::Reply(OrchestrateReply::PartialApplied(_)) => SemaOutcome::Mutated,
             Self::Reply(OrchestrateReply::RoleSnapshot(_))
             | Self::Reply(OrchestrateReply::LanesObserved(_))
             | Self::Reply(OrchestrateReply::ActivityList(_)) => SemaOutcome::Matched,
@@ -236,7 +237,8 @@ impl ToSemaOutcome for OwnerEffect {
             Self::Reply(OwnerOrchestrateReply::RoleCreated(_))
             | Self::Reply(OwnerOrchestrateReply::RepositoryIndexRefreshed(_))
             | Self::Reply(OwnerOrchestrateReply::LaneRegistered(_))
-            | Self::Reply(OwnerOrchestrateReply::LaneAuthoritySet(_)) => SemaOutcome::Mutated,
+            | Self::Reply(OwnerOrchestrateReply::LaneAuthoritySet(_))
+            | Self::Reply(OwnerOrchestrateReply::PartialApplied(_)) => SemaOutcome::Mutated,
             Self::Reply(OwnerOrchestrateReply::RoleRetired(_))
             | Self::Reply(OwnerOrchestrateReply::LaneRetired(_)) => SemaOutcome::Retracted,
             Self::Reply(OwnerOrchestrateReply::RoleCreationRejected(_))
