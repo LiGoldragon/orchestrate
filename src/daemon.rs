@@ -8,14 +8,10 @@ use std::thread;
 use owner_signal_persona_orchestrate::{
     Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
 };
-use signal_frame::{
-    NonEmpty, OperationFailureReason, Reply, Request, RequestRejectionReason, SubReply,
-};
 use signal_persona_orchestrate::{OrchestrateFrame, OrchestrateFrameBody};
 
 use crate::{
-    DaemonConfiguration, Error, OperationLowering, OrchestrateLayout, OrchestrateService, Result,
-    StoreLocation,
+    DaemonConfiguration, Error, OrchestrateLayout, OrchestrateService, Result, StoreLocation,
 };
 
 const MAX_FRAME_LENGTH: usize = 16 * 1024 * 1024;
@@ -114,23 +110,7 @@ fn handle_ordinary_stream(
         return Err(Error::SocketExpectedRequestFrame);
     };
 
-    let reply = match single_payload(request) {
-        Ok(operation) => {
-            let _lowered = OperationLowering::ordinary(&operation);
-            match service.handle(operation) {
-                Ok(payload) => Reply::committed(NonEmpty::single(SubReply::Ok(payload))),
-                Err(_error) => Reply::operation_aborted(
-                    0,
-                    OperationFailureReason::DomainRejection,
-                    NonEmpty::single(SubReply::Failed {
-                        reason: OperationFailureReason::DomainRejection,
-                        detail: None,
-                    }),
-                ),
-            }
-        }
-        Err(reason) => Reply::rejected(reason),
-    };
+    let reply = service.handle_request(request);
 
     OrchestrateFrame::new(OrchestrateFrameBody::Reply { exchange, reply })
         .encode_length_prefixed()
@@ -144,38 +124,11 @@ fn handle_owner_stream(stream: &mut UnixStream, service: &OrchestrateService) ->
         return Err(Error::SocketExpectedRequestFrame);
     };
 
-    let reply = match single_payload(request) {
-        Ok(operation) => {
-            let _lowered = OperationLowering::owner(&operation);
-            match service.handle_owner(operation) {
-                Ok(payload) => Reply::committed(NonEmpty::single(SubReply::Ok(payload))),
-                Err(_error) => Reply::operation_aborted(
-                    0,
-                    OperationFailureReason::DomainRejection,
-                    NonEmpty::single(SubReply::Failed {
-                        reason: OperationFailureReason::DomainRejection,
-                        detail: None,
-                    }),
-                ),
-            }
-        }
-        Err(reason) => Reply::rejected(reason),
-    };
+    let reply = service.handle_owner_request(request);
 
     OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Reply { exchange, reply })
         .encode_length_prefixed()
         .map_err(Error::SignalFrame)
-}
-
-fn single_payload<Payload>(
-    request: Request<Payload>,
-) -> std::result::Result<Payload, RequestRejectionReason> {
-    let (head, tail) = request.payloads.into_head_and_tail();
-    if tail.is_empty() {
-        Ok(head)
-    } else {
-        Err(RequestRejectionReason::Internal)
-    }
 }
 
 fn read_length_prefixed(stream: &mut UnixStream) -> Result<Vec<u8>> {

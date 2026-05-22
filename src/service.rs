@@ -1,15 +1,12 @@
-use owner_signal_persona_orchestrate::{
-    OwnerOrchestrateReply, OwnerOrchestrateRequest, Retirement,
-};
-use signal_persona_orchestrate::{
-    Observation, ObservationClosed, ObservationOpened, ObservationToken, OrchestrateReply,
-    OrchestrateRequest,
-};
-use std::sync::Mutex;
+use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
+use signal_executor::{Executor, ObserverSet};
+use signal_frame::{AcceptedOutcome, Reply, Request, RequestPayload, SubReply};
+use signal_persona_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest};
+use std::sync::{Mutex, MutexGuard};
 
 use crate::{
-    ActivityLedger, ClaimLedger, Error, LaneRegistry, LockProjection, OrchestrateLayout,
-    OrchestrateTables, RepositoryRegistry, Result, RoleRegistry, StoreLocation,
+    Error, LockProjection, OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor,
+    OrdinaryLowering, OwnerCommandExecutor, OwnerLowering, Result, RoleRegistry, StoreLocation,
 };
 
 pub struct OrchestrateService {
@@ -36,79 +33,48 @@ impl OrchestrateService {
     }
 
     pub fn handle(&self, request: OrchestrateRequest) -> Result<OrchestrateReply> {
-        let _sequence = self
-            .sequence
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        match request {
-            OrchestrateRequest::Claim(claim) => {
-                let reply = ClaimLedger::new(&self.tables).apply_claim(claim)?;
-                self.project_locks()?;
-                Ok(reply)
-            }
-            OrchestrateRequest::Release(release) => {
-                let reply = ClaimLedger::new(&self.tables).apply_release(release)?;
-                self.project_locks()?;
-                Ok(reply)
-            }
-            OrchestrateRequest::Handoff(handoff) => {
-                let reply = ClaimLedger::new(&self.tables).apply_handoff(handoff)?;
-                self.project_locks()?;
-                Ok(reply)
-            }
-            OrchestrateRequest::Observe(Observation::Roles) => {
-                ClaimLedger::new(&self.tables).observe()
-            }
-            OrchestrateRequest::Observe(Observation::Lanes) => {
-                LaneRegistry::new(&self.tables).observe()
-            }
-            OrchestrateRequest::Submit(submission) => {
-                ActivityLedger::new(&self.tables).submit(submission)
-            }
-            OrchestrateRequest::Query(query) => ActivityLedger::new(&self.tables).query(query),
-            OrchestrateRequest::Watch(_subscription) => {
-                let token = self.next_observation_token()?;
-                Ok(OrchestrateReply::ObservationOpened(ObservationOpened {
-                    token,
-                }))
-            }
-            OrchestrateRequest::Unwatch(token) => {
-                Ok(OrchestrateReply::ObservationClosed(ObservationClosed {
-                    token,
-                }))
-            }
-        }
+        let (reply, engine_error) = self.execute_request(request.into_request());
+        first_committed_payload(reply, engine_error)
     }
 
     pub fn handle_owner(&self, request: OwnerOrchestrateRequest) -> Result<OwnerOrchestrateReply> {
-        let _sequence = self
-            .sequence
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        match request {
-            OwnerOrchestrateRequest::Create(order) => {
-                let reply = RoleRegistry::new(&self.tables, &self.layout).create_role(order)?;
-                self.project_locks()?;
-                Ok(reply)
-            }
-            OwnerOrchestrateRequest::Retire(Retirement::Role(order)) => {
-                let reply = RoleRegistry::new(&self.tables, &self.layout).retire_role(order)?;
-                self.project_locks()?;
-                Ok(reply)
-            }
-            OwnerOrchestrateRequest::Retire(Retirement::Lane(lane)) => {
-                LaneRegistry::new(&self.tables).retire(lane)
-            }
-            OwnerOrchestrateRequest::Refresh(_order) => {
-                RepositoryRegistry::new(&self.tables, &self.layout).refresh()
-            }
-            OwnerOrchestrateRequest::Register(request) => {
-                LaneRegistry::new(&self.tables).register(request)
-            }
-            OwnerOrchestrateRequest::SetAuthority(change) => {
-                LaneRegistry::new(&self.tables).set_authority(change)
-            }
-        }
+        let (reply, engine_error) = self.execute_owner_request(request.into_request());
+        first_committed_payload(reply, engine_error)
+    }
+
+    pub fn handle_request(&self, request: Request<OrchestrateRequest>) -> Reply<OrchestrateReply> {
+        let (reply, _engine_error) = self.execute_request(request);
+        reply
+    }
+
+    pub fn handle_owner_request(
+        &self,
+        request: Request<OwnerOrchestrateRequest>,
+    ) -> Reply<OwnerOrchestrateReply> {
+        let (reply, _engine_error) = self.execute_owner_request(request);
+        reply
+    }
+
+    fn execute_request(
+        &self,
+        request: Request<OrchestrateRequest>,
+    ) -> (Reply<OrchestrateReply>, Option<Error>) {
+        let command_executor = OrdinaryCommandExecutor::new(self);
+        let mut executor = Executor::new(OrdinaryLowering, command_executor, ObserverSet::no_op());
+        let reply = futures::executor::block_on(executor.execute(request));
+        let engine_error = executor.take_last_engine_error();
+        (reply, engine_error)
+    }
+
+    fn execute_owner_request(
+        &self,
+        request: Request<OwnerOrchestrateRequest>,
+    ) -> (Reply<OwnerOrchestrateReply>, Option<Error>) {
+        let command_executor = OwnerCommandExecutor::new(self);
+        let mut executor = Executor::new(OwnerLowering, command_executor, ObserverSet::no_op());
+        let reply = futures::executor::block_on(executor.execute(request));
+        let engine_error = executor.take_last_engine_error();
+        (reply, engine_error)
     }
 
     pub fn roles(&self) -> Result<Vec<crate::StoredRole>> {
@@ -119,11 +85,25 @@ impl OrchestrateService {
         self.tables.repository_records()
     }
 
-    fn project_locks(&self) -> Result<()> {
+    pub(crate) fn tables(&self) -> &OrchestrateTables {
+        &self.tables
+    }
+
+    pub(crate) fn layout(&self) -> &OrchestrateLayout {
+        &self.layout
+    }
+
+    pub(crate) fn lock_sequence(&self) -> Result<MutexGuard<'_, ()>> {
+        self.sequence
+            .lock()
+            .map_err(|_| Error::ServiceSequencePoisoned)
+    }
+
+    pub(crate) fn project_locks(&self) -> Result<()> {
         LockProjection::new(&self.tables, &self.layout).project()
     }
 
-    fn next_observation_token(&self) -> Result<ObservationToken> {
+    pub(crate) fn next_observation_token(&self) -> Result<ObservationToken> {
         let mut next = self
             .next_observation_token
             .lock()
@@ -131,5 +111,27 @@ impl OrchestrateService {
         let token = ObservationToken::new(*next);
         *next += 1;
         Ok(token)
+    }
+}
+
+fn first_committed_payload<Payload>(
+    reply: Reply<Payload>,
+    engine_error: Option<Error>,
+) -> Result<Payload> {
+    match reply {
+        Reply::Accepted {
+            outcome: AcceptedOutcome::Committed,
+            per_operation,
+        } => match per_operation.into_head() {
+            SubReply::Ok(payload) => Ok(payload),
+            SubReply::Invalidated | SubReply::Failed { .. } | SubReply::Skipped => {
+                Err(Error::ExecutorReplyNotCommitted)
+            }
+        },
+        Reply::Accepted { .. } => match engine_error {
+            Some(error) => Err(error),
+            None => Err(Error::ExecutorReplyNotCommitted),
+        },
+        Reply::Rejected { reason } => Err(Error::ExecutorReplyRejected { reason }),
     }
 }

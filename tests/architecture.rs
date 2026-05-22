@@ -25,3 +25,26 @@ fn persona_orchestrate_cli_speaks_only_to_daemon_sockets() {
     assert!(source.contains("OrchestrateFrame::new"));
     assert!(source.contains("OwnerOrchestrateFrame::new"));
 }
+
+#[test]
+fn persona_orchestrate_uses_signal_executor_for_both_signal_contracts() {
+    let manifest = include_str!("../Cargo.toml");
+    let execution = include_str!("../src/execution.rs");
+
+    assert!(manifest.contains("signal-executor"));
+    assert!(execution.contains("impl CommandExecutor for OrdinaryCommandExecutor"));
+    assert!(execution.contains("impl CommandExecutor for OwnerCommandExecutor"));
+    assert!(execution.contains("impl LoweringTrait for OrdinaryLowering"));
+    assert!(execution.contains("impl LoweringTrait for OwnerLowering"));
+}
+
+#[test]
+fn daemon_routes_signal_requests_through_executor_backed_service() {
+    let daemon = include_str!("../src/daemon.rs");
+
+    assert!(daemon.contains("handle_request(request)"));
+    assert!(daemon.contains("handle_owner_request(request)"));
+    assert!(!daemon.contains("service.handle(operation)"));
+    assert!(!daemon.contains("service.handle_owner(operation)"));
+    assert!(!daemon.contains("single_payload"));
+}

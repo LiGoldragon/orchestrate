@@ -3,6 +3,7 @@ pub mod claim;
 pub mod configuration;
 pub mod daemon;
 pub mod error;
+pub mod execution;
 pub mod lane;
 pub mod layout;
 pub mod location;
@@ -18,6 +19,10 @@ pub use claim::{ClaimLedger, ClaimState};
 pub use configuration::DaemonConfiguration;
 pub use daemon::OrchestrateDaemon;
 pub use error::{Error, Result};
+pub use execution::{
+    OrdinaryCommand, OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering, OwnerCommand,
+    OwnerCommandExecutor, OwnerEffect, OwnerLowering,
+};
 pub use lane::LaneRegistry;
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;

@@ -51,4 +51,22 @@ pub enum Error {
 
     #[error("lane is not registered: {lane}")]
     LaneNotRegistered { lane: String },
+
+    #[error(
+        "atomic batch has {operation_count} operations; persona-orchestrate supports one operation per execution batch today"
+    )]
+    UnsupportedAtomicBatch { operation_count: usize },
+
+    #[error(
+        "operation plan has {command_count} commands; persona-orchestrate supports one command per operation today"
+    )]
+    UnsupportedAtomicOperationPlan { command_count: usize },
+
+    #[error("executor rejected the request before execution: {reason}")]
+    ExecutorReplyRejected {
+        reason: signal_frame::RequestRejectionReason,
+    },
+
+    #[error("executor did not commit the single operation")]
+    ExecutorReplyNotCommitted,
 }
