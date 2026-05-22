@@ -631,6 +631,17 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     };
     assert_eq!(observed.lanes.len(), 1);
     assert_eq!(observed.lanes[0].lane.as_wire_token(), "second-designer");
+
+    let missing = fixture
+        .service
+        .handle_owner(OwnerOrchestrateRequest::Retire(Retirement::Lane(lane(
+            "missing-designer",
+        ))));
+    assert!(matches!(
+        missing,
+        Err(persona_orchestrate::Error::LaneNotRegistered { lane })
+            if lane == "missing-designer"
+    ));
 }
 
 #[test]

@@ -47,6 +47,11 @@ impl<'tables> LaneRegistry<'tables> {
     }
 
     pub fn retire(&self, lane: LaneIdentifier) -> Result<OwnerOrchestrateReply> {
+        if self.tables.lane_record(&lane)?.is_none() {
+            return Err(Error::LaneNotRegistered {
+                lane: lane.as_wire_token().to_string(),
+            });
+        }
         self.tables.remove_lane(&lane)?;
         Ok(OwnerOrchestrateReply::LaneRetired(LaneRetired { lane }))
     }
