@@ -295,7 +295,7 @@ src/repository.rs local repository-index refresh handler
 src/service.rs    ordinary and owner request dispatch
 src/main.rs       daemon binary, one NOTA config argument
 src/bin/persona-orchestrate.rs
-                  thin CLI, one NOTA request argument, Signal to daemon only
+                  one-line signal_frame::signal_cli! thin client
 tests/ledger.rs   sema-backed claim/activity/role/repository and lowering witnesses
                   plus the first record-divergence partial-failure witness
 tests/architecture.rs

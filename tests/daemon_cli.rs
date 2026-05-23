@@ -81,7 +81,7 @@ impl DaemonFixture {
 
     fn cli(&self, request: impl NotaEncode) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_persona-orchestrate"))
-            .env("PERSONA_ORCHESTRATE_ORDINARY_SOCKET", &self.ordinary_socket)
+            .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
             .env("PERSONA_ORCHESTRATE_OWNER_SOCKET", &self.owner_socket)
             .arg(encode_nota(&request))
             .output()

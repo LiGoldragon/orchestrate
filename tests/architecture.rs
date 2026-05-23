@@ -21,9 +21,13 @@ fn persona_orchestrate_cli_cannot_open_component_database() {
 #[test]
 fn persona_orchestrate_cli_speaks_only_to_daemon_sockets() {
     let source = include_str!("../src/bin/persona-orchestrate.rs");
-    assert!(source.contains("UnixStream::connect"));
-    assert!(source.contains("OrchestrateFrame::new"));
-    assert!(source.contains("OwnerOrchestrateFrame::new"));
+    assert_eq!(
+        source.trim(),
+        "signal_frame::signal_cli!(persona_orchestrate, signal_persona_orchestrate);"
+    );
+    assert!(!source.contains("OrchestrateService"));
+    assert!(!source.contains("OrchestrateFrame::new"));
+    assert!(!source.contains("OwnerOrchestrateFrame::new"));
 }
 
 #[test]
