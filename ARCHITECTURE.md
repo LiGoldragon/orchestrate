@@ -305,6 +305,22 @@ tests/daemon_cli.rs
 tests/smoke.rs    legacy claim-state smoke test
 ```
 
+## Pending schema-engine port + no-downtime upgrade
+
+**Status (2026-05-24):** the upstream `signal-orchestrate` feature branch `feature/schema-engine-and-no-downtime-upgrade` (second-designer/173) carries the schema source-of-truth (`orchestrate.schema`), the hand-equivalent macro-emission preview (`src/schema_emitted.rs`), and the no-downtime upgrade handover protocol skeleton (`src/upgrade_handover.rs`). The runtime port on this side is pending — it lands after Spirit MVP proves the macro flow end-to-end and the macro library grows multi-endpoint + unit-payload support.
+
+**Target — schema cutover.** The hand-written `signal_channel!` invocations in `signal-orchestrate/src/lib.rs` and `owner-signal-orchestrate/src/lib.rs` collapse to a single `signal-orchestrate/orchestrate.schema` file. The brilliant macro library reads the schema + emits every wire type, the ShortHeader projection, dispatcher, VersionProjection traits, and storage descriptors. This crate (`orchestrate`) consumes the macro-emitted types via its `signal-orchestrate` + `owner-signal-orchestrate` dependencies; the daemon-side `OperationLowering` (`src/lowering.rs`) stays as the contract-to-Component-Command translation point — the macro emits the contract types around it.
+
+**Target — no-downtime upgrade.** The chosen handover protocol is **drain-with-mirror** per `signal-orchestrate/src/upgrade_handover.rs`. Current-version daemon enters Draining state on the owner-channel `BeginDrain`, mirrors every accepted Mutate to the next-version daemon via the private upgrade socket, then transitions to PostFlip after the selector flip; existing connections keep using current until they close, after which current retires. New connections during drain land on the next-version daemon's ordinary socket. The bar is high because orchestrate IS the workspace's lane-claim authority: brief downtime blocks every parallel agent from acquiring scope.
+
+**Daemon-side scaffolding to land:**
+- `src/upgrade_handover.rs` (new) — implements `OrchestrateVersionProjection` for the actual storage types, drives the `CurrentDaemonState` / `NextDaemonState` machines from the contract skeleton, owns the private upgrade socket listener.
+- `src/daemon.rs` — gains a third socket binding (the private upgrade socket).
+- `src/service.rs` — Drain mode gates new-claim handlers; existing-claim handlers stay open.
+- `src/lock_projection.rs` — stop projecting once `HandoverAccepted` sent.
+
+**Sequence (per the schema-engine roll-out):** Spirit MVP first (`primary-ezqx.1`), then mind, then orchestrate. The sequencing matters because orchestrate's authority chain consumes `owner-signal-persona-router` and `owner-signal-persona-harness`; those downstream owner contracts should land on the schema engine before orchestrate's outbound calls cut over.
+
 ## See Also
 
 - `../signal-orchestrate/ARCHITECTURE.md` - ordinary wire
