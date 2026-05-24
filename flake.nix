@@ -1,5 +1,5 @@
 {
-  description = "persona-orchestrate — Persona orchestration machinery daemon and client.";
+  description = "orchestrate — Persona orchestration machinery daemon and client.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -95,10 +95,10 @@
         };
         apps.default = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
-          name = "persona-orchestrate-daemon";
+          name = "orchestrate-daemon";
         };
         devShells.default = pkgs.mkShell {
-          name = "persona-orchestrate";
+          name = "orchestrate";
           packages = [
             pkgs.jujutsu
             pkgs.pkg-config

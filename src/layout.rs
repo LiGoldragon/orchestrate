@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use signal_persona_orchestrate::{RoleName, WirePath};
+use signal_orchestrate::{RoleName, WirePath};
 
 use crate::{Error, Result};
 

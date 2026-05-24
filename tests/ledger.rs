@@ -1,4 +1,4 @@
-use persona_orchestrate::{
+use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
     HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry, Observation,
@@ -37,7 +37,7 @@ impl Fixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("persona-orchestrate.redb")
+                .join("orchestrate.redb")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -67,7 +67,7 @@ impl LayoutFixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("persona-orchestrate.redb")
+                .join("orchestrate.redb")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -261,19 +261,19 @@ fn owner_contract_operations_lower_to_sema_effects() {
                 role: role("primary-lowering-owner-create"),
                 harness: HarnessKind::Codex,
             }),
-            owner_signal_persona_orchestrate::OwnerOperationKind::Create,
+            owner_signal_orchestrate::OwnerOperationKind::Create,
             SemaOperation::Mutate,
         ),
         (
             OwnerOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
                 role: role("primary-lowering-owner-retire"),
             })),
-            owner_signal_persona_orchestrate::OwnerOperationKind::Retire,
+            owner_signal_orchestrate::OwnerOperationKind::Retire,
             SemaOperation::Retract,
         ),
         (
             OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}),
-            owner_signal_persona_orchestrate::OwnerOperationKind::Refresh,
+            owner_signal_orchestrate::OwnerOperationKind::Refresh,
             SemaOperation::Mutate,
         ),
         (
@@ -281,17 +281,15 @@ fn owner_contract_operations_lower_to_sema_effects() {
                 role: role_vector(&["Designer"]),
                 authority: LaneAuthority::Structural,
             }),
-            owner_signal_persona_orchestrate::OwnerOperationKind::Register,
+            owner_signal_orchestrate::OwnerOperationKind::Register,
             SemaOperation::Mutate,
         ),
         (
-            OwnerOrchestrateRequest::SetAuthority(
-                owner_signal_persona_orchestrate::LaneAuthorityChange {
-                    lane: lane("designer"),
-                    authority: LaneAuthority::Support,
-                },
-            ),
-            owner_signal_persona_orchestrate::OwnerOperationKind::SetAuthority,
+            OwnerOrchestrateRequest::SetAuthority(owner_signal_orchestrate::LaneAuthorityChange {
+                lane: lane("designer"),
+                authority: LaneAuthority::Support,
+            }),
+            owner_signal_orchestrate::OwnerOperationKind::SetAuthority,
             SemaOperation::Mutate,
         ),
     ];
@@ -345,11 +343,11 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
 #[test]
 fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     let fixture = Fixture::new("orchestrate-claims");
-    let scope = path("/git/github.com/LiGoldragon/persona-orchestrate");
+    let scope = path("/git/github.com/LiGoldragon/orchestrate");
 
     let accepted = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Claim(RoleClaim {
+        .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: operator(),
             scopes: vec![scope.clone()],
             reason: reason("operator owns the migration"),
@@ -359,7 +357,7 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
 
     let rejected = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Claim(RoleClaim {
+        .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: designer(),
             scopes: vec![scope.clone()],
             reason: reason("conflict probe"),
@@ -373,22 +371,18 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
 
     let handoff = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Handoff(
-            RoleHandoff {
-                from: operator(),
-                to: designer(),
-                scopes: vec![scope.clone()],
-                reason: reason("handoff to designer"),
-            },
-        ))
+        .handle(orchestrate::OrchestrateRequest::Handoff(RoleHandoff {
+            from: operator(),
+            to: designer(),
+            scopes: vec![scope.clone()],
+            reason: reason("handoff to designer"),
+        }))
         .expect("handoff");
     assert!(matches!(handoff, OrchestrateReply::HandoffAcceptance(_)));
 
     let snapshot = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            Observation::Roles,
-        ))
+        .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
@@ -402,9 +396,9 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
 
     let released = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Release(
-            RoleRelease { role: designer() },
-        ))
+        .handle(orchestrate::OrchestrateRequest::Release(RoleRelease {
+            role: designer(),
+        }))
         .expect("release");
     let OrchestrateReply::ReleaseAcknowledgment(acknowledgment) = released else {
         panic!("expected release acknowledgment");
@@ -419,7 +413,7 @@ fn activity_submission_query_and_observation_are_store_stamped() {
 
     let acknowledgment = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Submit(
+        .handle(orchestrate::OrchestrateRequest::Submit(
             ActivitySubmission {
                 role: operator_assistant(),
                 scope: scope.clone(),
@@ -434,14 +428,12 @@ fn activity_submission_query_and_observation_are_store_stamped() {
 
     let list = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Query(
-            ActivityQuery {
-                limit: 10,
-                filters: vec![ActivityFilter::TaskToken(
-                    TaskToken::from_wire_token("primary-hrhz").expect("task token"),
-                )],
-            },
-        ))
+        .handle(orchestrate::OrchestrateRequest::Query(ActivityQuery {
+            limit: 10,
+            filters: vec![ActivityFilter::TaskToken(
+                TaskToken::from_wire_token("primary-hrhz").expect("task token"),
+            )],
+        }))
         .expect("query");
     let OrchestrateReply::ActivityList(list) = list else {
         panic!("expected activity list");
@@ -452,9 +444,7 @@ fn activity_submission_query_and_observation_are_store_stamped() {
 
     let snapshot = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            Observation::Roles,
-        ))
+        .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
@@ -503,9 +493,7 @@ fn role_observation_includes_current_workspace_lanes() {
 
     let snapshot = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            Observation::Roles,
-        ))
+        .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
@@ -549,9 +537,7 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
 
     let snapshot = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Observe(
-            Observation::Roles,
-        ))
+        .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
@@ -566,7 +552,7 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
     let scope = path("/tmp/primary-orchestrate-mvp-zxq9-never-collide");
     let accepted = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Claim(RoleClaim {
+        .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: created_status.role.clone(),
             scopes: vec![scope.clone()],
             reason: reason("dynamic role owns its work"),
@@ -632,7 +618,7 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     let set = fixture
         .service
         .handle_owner(OwnerOrchestrateRequest::SetAuthority(
-            owner_signal_persona_orchestrate::LaneAuthorityChange {
+            owner_signal_orchestrate::LaneAuthorityChange {
                 lane: lane("designer"),
                 authority: LaneAuthority::Support,
             },
@@ -672,7 +658,7 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
         ))));
     assert!(matches!(
         missing,
-        Err(persona_orchestrate::Error::LaneNotRegistered { lane })
+        Err(orchestrate::Error::LaneNotRegistered { lane })
             if lane == "missing-designer"
     ));
 }
@@ -710,12 +696,12 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
 fn activity_path_prefix_matches_path_boundaries() {
     let fixture = Fixture::new("orchestrate-prefix");
     let persona_scope = path("/git/github.com/LiGoldragon/persona");
-    let persona_orchestrate_scope = path("/git/github.com/LiGoldragon/persona-orchestrate");
+    let orchestrate_scope = path("/git/github.com/LiGoldragon/orchestrate");
 
-    for scope in [persona_scope.clone(), persona_orchestrate_scope] {
+    for scope in [persona_scope.clone(), orchestrate_scope] {
         fixture
             .service
-            .handle(persona_orchestrate::OrchestrateRequest::Submit(
+            .handle(orchestrate::OrchestrateRequest::Submit(
                 ActivitySubmission {
                     role: operator_assistant(),
                     scope,
@@ -727,15 +713,13 @@ fn activity_path_prefix_matches_path_boundaries() {
 
     let list = fixture
         .service
-        .handle(persona_orchestrate::OrchestrateRequest::Query(
-            ActivityQuery {
-                limit: 10,
-                filters: vec![ActivityFilter::PathPrefix(
-                    WirePath::from_absolute_path("/git/github.com/LiGoldragon/persona")
-                        .expect("prefix"),
-                )],
-            },
-        ))
+        .handle(orchestrate::OrchestrateRequest::Query(ActivityQuery {
+            limit: 10,
+            filters: vec![ActivityFilter::PathPrefix(
+                WirePath::from_absolute_path("/git/github.com/LiGoldragon/persona")
+                    .expect("prefix"),
+            )],
+        }))
         .expect("query");
     let OrchestrateReply::ActivityList(list) = list else {
         panic!("expected activity list");

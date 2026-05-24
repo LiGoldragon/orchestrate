@@ -6,13 +6,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nota_codec::{Decoder, Encoder, NotaDecode, NotaEncode};
-use owner_signal_persona_orchestrate::{
+use orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
+use owner_signal_orchestrate::{
     CreateRoleOrder, Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
     OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
-use persona_orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
 use signal_frame::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
-use signal_persona_orchestrate::{
+use signal_orchestrate::{
     Observation, OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest,
     RoleClaim, ScopeReason, ScopeReference,
 };
@@ -41,7 +41,7 @@ impl DaemonFixture {
         let ordinary_socket = temporary.path().join("ordinary.sock");
         let owner_socket = temporary.path().join("owner.sock");
         let configuration = DaemonConfiguration::new(
-            wire_path(&temporary.path().join("persona-orchestrate.redb")),
+            wire_path(&temporary.path().join("orchestrate.redb")),
             wire_path(&ordinary_socket),
             wire_path(&owner_socket),
             wire_path(&workspace),
@@ -50,7 +50,7 @@ impl DaemonFixture {
         let configuration_path = temporary.path().join("daemon.nota");
         std::fs::write(&configuration_path, encode_nota(&configuration)).expect("config write");
 
-        let child = Command::new(env!("CARGO_BIN_EXE_persona-orchestrate-daemon"))
+        let child = Command::new(env!("CARGO_BIN_EXE_orchestrate-daemon"))
             .arg(&configuration_path)
             .spawn()
             .expect("daemon spawn");
@@ -80,7 +80,7 @@ impl DaemonFixture {
     }
 
     fn cli(&self, request: impl NotaEncode) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_persona-orchestrate"))
+        Command::new(env!("CARGO_BIN_EXE_orchestrate"))
             .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
             .env("PERSONA_ORCHESTRATE_OWNER_SOCKET", &self.owner_socket)
             .arg(encode_nota(&request))
@@ -126,7 +126,7 @@ fn exchange() -> ExchangeIdentifier {
 
 #[test]
 fn cli_creates_dynamic_role_through_daemon_owner_socket() {
-    let fixture = DaemonFixture::start("persona-orchestrate-cli-role");
+    let fixture = DaemonFixture::start("orchestrate-cli-role");
     let role = role("primary-orchestrate-daemon-zxq9-never-collide");
 
     let output = fixture.cli(OwnerOrchestrateRequest::Create(CreateRoleOrder {
@@ -185,7 +185,7 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
 
 #[test]
 fn ordinary_socket_rejects_owner_frame() {
-    let fixture = DaemonFixture::start("persona-orchestrate-owner-reject");
+    let fixture = DaemonFixture::start("orchestrate-owner-reject");
     let frame = OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Request {
         exchange: exchange(),
         request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
@@ -203,7 +203,7 @@ fn ordinary_socket_rejects_owner_frame() {
 
 #[test]
 fn owner_socket_rejects_ordinary_frame() {
-    let fixture = DaemonFixture::start("persona-orchestrate-ordinary-reject");
+    let fixture = DaemonFixture::start("orchestrate-ordinary-reject");
     let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
         exchange: exchange(),
         request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
@@ -221,7 +221,7 @@ fn owner_socket_rejects_ordinary_frame() {
 
 #[test]
 fn daemon_rejects_non_signal_traffic_on_ordinary_socket() {
-    let fixture = DaemonFixture::start("persona-orchestrate-non-signal");
+    let fixture = DaemonFixture::start("orchestrate-non-signal");
     let mut stream = UnixStream::connect(&fixture.ordinary_socket).expect("connect ordinary");
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
@@ -233,7 +233,7 @@ fn daemon_rejects_non_signal_traffic_on_ordinary_socket() {
 
 #[test]
 fn cli_rejects_flag_style_argument_shapes() {
-    let output = Command::new(env!("CARGO_BIN_EXE_persona-orchestrate"))
+    let output = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
         .args(["--role", "operator"])
         .output()
         .expect("cli output");

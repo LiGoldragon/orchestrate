@@ -30,7 +30,7 @@ pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
 pub use lowering::{LoweredOperation, OperationLowering};
-pub use owner_signal_persona_orchestrate::{
+pub use owner_signal_orchestrate::{
     CreateRoleOrder, LaneAuthorityChange, LaneAuthoritySet, LaneRegistered,
     LaneRegistrationRequest, LaneRetired, OwnerOrchestrateReply, OwnerOrchestrateRequest,
     RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement,
@@ -38,7 +38,7 @@ pub use owner_signal_persona_orchestrate::{
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
-pub use signal_persona_orchestrate::{
+pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, DownstreamComponent, HarnessKind, LaneAuthority,
     LaneIdentifier, LaneRegistration, LanesObserved, Observation, ObservationClosed,

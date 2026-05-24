@@ -1,30 +1,30 @@
 [package]
-name         = "persona-orchestrate"
+name         = "orchestrate"
 version      = "0.1.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/LiGoldragon/persona-orchestrate"
+repository   = "https://github.com/LiGoldragon/orchestrate"
 description  = "Typed orchestration state for Persona agents."
 publish      = false
 
 [lib]
-name = "persona_orchestrate"
+name = "orchestrate"
 path = "src/lib.rs"
 
 [[bin]]
-name = "persona-orchestrate-daemon"
+name = "orchestrate-daemon"
 path = "src/main.rs"
 
 [[bin]]
-name = "persona-orchestrate"
-path = "src/bin/persona-orchestrate.rs"
+name = "orchestrate"
+path = "src/bin/orchestrate.rs"
 
 [dependencies]
 sema                        = { git = "https://github.com/LiGoldragon/sema.git" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git" }
-signal-persona-orchestrate = { git = "https://github.com/LiGoldragon/signal-persona-orchestrate.git", branch = "main" }
-owner-signal-persona-orchestrate = { git = "https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git", branch = "main" }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
+owner-signal-orchestrate = { git = "https://github.com/LiGoldragon/owner-signal-orchestrate.git", branch = "main" }
 signal-executor             = { git = "https://github.com/LiGoldragon/signal-executor.git", branch = "main" }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }

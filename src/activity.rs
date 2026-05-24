@@ -1,4 +1,4 @@
-use signal_persona_orchestrate::{
+use signal_orchestrate::{
     ActivityAcknowledgment, ActivityFilter, ActivityList, ActivityQuery, ActivitySubmission,
     OrchestrateReply, ScopeReference,
 };

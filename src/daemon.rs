@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
-use owner_signal_persona_orchestrate::{
+use owner_signal_orchestrate::{
     Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
 };
-use signal_persona_orchestrate::{OrchestrateFrame, OrchestrateFrameBody};
+use signal_orchestrate::{OrchestrateFrame, OrchestrateFrameBody};
 
 use crate::{
     DaemonConfiguration, Error, OrchestrateLayout, OrchestrateService, Result, StoreLocation,

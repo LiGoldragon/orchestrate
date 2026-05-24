@@ -1,5 +1,5 @@
-use owner_signal_persona_orchestrate::{OwnerOperationKind, OwnerOrchestrateRequest};
-use signal_persona_orchestrate::{OperationKind, OrchestrateRequest};
+use owner_signal_orchestrate::{OwnerOperationKind, OwnerOrchestrateRequest};
+use signal_orchestrate::{OperationKind, OrchestrateRequest};
 use signal_sema::SemaOperation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

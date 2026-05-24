@@ -1,12 +1,10 @@
-use owner_signal_persona_orchestrate::{
-    OwnerOrchestrateReply, OwnerOrchestrateRequest, Retirement,
-};
+use owner_signal_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest, Retirement};
 use signal_executor::{
     BatchEffects, BatchPlan, CommandEffect, CommandExecutor, Lowering as LoweringTrait,
     OperationEffects, OperationPlan,
 };
 use signal_frame::{BatchFailureReason, CommitStatus, NonEmpty, RetryClassification};
-use signal_persona_orchestrate::{Observation, OrchestrateReply, OrchestrateRequest};
+use signal_orchestrate::{Observation, OrchestrateReply, OrchestrateRequest};
 use signal_sema::{SemaOperation, SemaOutcome, ToSemaOperation, ToSemaOutcome};
 
 use crate::{
@@ -16,14 +14,14 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrdinaryCommand {
-    Claim(signal_persona_orchestrate::RoleClaim),
-    Release(signal_persona_orchestrate::RoleRelease),
-    Handoff(signal_persona_orchestrate::RoleHandoff),
+    Claim(signal_orchestrate::RoleClaim),
+    Release(signal_orchestrate::RoleRelease),
+    Handoff(signal_orchestrate::RoleHandoff),
     Observe(Observation),
-    Submit(signal_persona_orchestrate::ActivitySubmission),
-    Query(signal_persona_orchestrate::ActivityQuery),
-    Watch(signal_persona_orchestrate::ObservationSubscription),
-    Unwatch(signal_persona_orchestrate::ObservationToken),
+    Submit(signal_orchestrate::ActivitySubmission),
+    Query(signal_orchestrate::ActivityQuery),
+    Watch(signal_orchestrate::ObservationSubscription),
+    Unwatch(signal_orchestrate::ObservationToken),
 }
 
 impl ToSemaOperation for OrdinaryCommand {
@@ -104,7 +102,7 @@ impl LoweringTrait for OrdinaryLowering {
         effects
             .component_effects()
             .last()
-            .expect("persona-orchestrate ordinary operation effects are non-empty")
+            .expect("orchestrate ordinary operation effects are non-empty")
             .clone()
             .into_reply()
     }
@@ -123,44 +121,43 @@ impl<'service> OrdinaryCommandExecutor<'service> {
         &self,
         command: OrdinaryCommand,
     ) -> Result<CommandEffect<OrdinaryCommand, OrdinaryEffect>> {
-        let reply =
-            match command.clone() {
-                OrdinaryCommand::Claim(claim) => {
-                    let reply = ClaimLedger::new(self.service.tables()).apply_claim(claim)?;
-                    self.service.project_locks()?;
-                    reply
-                }
-                OrdinaryCommand::Release(release) => {
-                    let reply = ClaimLedger::new(self.service.tables()).apply_release(release)?;
-                    self.service.project_locks()?;
-                    reply
-                }
-                OrdinaryCommand::Handoff(handoff) => {
-                    let reply = ClaimLedger::new(self.service.tables()).apply_handoff(handoff)?;
-                    self.service.project_locks()?;
-                    reply
-                }
-                OrdinaryCommand::Observe(Observation::Roles) => {
-                    ClaimLedger::new(self.service.tables()).observe()?
-                }
-                OrdinaryCommand::Observe(Observation::Lanes) => {
-                    LaneRegistry::new(self.service.tables()).observe()?
-                }
-                OrdinaryCommand::Submit(submission) => {
-                    ActivityLedger::new(self.service.tables()).submit(submission)?
-                }
-                OrdinaryCommand::Query(query) => {
-                    ActivityLedger::new(self.service.tables()).query(query)?
-                }
-                OrdinaryCommand::Watch(_subscription) => OrchestrateReply::ObservationOpened(
-                    signal_persona_orchestrate::ObservationOpened {
-                        token: self.service.next_observation_token()?,
-                    },
-                ),
-                OrdinaryCommand::Unwatch(token) => OrchestrateReply::ObservationClosed(
-                    signal_persona_orchestrate::ObservationClosed { token },
-                ),
-            };
+        let reply = match command.clone() {
+            OrdinaryCommand::Claim(claim) => {
+                let reply = ClaimLedger::new(self.service.tables()).apply_claim(claim)?;
+                self.service.project_locks()?;
+                reply
+            }
+            OrdinaryCommand::Release(release) => {
+                let reply = ClaimLedger::new(self.service.tables()).apply_release(release)?;
+                self.service.project_locks()?;
+                reply
+            }
+            OrdinaryCommand::Handoff(handoff) => {
+                let reply = ClaimLedger::new(self.service.tables()).apply_handoff(handoff)?;
+                self.service.project_locks()?;
+                reply
+            }
+            OrdinaryCommand::Observe(Observation::Roles) => {
+                ClaimLedger::new(self.service.tables()).observe()?
+            }
+            OrdinaryCommand::Observe(Observation::Lanes) => {
+                LaneRegistry::new(self.service.tables()).observe()?
+            }
+            OrdinaryCommand::Submit(submission) => {
+                ActivityLedger::new(self.service.tables()).submit(submission)?
+            }
+            OrdinaryCommand::Query(query) => {
+                ActivityLedger::new(self.service.tables()).query(query)?
+            }
+            OrdinaryCommand::Watch(_subscription) => {
+                OrchestrateReply::ObservationOpened(signal_orchestrate::ObservationOpened {
+                    token: self.service.next_observation_token()?,
+                })
+            }
+            OrdinaryCommand::Unwatch(token) => {
+                OrchestrateReply::ObservationClosed(signal_orchestrate::ObservationClosed { token })
+            }
+        };
         Ok(CommandEffect::new(command, OrdinaryEffect::Reply(reply)))
     }
     fn execute_batch(
@@ -200,11 +197,11 @@ impl CommandExecutor for OrdinaryCommandExecutor<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerCommand {
-    Create(owner_signal_persona_orchestrate::CreateRoleOrder),
+    Create(owner_signal_orchestrate::CreateRoleOrder),
     Retire(Retirement),
-    Refresh(owner_signal_persona_orchestrate::RefreshRepositoryIndexOrder),
-    Register(owner_signal_persona_orchestrate::LaneRegistrationRequest),
-    SetAuthority(owner_signal_persona_orchestrate::LaneAuthorityChange),
+    Refresh(owner_signal_orchestrate::RefreshRepositoryIndexOrder),
+    Register(owner_signal_orchestrate::LaneRegistrationRequest),
+    SetAuthority(owner_signal_orchestrate::LaneAuthorityChange),
 }
 
 impl ToSemaOperation for OwnerCommand {
@@ -282,7 +279,7 @@ impl LoweringTrait for OwnerLowering {
         effects
             .component_effects()
             .last()
-            .expect("persona-orchestrate owner operation effects are non-empty")
+            .expect("orchestrate owner operation effects are non-empty")
             .clone()
             .into_reply()
     }

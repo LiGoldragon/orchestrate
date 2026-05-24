@@ -1,11 +1,11 @@
-# Persona Orchestrate — Agent Instructions
+# Orchestrate — Agent Instructions
 
 Read `/home/li/primary/AGENTS.md` first, then `/home/li/primary/lore/AGENTS.md`.
 This repository follows the primary workspace orchestration protocol.
 
 ## Purpose
 
-`persona-orchestrate` is the typed successor to the current primary workspace
+`orchestrate` is the typed successor to the current primary workspace
 orchestration helper. It models roles, scopes, claims, and handoff tasks without
 deepening the transitional BEADS dependency.
 

@@ -1,4 +1,4 @@
-use signal_persona_orchestrate::ScopeReference;
+use signal_orchestrate::ScopeReference;
 
 use crate::{OrchestrateLayout, OrchestrateTables, Result, StoredClaim};
 

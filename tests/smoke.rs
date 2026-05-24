@@ -1,4 +1,4 @@
-use persona_orchestrate::{ClaimState, RoleName, ScopeReference, WirePath};
+use orchestrate::{ClaimState, RoleName, ScopeReference, WirePath};
 
 fn operator() -> RoleName {
     RoleName::from_wire_token("operator").expect("role")

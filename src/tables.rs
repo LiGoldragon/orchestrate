@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sema::{SchemaVersion, Table};
 use sema_engine::{Engine, EngineOpen};
-use signal_persona_orchestrate::{
+use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, HarnessKind, LaneIdentifier,
     LaneRegistration, PartialApplied, RoleName, ScopeReason, ScopeReference, TimestampNanos,
     WirePath,

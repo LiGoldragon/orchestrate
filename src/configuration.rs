@@ -1,5 +1,5 @@
 use nota_codec::NotaRecord;
-use signal_persona_orchestrate::WirePath;
+use signal_orchestrate::WirePath;
 
 #[derive(NotaRecord, Debug, Clone, PartialEq, Eq)]
 pub struct DaemonConfiguration {

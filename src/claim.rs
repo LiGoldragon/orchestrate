@@ -1,4 +1,4 @@
-use signal_persona_orchestrate::{
+use signal_orchestrate::{
     Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, HandoffAcceptance, HandoffRejection,
     HandoffRejectionReason, OrchestrateReply, ReleaseAcknowledgment, RoleClaim, RoleHandoff,
     RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,

@@ -16,8 +16,8 @@ pub enum Error {
     #[error("system time: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 
-    #[error("signal-persona-orchestrate: {0}")]
-    SignalPersonaOrchestrate(#[from] signal_persona_orchestrate::Error),
+    #[error("signal-orchestrate: {0}")]
+    SignalOrchestrate(#[from] signal_orchestrate::Error),
 
     #[error("sema: {0}")]
     Sema(#[from] sema::Error),
@@ -53,12 +53,12 @@ pub enum Error {
     LaneNotRegistered { lane: String },
 
     #[error(
-        "atomic batch has {operation_count} operations; persona-orchestrate supports one operation per execution batch today"
+        "atomic batch has {operation_count} operations; orchestrate supports one operation per execution batch today"
     )]
     UnsupportedAtomicBatch { operation_count: usize },
 
     #[error(
-        "operation plan has {command_count} commands; persona-orchestrate supports one command per operation today"
+        "operation plan has {command_count} commands; orchestrate supports one command per operation today"
     )]
     UnsupportedAtomicOperationPlan { command_count: usize },
 

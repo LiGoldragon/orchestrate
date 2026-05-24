@@ -1,4 +1,4 @@
-# persona-orchestrate - architecture
+# orchestrate - architecture
 
 *Persona orchestration machinery: role claims, activity, lane/run
 coordination, scope acquisition, scheduling, escalation, and the
@@ -16,7 +16,7 @@ daemon boundary that replaces the transitional workspace lock helper.*
 
 ## 0 - TL;DR
 
-`persona-orchestrate` owns orchestration machinery. `persona-mind`
+`orchestrate` owns orchestration machinery. `persona-mind`
 owns state: work graph, thoughts, memories, relations, durable policy
 truth, and channel-grant authority decisions. Orchestrate owns the
 mechanics that make work run: claims, handoffs, activity, agent-run
@@ -24,10 +24,10 @@ lifecycle, spawn plans, scope acquisition, executor capacity,
 scheduling, escalation, and the lane registry.
 
 The current implemented slice is the usable triad skeleton: ordinary
-`signal-persona-orchestrate` request/reply surface, owner-only
-`owner-signal-persona-orchestrate`, a daemon that owns the
-`persona-orchestrate.redb` sema store, and a thin
-`persona-orchestrate` CLI that sends Signal frames to the daemon
+`signal-orchestrate` request/reply surface, owner-only
+`owner-signal-orchestrate`, a daemon that owns the
+`orchestrate.redb` sema store, and a thin
+`orchestrate` CLI that sends Signal frames to the daemon
 sockets.
 
 ## Migration history - contract-local verbs (2026-05-19)
@@ -52,16 +52,16 @@ Commands.
 
 The daemon/CLI boundary did not change: the CLI remains a thin
 NOTA-to-Signal adapter and the daemon remains the only process that
-opens `persona-orchestrate.redb`.
+opens `orchestrate.redb`.
 
 ```mermaid
 flowchart TB
     mind["persona-mind<br/>state + policy truth"]
-    cli["persona-orchestrate CLI<br/>one NOTA request"]
-    daemon["persona-orchestrate daemon"]
-    ordinary["signal-persona-orchestrate<br/>ordinary peer surface"]
-    owner["owner-signal-persona-orchestrate<br/>owner-only surface"]
-    store["persona-orchestrate.redb<br/>sema-engine"]
+    cli["orchestrate CLI<br/>one NOTA request"]
+    daemon["orchestrate daemon"]
+    ordinary["signal-orchestrate<br/>ordinary peer surface"]
+    owner["owner-signal-orchestrate<br/>owner-only surface"]
+    store["orchestrate.redb<br/>sema-engine"]
     router["persona-router"]
     harness["persona-harness"]
     locks["orchestrate/*.lock<br/>temporary projection"]
@@ -80,8 +80,8 @@ flowchart TB
 
 This runtime repo contains:
 
-- a library crate, `persona_orchestrate`, that consumes
-  `signal-persona-orchestrate` and dispatches typed
+- a library crate, `orchestrate`, that consumes
+  `signal-orchestrate` and dispatches typed
   `OrchestrateRequest` values;
 - sema-backed `claims`, `roles`, `repositories`, `activities`, and
   `activity_next_slot` tables;
@@ -97,35 +97,35 @@ This runtime repo contains:
   and owner Unix sockets, decodes Signal frames, dispatches to the
   service, and writes Signal replies;
 - a thin CLI client that accepts one NOTA request argument, encodes it
-  as a Signal frame, and connects only to the `persona-orchestrate`
+  as a Signal frame, and connects only to the `orchestrate`
   daemon sockets.
 
 The full component surface is:
 
 ```text
-persona-orchestrate/
+orchestrate/
   src/lib.rs
   src/main.rs
   bootstrap-policy.nota
-signal-persona-orchestrate/
-owner-signal-persona-orchestrate/
+signal-orchestrate/
+owner-signal-orchestrate/
 ```
 
 The contract crates carry wire vocabulary only. This repo owns the
 runtime, actor tree, socket binding, lock-file projection, and
-`persona-orchestrate.redb`.
+`orchestrate.redb`.
 
 ## 2 - Authority Chain
 
-`persona-mind` owns `persona-orchestrate` through
-`owner-signal-persona-orchestrate`. Orchestrate then owns the runtime
+`persona-mind` owns `orchestrate` through
+`owner-signal-orchestrate`. Orchestrate then owns the runtime
 execution edges it controls:
 
 | Link | Contract | Direction |
 |---|---|---|
-| `persona-mind -> persona-orchestrate` | `owner-signal-persona-orchestrate` | mind orders orchestration machinery |
-| `persona-orchestrate -> persona-router` | `owner-signal-persona-router` | orchestrate orders channel grants and retractions |
-| `persona-orchestrate -> persona-harness` | `owner-signal-persona-harness` | orchestrate orders agent-run lifecycle transitions |
+| `persona-mind -> orchestrate` | `owner-signal-orchestrate` | mind orders orchestration machinery |
+| `orchestrate -> persona-router` | `owner-signal-persona-router` | orchestrate orders channel grants and retractions |
+| `orchestrate -> persona-harness` | `owner-signal-persona-harness` | orchestrate orders agent-run lifecycle transitions |
 
 Observation flows back through subscription surfaces. Authority moves
 down through owner contract operations, which the daemon lowers to
@@ -134,7 +134,7 @@ another component for state that component can push.
 
 ## 3 - Ordinary Wire Surface
 
-`signal-persona-orchestrate` is the peer-callable surface. It carries
+`signal-orchestrate` is the peer-callable surface. It carries
 requests peers and the CLI can make without owner authority:
 
 - `Claim(RoleClaim)` / `Release(RoleRelease)` /
@@ -149,7 +149,7 @@ creation is data in the runtime registry, not a contract enum edit.
 
 ## 4 - Owner Wire Surface
 
-`owner-signal-persona-orchestrate` is the owner-only surface. The
+`owner-signal-orchestrate` is the owner-only surface. The
 implemented MVP carries:
 
 - `Create(CreateRoleOrder)`
@@ -166,7 +166,7 @@ The daemon binds a separate socket and actor for this surface.
 
 ## 5 - State And Ownership
 
-Durable state lives in one `persona-orchestrate.redb` opened through
+Durable state lives in one `orchestrate.redb` opened through
 `sema-engine`. No other component opens that database directly.
 
 Policy tables change only through owner-signal contract operations
@@ -225,8 +225,8 @@ Task scopes render in bracketed human form:
 ## 7 - Constraints
 
 - The CLI accepts exactly one NOTA request and talks to exactly one
-  Signal peer: the `persona-orchestrate` daemon.
-- The CLI never opens `persona-orchestrate.redb`, sema-engine, or the
+  Signal peer: the `orchestrate` daemon.
+- The CLI never opens `orchestrate.redb`, sema-engine, or the
   in-process `OrchestrateService`; all state mutation and reads cross
   the daemon boundary.
 - The daemon's external traffic is Signal frames only.
@@ -238,7 +238,7 @@ Task scopes render in bracketed human form:
   the contract crates.
 - Public observer subscriptions allocate typed observation tokens on
   the ordinary socket.
-- The runtime store is `persona-orchestrate.redb`.
+- The runtime store is `orchestrate.redb`.
 - Activity timestamps and slots are minted by the store, never by the
   caller.
 - Claim conflicts reject overlapping path scopes across different
@@ -266,7 +266,7 @@ Task scopes render in bracketed human form:
 
 - Mind owns state; orchestrate owns machinery.
 - The lane registry is data, not a closed role enum.
-- Owner authority enters through `owner-signal-persona-orchestrate`;
+- Owner authority enters through `owner-signal-orchestrate`;
   ordinary peers cannot compile owner-only orders.
 - Push subscriptions carry current state and deltas; polling is not an
   orchestration mechanism.
@@ -294,7 +294,7 @@ src/role.rs       owner role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
 src/service.rs    ordinary and owner request dispatch
 src/main.rs       daemon binary, one NOTA config argument
-src/bin/persona-orchestrate.rs
+src/bin/orchestrate.rs
                   one-line signal_frame::signal_cli! thin client
 tests/ledger.rs   sema-backed claim/activity/role/repository and lowering witnesses
                   plus the first record-divergence partial-failure witness
@@ -307,9 +307,9 @@ tests/smoke.rs    legacy claim-state smoke test
 
 ## See Also
 
-- `../signal-persona-orchestrate/ARCHITECTURE.md` - ordinary wire
+- `../signal-orchestrate/ARCHITECTURE.md` - ordinary wire
   contract.
-- `../owner-signal-persona-orchestrate/ARCHITECTURE.md` - owner wire
+- `../owner-signal-orchestrate/ARCHITECTURE.md` - owner wire
   contract.
 - `../signal-frame/ARCHITECTURE.md` - Signal frame kernel.
 - `../signal-sema/ARCHITECTURE.md` - lower Sema operation vocabulary.

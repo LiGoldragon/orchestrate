@@ -1,9 +1,7 @@
-use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
+use owner_signal_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
 use signal_executor::{Executor, ObserverSet};
 use signal_frame::{AcceptedOutcome, Reply, Request, RequestPayload, SubReply};
-use signal_persona_orchestrate::{
-    ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied,
-};
+use signal_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::{

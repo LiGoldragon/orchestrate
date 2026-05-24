@@ -1,5 +1,5 @@
 use nota_codec::{Decoder, NotaDecode};
-use persona_orchestrate::{DaemonConfiguration, OrchestrateDaemon};
+use orchestrate::{DaemonConfiguration, OrchestrateDaemon};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let configuration_text = single_configuration_argument()?;
@@ -14,7 +14,7 @@ fn single_configuration_argument() -> Result<String, Box<dyn std::error::Error>>
     if arguments.len() != 1 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "persona-orchestrate-daemon accepts exactly one NOTA config argument",
+            "orchestrate-daemon accepts exactly one NOTA config argument",
         )
         .into());
     }

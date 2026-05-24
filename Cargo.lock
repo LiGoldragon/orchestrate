@@ -312,14 +312,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "owner-signal-persona-orchestrate"
+name = "orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-persona-orchestrate.git?branch=main#92a8ef58fb4c2bde1dbde6ce01cde49ac4ffdcc5"
+dependencies = [
+ "futures",
+ "nota-codec",
+ "owner-signal-orchestrate",
+ "rkyv",
+ "sema",
+ "sema-engine",
+ "signal-executor",
+ "signal-frame",
+ "signal-orchestrate",
+ "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "owner-signal-orchestrate"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/owner-signal-orchestrate.git?branch=main#0c4468bea78450834f71cdaaf13d0482c3391305"
 dependencies = [
  "nota-codec",
  "rkyv",
  "signal-frame",
- "signal-persona-orchestrate",
+ "signal-orchestrate",
  "thiserror",
 ]
 
@@ -328,24 +346,6 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
-name = "persona-orchestrate"
-version = "0.1.0"
-dependencies = [
- "futures",
- "nota-codec",
- "owner-signal-persona-orchestrate",
- "rkyv",
- "sema",
- "sema-engine",
- "signal-executor",
- "signal-frame",
- "signal-persona-orchestrate",
- "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
- "tempfile",
- "thiserror",
-]
 
 [[package]]
 name = "pin-project-lite"
@@ -608,9 +608,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-persona-orchestrate"
+name = "signal-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-persona-orchestrate.git?branch=main#6ee08b48ffab5e2c40c4edf62f8cfd7b6d29a9b1"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#bfcfa8bcf236aecef49c30289157a9164e628fd0"
 dependencies = [
  "nota-codec",
  "rkyv",

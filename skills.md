@@ -1,4 +1,4 @@
-# persona-orchestrate skill
+# orchestrate skill
 
 Work here when the change concerns typed workspace coordination: roles, claims,
 handoff tasks, lock projections, or the `orchestrate` CLI.
@@ -10,7 +10,7 @@ Rules for work here:
 - Keep runtime message delivery in `persona-router`.
 - Keep harness lifecycle in `persona-harness`.
 - This component owns **its own** `sema-engine`-backed redb file
-  (`persona-orchestrate.redb`). `OrchestrateService` serializes today's
+  (`orchestrate.redb`). `OrchestrateService` serializes today's
   request handling; the orchestration state actor becomes the long-lived
   sequencer when the daemon is wired. There is no shared cross-component DB.
 - Lock files are projections for human and cross-harness visibility,

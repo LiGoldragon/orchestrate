@@ -1,14 +1,14 @@
-# INTENT - persona-orchestrate
+# INTENT - orchestrate
 
 *What the psyche has explicitly intended for this project.
 Synthesised from psyche statements; not embellished.*
 
 ## Goals
 
-- `persona-orchestrate` is a real triad component: daemon, thin CLI,
-  ordinary `signal-persona-orchestrate` contract, and owner-only
-  `owner-signal-persona-orchestrate` contract.
-- `persona-orchestrate` should move forward now so the workspace can
+- `orchestrate` is a real triad component: daemon, thin CLI,
+  ordinary `signal-orchestrate` contract, and owner-only
+  `owner-signal-orchestrate` contract.
+- `orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.
 - The immediate MVP should create dynamic roles named by the work they
@@ -19,15 +19,15 @@ Synthesised from psyche statements; not embellished.*
 
 - `persona-mind` owns state: work graph, memory, thoughts, durable
   policy truth, and channel-grant authority decisions.
-- `persona-orchestrate` owns machinery: role claims, activity log,
+- `orchestrate` owns machinery: role claims, activity log,
   agent-run lifecycle, spawn plans, scope-acquisition workflow,
   executor capacity, scheduling, escalation, and lane registry.
-- `persona-orchestrate` is not folded into `persona-mind`.
+- `orchestrate` is not folded into `persona-mind`.
 
 ## Principles
 
 - Lane definitions are data, not permanent enum variants. The
-  runtime registry belongs in `persona-orchestrate` state, and owner
+  runtime registry belongs in `orchestrate` state, and owner
   authority mutates it.
 - Harness assignment is a typed role field (`Codex` or `Claude` in
   the MVP), not information hidden inside the role string.

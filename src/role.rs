@@ -1,8 +1,8 @@
-use owner_signal_persona_orchestrate::{
+use owner_signal_orchestrate::{
     CreateRoleOrder, OwnerOrchestrateReply, RetireRoleOrder, RoleCreated, RoleCreationRejected,
     RoleCreationRejectionReason, RoleRetired,
 };
-use signal_persona_orchestrate::{HarnessKind, RoleName};
+use signal_orchestrate::{HarnessKind, RoleName};
 
 use crate::{OrchestrateLayout, OrchestrateTables, Result, StoredRole, layout::wire_path};
 

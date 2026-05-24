@@ -1,4 +1,4 @@
-use signal_persona_orchestrate::{OrchestrateReply, PartialApplied};
+use signal_orchestrate::{OrchestrateReply, PartialApplied};
 
 use crate::{OrchestrateTables, Result};
 

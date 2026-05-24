@@ -1,4 +1,4 @@
-use owner_signal_persona_orchestrate::{OwnerOrchestrateReply, RepositoryIndexRefreshed};
+use owner_signal_orchestrate::{OwnerOrchestrateReply, RepositoryIndexRefreshed};
 
 use crate::{OrchestrateLayout, OrchestrateTables, Result, StoredRepository, layout::wire_path};
 

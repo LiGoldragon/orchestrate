@@ -1,8 +1,8 @@
-use owner_signal_persona_orchestrate::{
+use owner_signal_orchestrate::{
     LaneAuthorityChange, LaneAuthoritySet, LaneRegistered, LaneRegistrationRequest, LaneRetired,
     OwnerOrchestrateReply,
 };
-use signal_persona_orchestrate::{
+use signal_orchestrate::{
     LaneAuthority, LaneIdentifier, LaneRegistration, LanesObserved, OrchestrateReply, Role,
 };
 

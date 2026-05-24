@@ -1,12 +1,12 @@
 #[test]
-fn persona_orchestrate_cli_cannot_open_component_database() {
-    let source = include_str!("../src/bin/persona-orchestrate.rs");
+fn orchestrate_cli_cannot_open_component_database() {
+    let source = include_str!("../src/bin/orchestrate.rs");
     let forbidden = [
         "OrchestrateService",
         "OrchestrateTables",
         "StoreLocation",
         "sema_engine",
-        "persona-orchestrate.redb",
+        "orchestrate.redb",
         "PERSONA_ORCHESTRATE_STORE",
     ];
 
@@ -19,11 +19,11 @@ fn persona_orchestrate_cli_cannot_open_component_database() {
 }
 
 #[test]
-fn persona_orchestrate_cli_speaks_only_to_daemon_sockets() {
-    let source = include_str!("../src/bin/persona-orchestrate.rs");
+fn orchestrate_cli_speaks_only_to_daemon_sockets() {
+    let source = include_str!("../src/bin/orchestrate.rs");
     assert_eq!(
         source.trim(),
-        "signal_frame::signal_cli!(persona_orchestrate, signal_persona_orchestrate);"
+        "signal_frame::signal_cli!(orchestrate, signal_orchestrate);"
     );
     assert!(!source.contains("OrchestrateService"));
     assert!(!source.contains("OrchestrateFrame::new"));
@@ -31,7 +31,7 @@ fn persona_orchestrate_cli_speaks_only_to_daemon_sockets() {
 }
 
 #[test]
-fn persona_orchestrate_uses_signal_executor_for_both_signal_contracts() {
+fn orchestrate_uses_signal_executor_for_both_signal_contracts() {
     let manifest = include_str!("../Cargo.toml");
     let execution = include_str!("../src/execution.rs");
 
