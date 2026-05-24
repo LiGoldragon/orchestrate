@@ -319,6 +319,7 @@ dependencies = [
  "nota-codec",
  "owner-signal-orchestrate",
  "rkyv",
+ "schema",
  "sema",
  "sema-engine",
  "signal-executor",
@@ -482,6 +483,14 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
+
+[[package]]
+name = "schema"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/schema.git?branch=main#b3a1c8d3083211da7ff8856011604788298b1d46"
+dependencies = [
+ "nota-codec",
+]
 
 [[package]]
 name = "sema"

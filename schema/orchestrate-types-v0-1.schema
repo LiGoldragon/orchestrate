@@ -1,0 +1,31 @@
+{}
+
+[]
+
+[]
+
+[]
+
+{
+  RoleIdentifier (String)
+  RoleName (RoleIdentifier)
+  RoleToken (String)
+  Role ((Vec RoleToken))
+  LaneAuthority [Structural Support]
+  LaneIdentifier (String)
+  LaneRegistration (LaneIdentifier Role LaneAuthority)
+  HarnessKind [Codex Claude]
+  WirePath (String)
+  TaskToken (String)
+  ScopeReason (String)
+  ScopeReference [(Path WirePath) (Task TaskToken)]
+  TimestampNanos (u64)
+  DownstreamComponent [Router Harness Terminal Message Mind System Introspect]
+  ApplicationFailureReason [Unreachable Rejected Unimplemented TimedOut Unknown]
+  ApplicationSuccess (DownstreamComponent ScopeReason)
+  ApplicationFailure (DownstreamComponent ApplicationFailureReason ScopeReason)
+  PartialApplied ((Vec ApplicationSuccess) (Vec ApplicationFailure))
+  ObservationToken (u64)
+}
+
+[]

@@ -1,0 +1,19 @@
+{
+  Common (ImportAll ./orchestrate-types-v0-1.schema)
+}
+
+[]
+
+[]
+
+[]
+
+{
+  StoredClaim (RoleName ScopeReference ScopeReason)
+  StoredRole (RoleName HarnessKind WirePath WirePath)
+  StoredRepository (String WirePath Boolean TimestampNanos)
+  StoredActivity (u64 RoleName ScopeReference ScopeReason TimestampNanos)
+  StoredDivergence (u64 (Vec ApplicationSuccess) (Vec ApplicationFailure) TimestampNanos)
+}
+
+[]

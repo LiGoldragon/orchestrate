@@ -48,5 +48,21 @@ Synthesised from psyche statements; not embellished.*
 - Do not model lane churn by recompiling closed role enums as the
   long-term solution.
 
+## Pending schema-engine upgrade
+
+**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+
+**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
+
+**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound owner calls should land on the schema engine after the contracts at both ends.
+
+**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Lane definitions stay data (not closed role enums) under the schema — the schema must enable dynamic-role registry persistence without baking the live role set into the wire.
+
+**References:**
+- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
+- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
+- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
+- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
+
 *Source statements live in `/home/li/primary/intent/persona.nota` and
 `/home/li/primary/intent/component-shape.nota`.*

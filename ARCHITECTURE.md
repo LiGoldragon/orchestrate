@@ -305,6 +305,22 @@ tests/daemon_cli.rs
 tests/smoke.rs    legacy claim-state smoke test
 ```
 
+## Pending schema-engine upgrade
+
+**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+
+**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
+
+**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`; orchestrate cuts over after Spirit and mind. The sequencing matters because orchestrate consumes `owner-signal-persona-router` and `owner-signal-persona-harness` for the authority chain (per `## 2 - Authority Chain`); those downstream owner contracts should land on the schema engine before orchestrate's outbound calls cut over.
+
+**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Orchestrate already implements `OperationLowering` as the contract-to-Component-Command translation point (per `src/lowering.rs`) — the schema must keep that boundary intact and have the macro emit the same lowering shape. The owner-contract surface (`owner-signal-orchestrate` with `Create` / `Retire` / `Refresh`) is distinct from the ordinary surface (`signal-orchestrate` with `Claim` / `Release` / `Handoff` / `Observe` / `Submit` / `Query` / `Watch` / `Unwatch`); both must remain inexpressible on the wrong socket after schema cutover. The sema-backed `claims`, `roles`, `repositories`, `activities`, `activity_next_slot`, and `divergences` tables need schema storage descriptors that emit equivalent `sema-engine` registrations. Lock-file projection from accepted daemon state must keep working.
+
+**References:**
+- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
+- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
+- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
+- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
+
 ## See Also
 
 - `../signal-orchestrate/ARCHITECTURE.md` - ordinary wire

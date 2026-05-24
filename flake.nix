@@ -28,7 +28,19 @@
           sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
         };
         craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
-        src = craneLib.cleanCargoSource ./.;
+        src = pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter =
+            path: type:
+            let
+              pathString = toString path;
+              schemaRoot = "${toString ./.}/schema";
+            in
+            craneLib.filterCargoSources path type
+            || pathString == schemaRoot
+            || pkgs.lib.hasPrefix "${schemaRoot}/" pathString;
+          name = "source";
+        };
         commonArgs = {
           inherit src;
           strictDeps = true;

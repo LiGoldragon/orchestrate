@@ -34,6 +34,7 @@ rkyv                        = { version = "0.8", default-features = false, featu
 thiserror                   = "2"
 
 [dev-dependencies]
+schema = { git = "https://github.com/LiGoldragon/schema.git", branch = "main" }
 tempfile = "3"
 
 [lints.rust]

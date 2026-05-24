@@ -92,7 +92,7 @@
   OperationKind [Claim Release Handoff Observe Submit Query Watch Unwatch]
   OwnerOperationKind [Create Retire Refresh Register SetAuthority]
   SemaObservation [Asserted Retracted Mutated Matched Subscribed NoChange]
-  BranchTopology [Mainline DesignerFeatureWorktree]
+  BranchTopology [Mainline Worktree DesignerFeatureWorktree]
 }
 
 [
@@ -128,4 +128,7 @@
     (filter default)
     (operation_event OperationReceived)
     (effect_event EffectEmitted))
+
+  (Upgrade (FromVersion v0.1)
+    (Migrate BranchTopology))
 ]
