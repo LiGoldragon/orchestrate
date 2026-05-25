@@ -13,6 +13,9 @@ pub enum Error {
     #[error("signal frame: {0}")]
     SignalFrame(#[from] signal_frame::FrameError),
 
+    #[error("operation dispatch: {0}")]
+    OperationDispatch(#[from] signal_frame::OperationDispatchError),
+
     #[error("system time: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 

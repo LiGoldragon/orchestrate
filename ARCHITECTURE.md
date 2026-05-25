@@ -8,8 +8,10 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > claim/activity store, dynamic role registry, raw role-creation path,
 > local repository-index refresh, daemon socket runtime, and thin CLI
 > client exist. The CLI has no direct-store path. Lock-file projection
-> from daemon state exists. GitHub/ghq-backed report-repository
-> creation is still missing.
+> from daemon state exists. Ordinary and owner daemon sockets validate
+> the Signal `ShortHeader` against the decoded request root before
+> dispatch. GitHub/ghq-backed report-repository creation is still
+> missing.
 > `tools/orchestrate` remains the live workspace helper until the
 > daemon is supervised as a workspace service and the operator chooses
 > the cutover point.
@@ -95,7 +97,8 @@ This runtime repo contains:
   workspace `orchestrate/<role>.lock` files;
 - a daemon binary that accepts one NOTA config argument, binds ordinary
   and owner Unix sockets, decodes Signal frames, dispatches to the
-  service, and writes Signal replies;
+  service, validates frame short headers before dispatch, and writes
+  Signal replies;
 - a thin CLI client that accepts one NOTA request argument, encodes it
   as a Signal frame, and connects only to the `orchestrate`
   daemon sockets.
@@ -234,6 +237,9 @@ Task scopes render in bracketed human form:
   contract socket.
 - The ordinary socket accepts ordinary frames; the owner socket
   accepts owner frames; each rejects the other's vocabulary.
+- The daemon validates the incoming frame `ShortHeader` against the
+  decoded request root before dispatch; mismatched or unknown root
+  bytes are rejected before service state can mutate.
 - Contract operations lower to Sema effects inside the runtime, not in
   the contract crates.
 - Public observer subscriptions allocate typed observation tokens on
@@ -281,6 +287,7 @@ src/error.rs      crate error enum
 src/configuration.rs
                   daemon NOTA config record
 src/daemon.rs     ordinary/owner socket listeners and frame dispatch
+                  with ShortHeader ingress validation
 src/divergence.rs partial downstream application recorder
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy

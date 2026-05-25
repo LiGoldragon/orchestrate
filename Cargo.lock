@@ -288,7 +288,7 @@ dependencies = [
 [[package]]
 name = "nota-codec"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/nota-codec.git?branch=main#538555e895529e2884b7d37d20c66aadc2a49c08"
+source = "git+https://github.com/LiGoldragon/nota-codec.git?branch=main#139217d78e88df6df518b886a56ac2272255005f"
 dependencies = [
  "camino",
  "nota-derive",
@@ -298,7 +298,7 @@ dependencies = [
 [[package]]
 name = "nota-derive"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/nota-derive.git?branch=main#8323149593b95d6e90c1fdde54e9aba58803337c"
+source = "git+https://github.com/LiGoldragon/nota-derive.git?branch=main#cde0e8262f2f90afbdf26d9b1b3561376723d816"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -333,7 +333,7 @@ dependencies = [
 [[package]]
 name = "owner-signal-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-orchestrate.git?branch=main#0c4468bea78450834f71cdaaf13d0482c3391305"
+source = "git+https://github.com/LiGoldragon/owner-signal-orchestrate.git?branch=main#499eb68a058eb9df84355ddc900757d6ea6908ba"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -487,7 +487,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "schema"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/schema.git?branch=main#b3a1c8d3083211da7ff8856011604788298b1d46"
+source = "git+https://github.com/LiGoldragon/schema.git?branch=main#be6860fb40def6881e481ed92cd855ad94f4aab5"
 dependencies = [
  "nota-codec",
 ]
@@ -597,7 +597,7 @@ dependencies = [
 [[package]]
 name = "signal-frame"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#8ccaffd69e1027d13abeb98f9635de884f902f32"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#1493c59f9c3ca8c398dec89837d7d8b14898b810"
 dependencies = [
  "nota-codec",
  "paste",
@@ -609,17 +609,19 @@ dependencies = [
 [[package]]
 name = "signal-frame-macros"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#8ccaffd69e1027d13abeb98f9635de884f902f32"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#1493c59f9c3ca8c398dec89837d7d8b14898b810"
 dependencies = [
+ "nota-codec",
  "proc-macro2",
  "quote",
+ "schema",
  "syn",
 ]
 
 [[package]]
 name = "signal-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#bfcfa8bcf236aecef49c30289157a9164e628fd0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#c8e6efadaded4e8fe6b34aa1641561cce2a7d3d0"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -631,10 +633,11 @@ dependencies = [
 [[package]]
 name = "signal-sema"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-sema.git?branch=main#9968ffad5e494954a06a4d61721e5df904bc0c67"
+source = "git+https://github.com/LiGoldragon/signal-sema.git?branch=main#bf7cb5973f5ae4183d58e46132577761e89526a9"
 dependencies = [
  "nota-codec",
  "rkyv",
+ "signal-frame",
  "thiserror",
 ]
 

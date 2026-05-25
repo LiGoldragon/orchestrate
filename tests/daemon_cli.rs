@@ -11,7 +11,9 @@ use owner_signal_orchestrate::{
     CreateRoleOrder, Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
     OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
-use signal_frame::{ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch};
+use signal_frame::{
+    ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch, ShortHeader,
+};
 use signal_orchestrate::{
     Observation, OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest,
     RoleClaim, ScopeReason, ScopeReference,
@@ -208,6 +210,49 @@ fn owner_socket_rejects_ordinary_frame() {
         exchange: exchange(),
         request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
     });
+    let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("timeout");
+    stream
+        .write_all(&frame.encode_length_prefixed().expect("encode frame"))
+        .expect("write frame");
+    let mut prefix = [0_u8; 4];
+    assert!(stream.read_exact(&mut prefix).is_err());
+}
+
+#[test]
+fn ordinary_socket_rejects_mismatched_short_header_before_dispatch() {
+    let fixture = DaemonFixture::start("orchestrate-ordinary-header");
+    let frame = OrchestrateFrame::with_short_header(
+        ShortHeader::new(0),
+        OrchestrateFrameBody::Request {
+            exchange: exchange(),
+            request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
+        },
+    );
+    let mut stream = UnixStream::connect(&fixture.ordinary_socket).expect("connect ordinary");
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("timeout");
+    stream
+        .write_all(&frame.encode_length_prefixed().expect("encode frame"))
+        .expect("write frame");
+    let mut prefix = [0_u8; 4];
+    assert!(stream.read_exact(&mut prefix).is_err());
+}
+
+#[test]
+fn owner_socket_rejects_mismatched_short_header_before_dispatch() {
+    let fixture = DaemonFixture::start("orchestrate-owner-header");
+    let frame = OwnerOrchestrateFrame::with_short_header(
+        ShortHeader::new(0),
+        OwnerOrchestrateFrameBody::Request {
+            exchange: exchange(),
+            request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {})
+                .into_request(),
+        },
+    );
     let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
