@@ -6,25 +6,39 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nota_codec::{Decoder, Encoder, NotaDecode, NotaEncode};
-use orchestrate::{DaemonConfiguration, HarnessKind, RoleName, WirePath};
+use orchestrate::{
+    DaemonConfiguration, HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistration,
+    MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName,
+    RoleToken, StoreLocation, StoredClaim, WirePath,
+};
 use owner_signal_orchestrate::{
     CreateRoleOrder, Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
     OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
 use signal_frame::{
-    ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch, ShortHeader,
+    AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
+    RequestPayload, SessionEpoch, ShortHeader, SubReply,
 };
 use signal_orchestrate::{
     Observation, OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest,
     RoleClaim, ScopeReason, ScopeReference,
 };
+use signal_version_handover::{
+    CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
+    HandoverRejectionReason, MarkerRequest, MirrorPayload, Operation as UpgradeOperation,
+    ReadinessReport, Reply as UpgradeReply,
+};
 use tempfile::TempDir;
+use version_projection::ContractVersion;
 
 struct DaemonFixture {
     _temporary: TempDir,
     workspace: PathBuf,
+    git_index: PathBuf,
+    store: PathBuf,
     ordinary_socket: PathBuf,
     owner_socket: PathBuf,
+    upgrade_socket: PathBuf,
     child: Child,
 }
 
@@ -40,12 +54,15 @@ impl DaemonFixture {
         std::fs::create_dir_all(workspace.join("repos")).expect("repos directory");
         std::fs::create_dir_all(&git_index).expect("git index directory");
 
+        let store = temporary.path().join("orchestrate.redb");
         let ordinary_socket = temporary.path().join("ordinary.sock");
         let owner_socket = temporary.path().join("owner.sock");
+        let upgrade_socket = temporary.path().join("upgrade.sock");
         let configuration = DaemonConfiguration::new(
-            wire_path(&temporary.path().join("orchestrate.redb")),
+            wire_path(&store),
             wire_path(&ordinary_socket),
             wire_path(&owner_socket),
+            wire_path(&upgrade_socket),
             wire_path(&workspace),
             wire_path(&git_index),
         );
@@ -59,8 +76,11 @@ impl DaemonFixture {
         let mut fixture = Self {
             _temporary: temporary,
             workspace,
+            git_index,
+            store,
             ordinary_socket,
             owner_socket,
+            upgrade_socket,
             child,
         };
         fixture.wait_for_sockets();
@@ -70,7 +90,10 @@ impl DaemonFixture {
     fn wait_for_sockets(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
-            if self.ordinary_socket.exists() && self.owner_socket.exists() {
+            if self.ordinary_socket.exists()
+                && self.owner_socket.exists()
+                && self.upgrade_socket.exists()
+            {
                 return;
             }
             if let Some(status) = self.child.try_wait().expect("daemon status") {
@@ -79,6 +102,11 @@ impl DaemonFixture {
             thread::sleep(Duration::from_millis(20));
         }
         panic!("daemon sockets were not created");
+    }
+
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 
     fn cli(&self, request: impl NotaEncode) -> std::process::Output {
@@ -106,6 +134,22 @@ fn role(value: &str) -> RoleName {
     RoleName::from_wire_token(value).expect("role")
 }
 
+fn role_token(value: &str) -> RoleToken {
+    RoleToken::from_text(value).expect("role token")
+}
+
+fn role_vector(values: &[&str]) -> Role {
+    Role::try_new(values.iter().map(|value| role_token(value)).collect()).expect("role vector")
+}
+
+fn lane_identifier(value: &str) -> LaneIdentifier {
+    LaneIdentifier::from_wire_token(value).expect("lane")
+}
+
+fn reason(value: &str) -> ScopeReason {
+    ScopeReason::from_text(value).expect("reason")
+}
+
 fn encode_nota(value: &impl NotaEncode) -> String {
     let mut encoder = Encoder::new();
     value.encode(&mut encoder).expect("encode nota");
@@ -124,6 +168,120 @@ fn exchange() -> ExchangeIdentifier {
         ExchangeLane::Connector,
         LaneSequence::first(),
     )
+}
+
+fn upgrade_reply(socket: &Path, operation: UpgradeOperation) -> UpgradeReply {
+    let request = operation.into_request();
+    let short_header = request.short_header();
+    let frame = UpgradeFrame::with_short_header(
+        short_header,
+        UpgradeFrameBody::Request {
+            exchange: exchange(),
+            request,
+        },
+    );
+    let mut stream = UnixStream::connect(socket).expect("connect upgrade");
+    stream
+        .write_all(
+            &frame
+                .encode_length_prefixed()
+                .expect("encode upgrade frame"),
+        )
+        .expect("write upgrade frame");
+    let bytes = read_length_prefixed_response(&mut stream);
+    let frame = UpgradeFrame::decode_length_prefixed(&bytes).expect("decode upgrade reply");
+    let UpgradeFrameBody::Reply { reply, .. } = frame.into_body() else {
+        panic!("expected upgrade reply");
+    };
+    first_upgrade_reply(reply)
+}
+
+fn first_upgrade_reply(reply: FrameReply<UpgradeReply>) -> UpgradeReply {
+    let FrameReply::Accepted {
+        outcome: AcceptedOutcome::Committed,
+        per_operation,
+    } = reply
+    else {
+        panic!("expected committed upgrade reply");
+    };
+    match per_operation.into_head() {
+        SubReply::Ok(reply) => reply,
+        SubReply::Invalidated | SubReply::Skipped | SubReply::Failed { .. } => {
+            panic!("expected successful upgrade operation")
+        }
+    }
+}
+
+fn read_length_prefixed_response(stream: &mut UnixStream) -> Vec<u8> {
+    let mut prefix = [0_u8; 4];
+    stream
+        .read_exact(&mut prefix)
+        .expect("read response prefix");
+    let length = u32::from_be_bytes(prefix) as usize;
+    let mut payload = vec![0_u8; length];
+    stream
+        .read_exact(&mut payload)
+        .expect("read response payload");
+    let mut bytes = Vec::with_capacity(4 + length);
+    bytes.extend_from_slice(&prefix);
+    bytes.extend_from_slice(&payload);
+    bytes
+}
+
+fn complete_handover(fixture: &DaemonFixture) -> HandoverMarker {
+    let component = MirrorSnapshot::component_name();
+    let marker = match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::AskHandoverMarker(MarkerRequest {
+            component: component.clone(),
+        }),
+    ) {
+        UpgradeReply::HandoverMarker(marker) => marker,
+        reply => panic!("expected handover marker, got {reply:?}"),
+    };
+    let accepted = match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::ReadyToHandover(ReadinessReport {
+            component: component.clone(),
+            source_marker: marker,
+        }),
+    ) {
+        UpgradeReply::HandoverAccepted(accepted) => accepted.accepted_marker,
+        reply => panic!("expected handover acceptance, got {reply:?}"),
+    };
+    match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::HandoverCompleted(CompletionReport {
+            component,
+            accepted_marker: accepted.clone(),
+        }),
+    ) {
+        UpgradeReply::HandoverFinalized(finalized) => finalized.finalized_marker,
+        reply => panic!("expected handover finalization, got {reply:?}"),
+    }
+}
+
+fn test_mirror_payload() -> MirrorPayload {
+    MirrorSnapshot {
+        claims: vec![StoredClaim::new(
+            role("operator"),
+            ScopeReference::Path(
+                WirePath::from_absolute_path("/tmp/orchestrate-upgrade-mirror-claim")
+                    .expect("claim path"),
+            ),
+            reason("upgrade mirror restore"),
+        )],
+        lanes: vec![LaneRegistration {
+            lane: lane_identifier("schema-designer-assistant"),
+            role: role_vector(&["Schema", "Designer"]),
+            authority: LaneAuthority::Support,
+        }],
+    }
+    .into_mirror_payload(MirrorVersions::new(
+        ContractVersion::new([1; 32]),
+        MirrorSnapshot::current_contract_version(),
+    ))
+    .expect("mirror payload")
 }
 
 #[test]
@@ -186,6 +344,119 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
 }
 
 #[test]
+fn upgrade_socket_serves_marker_readiness_completion_and_retires_public_paths() {
+    let fixture = DaemonFixture::start("orchestrate-upgrade-complete");
+    let finalized = complete_handover(&fixture);
+
+    assert_eq!(finalized.component, MirrorSnapshot::component_name());
+    assert_eq!(
+        finalized.schema_hash,
+        MirrorSnapshot::current_contract_version()
+    );
+    assert!(!fixture.ordinary_socket.exists());
+    assert!(!fixture.owner_socket.exists());
+    assert!(fixture.upgrade_socket.exists());
+}
+
+#[test]
+fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
+    let mut fixture = DaemonFixture::start("orchestrate-upgrade-mirror");
+    let component = MirrorSnapshot::component_name();
+    let marker = match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::AskHandoverMarker(MarkerRequest {
+            component: component.clone(),
+        }),
+    ) {
+        UpgradeReply::HandoverMarker(marker) => marker,
+        reply => panic!("expected handover marker, got {reply:?}"),
+    };
+
+    let mirror_reply = upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::Mirror(test_mirror_payload()),
+    );
+    let UpgradeReply::MirrorAcknowledged(acknowledgement) = mirror_reply else {
+        panic!("expected mirror acknowledgement, got {mirror_reply:?}");
+    };
+    assert_eq!(acknowledgement.component, component);
+
+    let accepted_marker = match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::ReadyToHandover(ReadinessReport {
+            component: component.clone(),
+            source_marker: marker,
+        }),
+    ) {
+        UpgradeReply::HandoverAccepted(accepted) => accepted.accepted_marker,
+        reply => panic!("expected handover accepted, got {reply:?}"),
+    };
+    let finalized_marker = match upgrade_reply(
+        &fixture.upgrade_socket,
+        UpgradeOperation::HandoverCompleted(CompletionReport {
+            component,
+            accepted_marker,
+        }),
+    ) {
+        UpgradeReply::HandoverFinalized(finalized) => finalized.finalized_marker,
+        reply => panic!("expected handover finalized, got {reply:?}"),
+    };
+    assert_eq!(
+        finalized_marker.schema_hash,
+        MirrorSnapshot::current_contract_version()
+    );
+
+    fixture.stop();
+    let service = OrchestrateService::open_with_layout(
+        &StoreLocation::new(fixture.store.to_string_lossy().into_owned()),
+        OrchestrateLayout::new(fixture.workspace.clone(), fixture.git_index.clone()),
+    )
+    .expect("reopen service");
+    let roles = service
+        .handle(OrchestrateRequest::Observe(Observation::Roles))
+        .expect("observe roles");
+    let OrchestrateReply::RoleSnapshot(roles) = roles else {
+        panic!("expected role snapshot");
+    };
+    let operator = roles
+        .roles
+        .iter()
+        .find(|role| role.role.as_wire_token() == "operator")
+        .expect("operator role");
+    assert!(operator.claims.iter().any(|claim| matches!(
+        &claim.scope,
+        ScopeReference::Path(path)
+            if path.as_str() == "/tmp/orchestrate-upgrade-mirror-claim"
+    )));
+
+    let lanes = service
+        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .expect("observe lanes");
+    let OrchestrateReply::LanesObserved(lanes) = lanes else {
+        panic!("expected lane snapshot");
+    };
+    assert!(
+        lanes
+            .lanes
+            .iter()
+            .any(|lane| lane.lane.as_wire_token() == "schema-designer-assistant")
+    );
+}
+
+#[test]
+fn upgrade_socket_rejects_wrong_mirror_target() {
+    let fixture = DaemonFixture::start("orchestrate-upgrade-mirror-reject");
+    let mut payload = test_mirror_payload();
+    payload.target_version = ContractVersion::new([9; 32]);
+
+    let reply = upgrade_reply(&fixture.upgrade_socket, UpgradeOperation::Mirror(payload));
+    let UpgradeReply::HandoverRejected(rejection) = reply else {
+        panic!("expected handover rejection, got {reply:?}");
+    };
+    assert_eq!(rejection.reason, HandoverRejectionReason::SchemaMismatch);
+}
+
+#[test]
 fn ordinary_socket_rejects_owner_frame() {
     let fixture = DaemonFixture::start("orchestrate-owner-reject");
     let frame = OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Request {
@@ -193,6 +464,24 @@ fn ordinary_socket_rejects_owner_frame() {
         request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
     });
     let mut stream = UnixStream::connect(&fixture.ordinary_socket).expect("connect ordinary");
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .expect("timeout");
+    stream
+        .write_all(&frame.encode_length_prefixed().expect("encode frame"))
+        .expect("write frame");
+    let mut prefix = [0_u8; 4];
+    assert!(stream.read_exact(&mut prefix).is_err());
+}
+
+#[test]
+fn upgrade_socket_rejects_ordinary_frame() {
+    let fixture = DaemonFixture::start("orchestrate-upgrade-reject");
+    let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
+        exchange: exchange(),
+        request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
+    });
+    let mut stream = UnixStream::connect(&fixture.upgrade_socket).expect("connect upgrade");
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .expect("timeout");

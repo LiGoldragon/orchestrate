@@ -299,6 +299,10 @@ impl OrchestrateTables {
         StoreClock::system().timestamp()
     }
 
+    pub fn current_commit_sequence(&self) -> Result<u64> {
+        Ok(self.engine.current_commit_sequence()?.value())
+    }
+
     fn next_activity_slot(&self) -> Result<ActivitySlot> {
         let stored = self
             .engine

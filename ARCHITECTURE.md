@@ -13,8 +13,9 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > dispatch. The runtime can now encode, validate, decode, and restore
 > an orchestrate Mirror snapshot carried by
 > `signal-version-handover::MirrorPayload`; the private upgrade socket
-> handler is still missing. GitHub/ghq-backed report-repository
-> creation is still missing.
+> handler now serves marker/readiness/completion and Mirror restore
+> frames. GitHub/ghq-backed report-repository creation is still
+> missing.
 > `tools/orchestrate` remains the live workspace helper until the
 > daemon is supervised as a workspace service and the operator chooses
 > the cutover point.
@@ -99,9 +100,9 @@ This runtime repo contains:
 - compatibility lock-file projection from accepted daemon state into
   workspace `orchestrate/<role>.lock` files;
 - a daemon binary that accepts one NOTA config argument, binds ordinary
-  and owner Unix sockets, decodes Signal frames, dispatches to the
-  service, validates frame short headers before dispatch, and writes
-  Signal replies;
+  owner, and private upgrade Unix sockets, decodes Signal frames,
+  dispatches to the service, validates frame short headers before
+  dispatch, and writes Signal replies;
 - a thin CLI client that accepts one NOTA request argument, encodes it
   as a Signal frame, and connects only to the `orchestrate`
   daemon sockets.
@@ -110,6 +111,12 @@ This runtime repo contains:
   payload bytes in `signal-version-handover::MirrorPayload`, validates
   component/kind/target-version on receive, and restores the decoded
   state into the local sema tables.
+- a private upgrade-socket handler for `signal-version-handover`
+  frames. It answers `AskHandoverMarker`, records
+  `ReadyToHandover`, retires ordinary/owner socket paths after
+  `HandoverCompleted`, accepts orchestrate `MirrorPayload` snapshots
+  in the marker-to-readiness window, and maps invalid mirror payloads
+  to typed handover rejections.
 
 The full component surface is:
 
@@ -244,7 +251,9 @@ Task scopes render in bracketed human form:
 - The daemon has one typed listener and dispatch path per Signal
   contract socket.
 - The ordinary socket accepts ordinary frames; the owner socket
-  accepts owner frames; each rejects the other's vocabulary.
+  accepts owner frames; the private upgrade socket accepts
+  `signal-version-handover` frames; each rejects the other's
+  vocabulary.
 - The daemon validates the incoming frame `ShortHeader` against the
   decoded request root before dispatch; mismatched or unknown root
   bytes are rejected before service state can mutate.
@@ -278,6 +287,9 @@ Task scopes render in bracketed human form:
   `MirrorSnapshot` records: active claims plus lane registrations.
   Component name, record kind, target contract version, and archive
   validity are checked before state restoration.
+- Version handover Mirror restore happens before readiness for
+  orchestrate. Completion retires the ordinary and owner socket paths;
+  the upgrade socket remains available for private recovery protocol.
 - BEADS is never an owned claim scope.
 
 ## 8 - Invariants
@@ -297,12 +309,13 @@ Task scopes render in bracketed human form:
 src/lib.rs        public library surface and re-exports
 src/error.rs      crate error enum
 src/configuration.rs
-                  daemon NOTA config record
-src/daemon.rs     ordinary/owner socket listeners and frame dispatch
-                  with ShortHeader ingress validation
+                  daemon NOTA config record, including the private
+                  upgrade socket path
+src/daemon.rs     ordinary/owner/upgrade socket listeners and frame
+                  dispatch with ShortHeader ingress validation
 src/divergence.rs partial downstream application recorder
-src/handover.rs   version-handover Mirror snapshot encoding,
-                  validation, decoding, and restoration
+src/handover.rs   version-handover marker state plus Mirror snapshot
+                  encoding, validation, decoding, and restoration
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/lock_projection.rs
@@ -313,7 +326,7 @@ src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
 src/role.rs       owner role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
-src/service.rs    ordinary and owner request dispatch
+src/service.rs    ordinary, owner, and upgrade request dispatch
 src/main.rs       daemon binary, one NOTA config argument
 src/bin/orchestrate.rs
                   one-line signal_frame::signal_cli! thin client
@@ -323,8 +336,9 @@ tests/architecture.rs
                   CLI boundary source-scan witnesses
 tests/daemon_cli.rs
                   production daemon + production CLI socket witnesses
+                  including private upgrade-socket handover witnesses
 tests/handover.rs version-handover Mirror payload encode/decode/restore
-                  witnesses
+                  service witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

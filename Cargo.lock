@@ -325,7 +325,7 @@ dependencies = [
  "signal-executor",
  "signal-frame",
  "signal-orchestrate",
- "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
+ "signal-sema",
  "signal-version-handover",
  "tempfile",
  "thiserror",
@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "sema"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/sema.git#4ea561bc53f6aa38fb71a7570665d57191fce0ea"
+source = "git+https://github.com/LiGoldragon/sema.git#7207fe194dbcddb70bf1978d750a6f4085ad9b04"
 dependencies = [
  "redb",
  "rkyv",
@@ -507,12 +507,12 @@ dependencies = [
 [[package]]
 name = "sema-engine"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/sema-engine.git#27777c21f8959db49c5e0bdaf1bc80fdf14702ff"
+source = "git+https://github.com/LiGoldragon/sema-engine.git#620d30656ce9c786cdb3ecc7c745e71c1f140ed2"
 dependencies = [
  "rkyv",
  "sema",
  "signal-core",
- "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git)",
+ "signal-sema",
  "thiserror",
 ]
 
@@ -567,7 +567,7 @@ dependencies = [
 [[package]]
 name = "signal-core"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-core.git#494da25305183f286b889697617ed6d01b8e4593"
+source = "git+https://github.com/LiGoldragon/signal-core.git#03c2f030d38e0633c44d11c847df74c2de932792"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -578,7 +578,7 @@ dependencies = [
 [[package]]
 name = "signal-core-macros"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-core.git#494da25305183f286b889697617ed6d01b8e4593"
+source = "git+https://github.com/LiGoldragon/signal-core.git#03c2f030d38e0633c44d11c847df74c2de932792"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -592,7 +592,7 @@ source = "git+https://github.com/LiGoldragon/signal-executor.git?branch=main#63d
 dependencies = [
  "rkyv",
  "signal-frame",
- "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
+ "signal-sema",
  "thiserror",
 ]
 
@@ -628,7 +628,7 @@ dependencies = [
  "nota-codec",
  "rkyv",
  "signal-frame",
- "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
+ "signal-sema",
  "thiserror",
 ]
 
@@ -640,16 +640,6 @@ dependencies = [
  "nota-codec",
  "rkyv",
  "signal-frame",
- "thiserror",
-]
-
-[[package]]
-name = "signal-sema"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-sema.git#22b036a095857b42a81556666e093f03bf4533a1"
-dependencies = [
- "nota-codec",
- "rkyv",
  "thiserror",
 ]
 

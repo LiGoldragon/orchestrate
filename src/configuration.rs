@@ -6,6 +6,7 @@ pub struct DaemonConfiguration {
     pub store_path: WirePath,
     pub ordinary_socket_path: WirePath,
     pub owner_socket_path: WirePath,
+    pub upgrade_socket_path: WirePath,
     pub workspace_root: WirePath,
     pub git_index_root: WirePath,
 }
@@ -15,6 +16,7 @@ impl DaemonConfiguration {
         store_path: WirePath,
         ordinary_socket_path: WirePath,
         owner_socket_path: WirePath,
+        upgrade_socket_path: WirePath,
         workspace_root: WirePath,
         git_index_root: WirePath,
     ) -> Self {
@@ -22,6 +24,7 @@ impl DaemonConfiguration {
             store_path,
             ordinary_socket_path,
             owner_socket_path,
+            upgrade_socket_path,
             workspace_root,
             git_index_root,
         }

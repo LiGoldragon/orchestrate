@@ -1,5 +1,6 @@
 use signal_orchestrate::LaneRegistration;
-use signal_version_handover::MirrorPayload;
+use signal_version_handover::{Date, HandoverMarker, MirrorPayload, Time};
+use std::time::{SystemTime, UNIX_EPOCH};
 use version_projection::{ComponentName, ContractVersion, RecordKind};
 
 use crate::{Error, OrchestrateTables, Result, StoredClaim};
@@ -22,6 +23,22 @@ pub struct MirrorSnapshot {
     pub lanes: Vec<LaneRegistration>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum HandoverState {
+    #[default]
+    Active,
+    Ready {
+        accepted_marker: HandoverMarker,
+    },
+    Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandoverClockReading {
+    pub date: Date,
+    pub time: Time,
+}
+
 impl MirrorVersions {
     pub const fn new(source: ContractVersion, target: ContractVersion) -> Self {
         Self { source, target }
@@ -33,6 +50,24 @@ impl MirrorVersions {
 
     pub const fn target(self) -> ContractVersion {
         self.target
+    }
+}
+
+impl HandoverClockReading {
+    pub fn now() -> Result<Self> {
+        let elapsed = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let total_seconds = elapsed.as_secs();
+        let days = (total_seconds / 86_400) as i64;
+        let seconds_in_day = total_seconds % 86_400;
+        let (year, month, day) = civil_date_from_unix_days(days);
+        Ok(Self {
+            date: Date::new(year as u16, month as u8, day as u8),
+            time: Time::new(
+                (seconds_in_day / 3_600) as u8,
+                ((seconds_in_day % 3_600) / 60) as u8,
+                (seconds_in_day % 60) as u8,
+            ),
+        })
     }
 }
 
@@ -119,5 +154,34 @@ impl MirrorSnapshot {
                 actual: target,
             })
         }
+    }
+}
+
+fn civil_date_from_unix_days(days: i64) -> (i32, u32, u32) {
+    let shifted = days + 719_468;
+    let era = if shifted >= 0 {
+        shifted
+    } else {
+        shifted - 146_096
+    } / 146_097;
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    let year = year + if month <= 2 { 1 } else { 0 };
+    (year as i32, month as u32, day as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::civil_date_from_unix_days;
+
+    #[test]
+    fn civil_date_from_unix_days_marks_epoch() {
+        assert_eq!(civil_date_from_unix_days(0), (1970, 1, 1));
     }
 }
