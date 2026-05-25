@@ -344,19 +344,81 @@ tests/smoke.rs    legacy claim-state smoke test
 
 ## Pending schema-engine upgrade
 
-**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+**Status:** scheduled for migration to schema-language-based contract per
+`primary/reports/designer/326-v13-spirit-complete-schema-vision.md` +
+`primary/reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+The reader model is multi-pass NOTA-first per spirit record 549; macro
+application iterates to a fixed point per record 569.
 
-**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
+**Target:** this component's hand-written `signal_channel!` invocation +
+Layer 2 Component Commands + storage types convert to a single
+`orchestrate/orchestrate.schema` file. The brilliant macro library
+(`primary-ezqx.1`) reads the schema + emits all the wire types +
+ShortHeader projection + dispatcher + VersionProjection + storage
+descriptors.
 
-**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`; orchestrate cuts over after Spirit and mind. The sequencing matters because orchestrate consumes `owner-signal-persona-router` and `owner-signal-persona-harness` for the authority chain (per `## 2 - Authority Chain`); those downstream owner contracts should land on the schema engine before orchestrate's outbound calls cut over.
+**Sequence:** Spirit is the MVP pilot landing first via
+`primary-ezqx.1`; orchestrate cuts over after Spirit and mind. The
+sequencing matters because orchestrate consumes
+`owner-signal-persona-router` and `owner-signal-persona-harness` for
+the authority chain (per `## 2 - Authority Chain`); those downstream
+owner contracts should land on the schema engine before orchestrate's
+outbound calls cut over.
 
-**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Orchestrate already implements `OperationLowering` as the contract-to-Component-Command translation point (per `src/lowering.rs`) — the schema must keep that boundary intact and have the macro emit the same lowering shape. The owner-contract surface (`owner-signal-orchestrate` with `Create` / `Retire` / `Refresh`) is distinct from the ordinary surface (`signal-orchestrate` with `Claim` / `Release` / `Handoff` / `Observe` / `Submit` / `Query` / `Watch` / `Unwatch`); both must remain inexpressible on the wrong socket after schema cutover. The sema-backed `claims`, `roles`, `repositories`, `activities`, `activity_next_slot`, and `divergences` tables need schema storage descriptors that emit equivalent `sema-engine` registrations. Lock-file projection from accepted daemon state must keep working.
+**Per-component concerns:** Cluster/lifecycle orchestration; schema
+cutover after Spirit + mind. Orchestrate already implements
+`OperationLowering` as the contract-to-Component-Command translation
+point (per `src/lowering.rs`) — the schema must keep that boundary
+intact and have the macro emit the same lowering shape. The
+owner-contract surface (`owner-signal-orchestrate` with `Create` /
+`Retire` / `Refresh`) is distinct from the ordinary surface
+(`signal-orchestrate` with `Claim` / `Release` / `Handoff` / `Observe`
+/ `Submit` / `Query` / `Watch` / `Unwatch`); both must remain
+inexpressible on the wrong socket after schema cutover. The sema-backed
+`claims`, `roles`, `repositories`, `activities`, `activity_next_slot`,
+and `divergences` tables need schema storage descriptors that emit
+equivalent `sema-engine` registrations. Lock-file projection from
+accepted daemon state must keep working.
+
+**Variant slot policy.** Per spirit record 562 the orchestrate schema's
+enums place data-carrying variants in slots 0-6 and unit variants
+after. The lane registry, role kinds, claim outcomes, and activity
+result enums all follow this discipline so adding a new unit variant
+(e.g. a new claim outcome class) is a no-op upgrade on the wire format.
+
+**Mirror payload for orchestrate.** Per
+`primary/reports/designer/333-v2` §4.1 the daemon currently gates Mirror
+acceptance on `PrivateUpgradeOnly` state (post-completion); the design
+intent places Mirror BEFORE completion so orchestrate can transfer
+in-flight lane claims. Open psyche question. Orchestrate has the
+strongest stake in pre-cutover Mirror because its in-memory critical
+state (active claims, lane bindings) needs to transfer to the next
+daemon BEFORE the public socket cutover instant. The current handover
+encode/decode/restore service witnesses (`tests/handover.rs`) prove the
+wire path round-trips an orchestrate Mirror snapshot via
+`signal-version-handover::MirrorPayload`; the open question is WHEN the
+receiver accepts it.
+
+**Cross-version wire-compat dependency.** The wire-compat blocker
+between persona-spirit v0.1.0.1 and v0.1.1 (P0 bead `primary-602y`) is
+diagnostic of the same drift that will affect any future orchestrate
+v0.1.0 ↔ v0.1.1 handover: deployment artefacts pinned to different
+signal-frame versions emit mutually unparseable frames. Orchestrate
+must avoid the same trap by re-linking against current signal-frame at
+every version bump.
 
 **References:**
-- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
-- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
-- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
-- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
+- `primary/reports/designer/326-v13-spirit-complete-schema-vision.md` —
+  uniform header form + schema-language design
+- `primary/reports/designer/333-upgrade-mechanism-full-design-explained.md`
+  + `333-v2` — upgrade mechanism design + corrections; Mirror phase
+  ordering is orchestrate's load-bearing question
+- `primary/reports/designer/334-v2-multi-pass-nota-first-schema-reader.md`
+  — multi-pass reader model (record 549)
+- `primary/reports/designer/324-migration-mvp-spirit-handover-re-specification.md`
+  — migration MVP + handover state
+- `primary/reports/operator/174-schema-import-header-design-critique-2026-05-24.md`
+  — header/body/feature separation + lowering rules
 
 ## See Also
 

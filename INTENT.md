@@ -50,19 +50,46 @@ Synthesised from psyche statements; not embellished.*
 
 ## Pending schema-engine upgrade
 
-**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+**Status:** scheduled for migration to schema-language-based contract per
+`primary/reports/designer/326-v13-spirit-complete-schema-vision.md` +
+`primary/reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+The reader model is multi-pass NOTA-first per spirit record 549; macro
+application iterates to a fixed point per record 569.
 
-**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
+**Target:** this component's hand-written `signal_channel!` invocation +
+Layer 2 Component Commands + storage types convert to a single
+`orchestrate/orchestrate.schema` file. The brilliant macro library
+(`primary-ezqx.1`) reads the schema + emits all the wire types +
+ShortHeader projection + dispatcher + VersionProjection + storage
+descriptors.
 
-**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound owner calls should land on the schema engine after the contracts at both ends.
+**Sequence:** Spirit is the MVP pilot landing first via
+`primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because
+the authority chain `mind -> orchestrate -> router/harness` means
+orchestrate's outbound owner calls should land on the schema engine
+after the contracts at both ends.
 
-**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Lane definitions stay data (not closed role enums) under the schema — the schema must enable dynamic-role registry persistence without baking the live role set into the wire.
+**Per-component concerns:** Cluster/lifecycle orchestration; schema
+cutover after Spirit + mind. Lane definitions stay data (not closed
+role enums) under the schema — the schema must enable dynamic-role
+registry persistence without baking the live role set into the wire.
+Per spirit record 562 enums place data-carrying variants first; adding
+a new unit lane outcome is a no-op upgrade. Mirror phase ordering is
+orchestrate's load-bearing question: in-memory critical state (active
+claims, lane bindings) needs to transfer BEFORE cutover, not after. Per
+/333-v2 §4.1.
 
 **References:**
-- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
-- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
-- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
-- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
+- `primary/reports/designer/326-v13-spirit-complete-schema-vision.md` —
+  uniform header form + schema-language design
+- `primary/reports/designer/333-upgrade-mechanism-full-design-explained.md`
+  + `333-v2` — upgrade mechanism design + corrections
+- `primary/reports/designer/334-v2-multi-pass-nota-first-schema-reader.md`
+  — multi-pass reader model (record 549)
+- `primary/reports/designer/324-migration-mvp-spirit-handover-re-specification.md`
+  — migration MVP + handover state
+- `primary/reports/operator/174-schema-import-header-design-critique-2026-05-24.md`
+  — header/body/feature separation + lowering rules
 
 *Source statements live in `/home/li/primary/intent/persona.nota` and
 `/home/li/primary/intent/component-shape.nota`.*
