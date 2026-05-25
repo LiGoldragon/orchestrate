@@ -28,7 +28,9 @@ owner-signal-orchestrate = { git = "https://github.com/LiGoldragon/owner-signal-
 signal-executor             = { git = "https://github.com/LiGoldragon/signal-executor.git", branch = "main" }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
+signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
 nota-codec                  = { git = "https://github.com/LiGoldragon/nota-codec.git", branch = "main" }
+version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 futures                     = { version = "0.3", default-features = false, features = ["executor"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"

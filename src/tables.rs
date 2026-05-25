@@ -159,6 +159,28 @@ impl OrchestrateTables {
         Ok(())
     }
 
+    pub fn replace_lanes(&self, lanes: &[LaneRegistration]) -> Result<()> {
+        let existing = self
+            .lane_records()?
+            .into_iter()
+            .map(|registration| registration.lane)
+            .collect::<Vec<_>>();
+        self.engine.storage_kernel().write(|transaction| {
+            for lane in existing {
+                LANE_REGISTRY.remove(transaction, lane.as_wire_token())?;
+            }
+            for registration in lanes {
+                LANE_REGISTRY.insert(
+                    transaction,
+                    registration.lane.as_wire_token(),
+                    registration,
+                )?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     pub fn remove_lane(&self, lane: &LaneIdentifier) -> Result<()> {
         self.engine.storage_kernel().write(|transaction| {
             LANE_REGISTRY.remove(transaction, lane.as_wire_token())?;
@@ -211,6 +233,15 @@ impl OrchestrateTables {
             Ok(())
         })?;
         Ok(())
+    }
+
+    pub fn replace_all_claims(&self, claims: &[StoredClaim]) -> Result<()> {
+        let remove_keys = self
+            .claim_records()?
+            .iter()
+            .map(StoredClaim::key)
+            .collect::<Vec<_>>();
+        self.replace_claims(&remove_keys, claims)
     }
 
     pub fn append_activity(

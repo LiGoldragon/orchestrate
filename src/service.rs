@@ -5,9 +5,9 @@ use signal_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest,
 use std::sync::{Mutex, MutexGuard};
 
 use crate::{
-    Error, LockProjection, OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor,
-    OrdinaryLowering, OwnerCommandExecutor, OwnerLowering, Result, RoleRegistry, StoreLocation,
-    StoredDivergence,
+    Error, LockProjection, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateTables,
+    OrdinaryCommandExecutor, OrdinaryLowering, OwnerCommandExecutor, OwnerLowering, Result,
+    RoleRegistry, StoreLocation, StoredDivergence,
 };
 
 pub struct OrchestrateService {
@@ -92,6 +92,26 @@ impl OrchestrateService {
 
     pub fn divergences(&self) -> Result<Vec<StoredDivergence>> {
         self.tables.divergence_records()
+    }
+
+    pub fn mirror_snapshot(&self) -> Result<MirrorSnapshot> {
+        MirrorSnapshot::capture(&self.tables)
+    }
+
+    pub fn mirror_payload(
+        &self,
+        versions: MirrorVersions,
+    ) -> Result<signal_version_handover::MirrorPayload> {
+        self.mirror_snapshot()?.into_mirror_payload(versions)
+    }
+
+    pub fn restore_mirror_payload(
+        &self,
+        payload: &signal_version_handover::MirrorPayload,
+    ) -> Result<MirrorSnapshot> {
+        let snapshot = MirrorSnapshot::from_mirror_payload(payload)?;
+        snapshot.restore_into(&self.tables)?;
+        Ok(snapshot)
     }
 
     pub(crate) fn tables(&self) -> &OrchestrateTables {

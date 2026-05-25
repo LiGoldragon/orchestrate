@@ -10,8 +10,11 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > client exist. The CLI has no direct-store path. Lock-file projection
 > from daemon state exists. Ordinary and owner daemon sockets validate
 > the Signal `ShortHeader` against the decoded request root before
-> dispatch. GitHub/ghq-backed report-repository creation is still
-> missing.
+> dispatch. The runtime can now encode, validate, decode, and restore
+> an orchestrate Mirror snapshot carried by
+> `signal-version-handover::MirrorPayload`; the private upgrade socket
+> handler is still missing. GitHub/ghq-backed report-repository
+> creation is still missing.
 > `tools/orchestrate` remains the live workspace helper until the
 > daemon is supervised as a workspace service and the operator chooses
 > the cutover point.
@@ -102,6 +105,11 @@ This runtime repo contains:
 - a thin CLI client that accepts one NOTA request argument, encodes it
   as a Signal frame, and connects only to the `orchestrate`
   daemon sockets.
+- a Mirror snapshot layer for version handover: `src/handover.rs`
+  captures active claims and lane registrations, archives them as the
+  payload bytes in `signal-version-handover::MirrorPayload`, validates
+  component/kind/target-version on receive, and restores the decoded
+  state into the local sema tables.
 
 The full component surface is:
 
@@ -266,6 +274,10 @@ Task scopes render in bracketed human form:
 - Repository refresh reads local checkouts from the configured Git
   index root and creates workspace `repos/` links.
 - Lock files are projections of typed state, not durable authority.
+- Version handover Mirror payloads for orchestrate carry
+  `MirrorSnapshot` records: active claims plus lane registrations.
+  Component name, record kind, target contract version, and archive
+  validity are checked before state restoration.
 - BEADS is never an owned claim scope.
 
 ## 8 - Invariants
@@ -289,6 +301,8 @@ src/configuration.rs
 src/daemon.rs     ordinary/owner socket listeners and frame dispatch
                   with ShortHeader ingress validation
 src/divergence.rs partial downstream application recorder
+src/handover.rs   version-handover Mirror snapshot encoding,
+                  validation, decoding, and restoration
 src/location.rs   redb store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/lock_projection.rs
@@ -309,6 +323,8 @@ tests/architecture.rs
                   CLI boundary source-scan witnesses
 tests/daemon_cli.rs
                   production daemon + production CLI socket witnesses
+tests/handover.rs version-handover Mirror payload encode/decode/restore
+                  witnesses
 tests/smoke.rs    legacy claim-state smoke test
 ```
 

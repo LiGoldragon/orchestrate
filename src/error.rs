@@ -16,6 +16,30 @@ pub enum Error {
     #[error("operation dispatch: {0}")]
     OperationDispatch(#[from] signal_frame::OperationDispatchError),
 
+    #[error("handover mirror component mismatch: expected {expected}, got {actual}")]
+    MirrorComponentMismatch {
+        expected: &'static str,
+        actual: String,
+    },
+
+    #[error("handover mirror record kind mismatch: expected {expected}, got {actual}")]
+    MirrorKindMismatch {
+        expected: &'static str,
+        actual: String,
+    },
+
+    #[error("handover mirror target version mismatch: expected {expected:?}, got {actual:?}")]
+    MirrorTargetVersionMismatch {
+        expected: version_projection::ContractVersion,
+        actual: version_projection::ContractVersion,
+    },
+
+    #[error("handover mirror archive encode failed: {message}")]
+    MirrorArchiveEncode { message: String },
+
+    #[error("handover mirror archive decode failed: {message}")]
+    MirrorArchiveDecode { message: String },
+
     #[error("system time: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 

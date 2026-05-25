@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod divergence;
 pub mod error;
 pub mod execution;
+pub mod handover;
 pub mod lane;
 pub mod layout;
 pub mod location;
@@ -25,6 +26,7 @@ pub use execution::{
     OrdinaryCommand, OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering, OwnerCommand,
     OwnerCommandExecutor, OwnerEffect, OwnerLowering,
 };
+pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::LaneRegistry;
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
@@ -47,6 +49,7 @@ pub use signal_orchestrate::{
     RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
     TaskToken, TimestampNanos, WirePath,
 };
+pub use signal_version_handover::MirrorPayload;
 pub use tables::{
     OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredRepository, StoredRole,
 };

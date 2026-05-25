@@ -326,8 +326,10 @@ dependencies = [
  "signal-frame",
  "signal-orchestrate",
  "signal-sema 0.1.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
+ "signal-version-handover",
  "tempfile",
  "thiserror",
+ "version-projection",
 ]
 
 [[package]]
@@ -652,6 +654,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-version-handover"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-version-handover.git?branch=main#eb3af073b06ff6e649e8e6c9955f1ae9c87968c3"
+dependencies = [
+ "nota-codec",
+ "rkyv",
+ "signal-frame",
+ "thiserror",
+ "version-projection",
+]
+
+[[package]]
 name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -742,6 +756,16 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "version-projection"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/version-projection.git?branch=main#59932721ee0a25256bca6056a525d863568a2032"
+dependencies = [
+ "nota-codec",
+ "rkyv",
+ "thiserror",
 ]
 
 [[package]]
