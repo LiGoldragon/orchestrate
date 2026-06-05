@@ -81,8 +81,8 @@
   LaneRegistered (LaneRegistration)
   LaneRetired (LaneIdentifier)
   LaneAuthoritySet (LaneIdentifier LaneAuthority)
-  OwnerOrchestrateUnimplementedReason [NotBuiltYet DependencyNotReady]
-  OwnerOrchestrateRequestUnimplemented (OwnerOperationKind OwnerOrchestrateUnimplementedReason)
+  MetaOrchestrateUnimplementedReason [NotBuiltYet DependencyNotReady]
+  MetaOrchestrateRequestUnimplemented (MetaOperationKind MetaOrchestrateUnimplementedReason)
 
   OperationReceived (OperationKind)
   EffectEmitted (SemaObservation)
@@ -90,7 +90,7 @@
   Observed (ObservationEvent)
 
   OperationKind [Claim Release Handoff Observe Submit Query Watch Unwatch]
-  OwnerOperationKind [Create Retire Refresh Register SetAuthority]
+  MetaOperationKind [Create Retire Refresh Register SetAuthority]
   SemaObservation [Asserted Retracted Mutated Matched Subscribed NoChange]
   BranchTopology [Mainline Worktree DesignerFeatureWorktree]
 }
@@ -119,7 +119,7 @@
     LaneRetired
     LaneAuthoritySet
     PartialApplied
-    OwnerOrchestrateRequestUnimplemented)
+    MetaOrchestrateRequestUnimplemented)
 
   (Event (belongs ObservationStream)
     Observed)

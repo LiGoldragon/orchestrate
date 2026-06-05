@@ -1,4 +1,4 @@
-use owner_signal_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest, Retirement};
+use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest, Retirement};
 use signal_executor::{
     BatchEffects, BatchPlan, CommandEffect, CommandExecutor, Lowering as LoweringTrait,
     OperationEffects, OperationPlan,
@@ -196,15 +196,15 @@ impl CommandExecutor for OrdinaryCommandExecutor<'_> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OwnerCommand {
-    Create(owner_signal_orchestrate::CreateRoleOrder),
+pub enum MetaCommand {
+    Create(meta_signal_orchestrate::CreateRoleOrder),
     Retire(Retirement),
-    Refresh(owner_signal_orchestrate::RefreshRepositoryIndexOrder),
-    Register(owner_signal_orchestrate::LaneRegistrationRequest),
-    SetAuthority(owner_signal_orchestrate::LaneAuthorityChange),
+    Refresh(meta_signal_orchestrate::RefreshRepositoryIndexOrder),
+    Register(meta_signal_orchestrate::LaneRegistrationRequest),
+    SetAuthority(meta_signal_orchestrate::LaneAuthorityChange),
 }
 
-impl ToSemaOperation for OwnerCommand {
+impl ToSemaOperation for MetaCommand {
     fn to_sema_operation(&self) -> SemaOperation {
         match self {
             Self::Create(_) | Self::Refresh(_) | Self::Register(_) | Self::SetAuthority(_) => {
@@ -216,30 +216,30 @@ impl ToSemaOperation for OwnerCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OwnerEffect {
-    Reply(OwnerOrchestrateReply),
+pub enum MetaEffect {
+    Reply(MetaOrchestrateReply),
 }
 
-impl OwnerEffect {
-    fn into_reply(self) -> OwnerOrchestrateReply {
+impl MetaEffect {
+    fn into_reply(self) -> MetaOrchestrateReply {
         match self {
             Self::Reply(reply) => reply,
         }
     }
 }
 
-impl ToSemaOutcome for OwnerEffect {
+impl ToSemaOutcome for MetaEffect {
     fn to_sema_outcome(&self) -> SemaOutcome {
         match self {
-            Self::Reply(OwnerOrchestrateReply::RoleCreated(_))
-            | Self::Reply(OwnerOrchestrateReply::RepositoryIndexRefreshed(_))
-            | Self::Reply(OwnerOrchestrateReply::LaneRegistered(_))
-            | Self::Reply(OwnerOrchestrateReply::LaneAuthoritySet(_))
-            | Self::Reply(OwnerOrchestrateReply::PartialApplied(_)) => SemaOutcome::Mutated,
-            Self::Reply(OwnerOrchestrateReply::RoleRetired(_))
-            | Self::Reply(OwnerOrchestrateReply::LaneRetired(_)) => SemaOutcome::Retracted,
-            Self::Reply(OwnerOrchestrateReply::RoleCreationRejected(_))
-            | Self::Reply(OwnerOrchestrateReply::OwnerOrchestrateRequestUnimplemented(_)) => {
+            Self::Reply(MetaOrchestrateReply::RoleCreated(_))
+            | Self::Reply(MetaOrchestrateReply::RepositoryIndexRefreshed(_))
+            | Self::Reply(MetaOrchestrateReply::LaneRegistered(_))
+            | Self::Reply(MetaOrchestrateReply::LaneAuthoritySet(_))
+            | Self::Reply(MetaOrchestrateReply::PartialApplied(_)) => SemaOutcome::Mutated,
+            Self::Reply(MetaOrchestrateReply::RoleRetired(_))
+            | Self::Reply(MetaOrchestrateReply::LaneRetired(_)) => SemaOutcome::Retracted,
+            Self::Reply(MetaOrchestrateReply::RoleCreationRejected(_))
+            | Self::Reply(MetaOrchestrateReply::MetaOrchestrateRequestUnimplemented(_)) => {
                 SemaOutcome::NoChange
             }
         }
@@ -247,25 +247,25 @@ impl ToSemaOutcome for OwnerEffect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OwnerLowering;
+pub struct MetaLowering;
 
-impl LoweringTrait for OwnerLowering {
-    type Operation = OwnerOrchestrateRequest;
-    type Reply = OwnerOrchestrateReply;
-    type Command = OwnerCommand;
-    type ComponentEffect = OwnerEffect;
+impl LoweringTrait for MetaLowering {
+    type Operation = MetaOrchestrateRequest;
+    type Reply = MetaOrchestrateReply;
+    type Command = MetaCommand;
+    type ComponentEffect = MetaEffect;
 
     fn lower(
         &self,
         operation: &Self::Operation,
     ) -> std::result::Result<OperationPlan<Self::Command>, Self::Reply> {
         let command = match operation {
-            OwnerOrchestrateRequest::Create(payload) => OwnerCommand::Create(payload.clone()),
-            OwnerOrchestrateRequest::Retire(payload) => OwnerCommand::Retire(payload.clone()),
-            OwnerOrchestrateRequest::Refresh(payload) => OwnerCommand::Refresh(payload.clone()),
-            OwnerOrchestrateRequest::Register(payload) => OwnerCommand::Register(payload.clone()),
-            OwnerOrchestrateRequest::SetAuthority(payload) => {
-                OwnerCommand::SetAuthority(payload.clone())
+            MetaOrchestrateRequest::Create(payload) => MetaCommand::Create(payload.clone()),
+            MetaOrchestrateRequest::Retire(payload) => MetaCommand::Retire(payload.clone()),
+            MetaOrchestrateRequest::Refresh(payload) => MetaCommand::Refresh(payload.clone()),
+            MetaOrchestrateRequest::Register(payload) => MetaCommand::Register(payload.clone()),
+            MetaOrchestrateRequest::SetAuthority(payload) => {
+                MetaCommand::SetAuthority(payload.clone())
             }
         };
         Ok(OperationPlan::single(command))
@@ -279,57 +279,57 @@ impl LoweringTrait for OwnerLowering {
         effects
             .component_effects()
             .last()
-            .expect("orchestrate owner operation effects are non-empty")
+            .expect("orchestrate meta operation effects are non-empty")
             .clone()
             .into_reply()
     }
 }
 
-pub struct OwnerCommandExecutor<'service> {
+pub struct MetaCommandExecutor<'service> {
     service: &'service OrchestrateService,
 }
 
-impl<'service> OwnerCommandExecutor<'service> {
+impl<'service> MetaCommandExecutor<'service> {
     pub fn new(service: &'service OrchestrateService) -> Self {
         Self { service }
     }
 
     fn execute_command(
         &self,
-        command: OwnerCommand,
-    ) -> Result<CommandEffect<OwnerCommand, OwnerEffect>> {
+        command: MetaCommand,
+    ) -> Result<CommandEffect<MetaCommand, MetaEffect>> {
         let reply = match command.clone() {
-            OwnerCommand::Create(order) => {
+            MetaCommand::Create(order) => {
                 let reply = RoleRegistry::new(self.service.tables(), self.service.layout())
                     .create_role(order)?;
                 self.service.project_locks()?;
                 reply
             }
-            OwnerCommand::Retire(Retirement::Role(order)) => {
+            MetaCommand::Retire(Retirement::Role(order)) => {
                 let reply = RoleRegistry::new(self.service.tables(), self.service.layout())
                     .retire_role(order)?;
                 self.service.project_locks()?;
                 reply
             }
-            OwnerCommand::Retire(Retirement::Lane(lane)) => {
+            MetaCommand::Retire(Retirement::Lane(lane)) => {
                 LaneRegistry::new(self.service.tables()).retire(lane)?
             }
-            OwnerCommand::Refresh(_order) => {
+            MetaCommand::Refresh(_order) => {
                 RepositoryRegistry::new(self.service.tables(), self.service.layout()).refresh()?
             }
-            OwnerCommand::Register(request) => {
+            MetaCommand::Register(request) => {
                 LaneRegistry::new(self.service.tables()).register(request)?
             }
-            OwnerCommand::SetAuthority(change) => {
+            MetaCommand::SetAuthority(change) => {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
             }
         };
-        Ok(CommandEffect::new(command, OwnerEffect::Reply(reply)))
+        Ok(CommandEffect::new(command, MetaEffect::Reply(reply)))
     }
     fn execute_batch(
         &mut self,
-        plan: BatchPlan<OwnerCommand>,
-    ) -> Result<BatchEffects<OwnerCommand, OwnerEffect>> {
+        plan: BatchPlan<MetaCommand>,
+    ) -> Result<BatchEffects<MetaCommand, MetaEffect>> {
         let _sequence = self.service.lock_sequence()?;
         if plan.operations().len() != 1 {
             return Err(Error::UnsupportedAtomicBatch {
@@ -345,9 +345,9 @@ impl<'service> OwnerCommandExecutor<'service> {
     }
 }
 
-impl CommandExecutor for OwnerCommandExecutor<'_> {
-    type Command = OwnerCommand;
-    type ComponentEffect = OwnerEffect;
+impl CommandExecutor for MetaCommandExecutor<'_> {
+    type Command = MetaCommand;
+    type ComponentEffect = MetaEffect;
     type Error = Error;
 
     fn execute_atomic_batch(

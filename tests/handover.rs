@@ -1,8 +1,8 @@
 use orchestrate::{
-    Error, LaneAuthority, LaneRegistrationRequest, MirrorSnapshot, MirrorVersions, Observation,
-    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService,
-    OwnerOrchestrateReply, OwnerOrchestrateRequest, Role, RoleClaim, RoleName, RoleToken,
-    ScopeReason, ScopeReference, StoreLocation, WirePath,
+    Error, LaneAuthority, LaneRegistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
+    MirrorSnapshot, MirrorVersions, Observation, OrchestrateLayout, OrchestrateReply,
+    OrchestrateRequest, OrchestrateService, Role, RoleClaim, RoleName, RoleToken, ScopeReason,
+    ScopeReference, StoreLocation, WirePath,
 };
 use tempfile::TempDir;
 use version_projection::{ComponentName, ContractVersion, RecordKind};
@@ -89,12 +89,12 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
 
     let registered = old
         .service
-        .handle_owner(OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: role_vector(&["Designer"]),
             authority: LaneAuthority::Structural,
         }))
         .expect("register lane");
-    let OwnerOrchestrateReply::LaneRegistered(registered) = registered else {
+    let MetaOrchestrateReply::LaneRegistered(registered) = registered else {
         panic!("expected lane registered");
     };
     assert_eq!(registered.registration.lane.as_wire_token(), "designer");

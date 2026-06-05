@@ -1,6 +1,6 @@
-use owner_signal_orchestrate::{
+use meta_signal_orchestrate::{
     LaneAuthorityChange, LaneAuthoritySet, LaneRegistered, LaneRegistrationRequest, LaneRetired,
-    OwnerOrchestrateReply,
+    MetaOrchestrateReply,
 };
 use signal_orchestrate::{
     LaneAuthority, LaneIdentifier, LaneRegistration, LanesObserved, OrchestrateReply, Role,
@@ -17,7 +17,7 @@ impl<'tables> LaneRegistry<'tables> {
         Self { tables }
     }
 
-    pub fn register(&self, request: LaneRegistrationRequest) -> Result<OwnerOrchestrateReply> {
+    pub fn register(&self, request: LaneRegistrationRequest) -> Result<MetaOrchestrateReply> {
         if request.role.tokens.is_empty() {
             return Err(Error::EmptyLaneRole);
         }
@@ -41,22 +41,22 @@ impl<'tables> LaneRegistry<'tables> {
             authority: request.authority,
         };
         self.tables.insert_lane(&registration)?;
-        Ok(OwnerOrchestrateReply::LaneRegistered(LaneRegistered {
+        Ok(MetaOrchestrateReply::LaneRegistered(LaneRegistered {
             registration,
         }))
     }
 
-    pub fn retire(&self, lane: LaneIdentifier) -> Result<OwnerOrchestrateReply> {
+    pub fn retire(&self, lane: LaneIdentifier) -> Result<MetaOrchestrateReply> {
         if self.tables.lane_record(&lane)?.is_none() {
             return Err(Error::LaneNotRegistered {
                 lane: lane.as_wire_token().to_string(),
             });
         }
         self.tables.remove_lane(&lane)?;
-        Ok(OwnerOrchestrateReply::LaneRetired(LaneRetired { lane }))
+        Ok(MetaOrchestrateReply::LaneRetired(LaneRetired { lane }))
     }
 
-    pub fn set_authority(&self, change: LaneAuthorityChange) -> Result<OwnerOrchestrateReply> {
+    pub fn set_authority(&self, change: LaneAuthorityChange) -> Result<MetaOrchestrateReply> {
         let Some(mut registration) = self.tables.lane_record(&change.lane)? else {
             return Err(Error::LaneNotRegistered {
                 lane: change.lane.as_wire_token().to_string(),
@@ -64,7 +64,7 @@ impl<'tables> LaneRegistry<'tables> {
         };
         registration.authority = change.authority;
         self.tables.insert_lane(&registration)?;
-        Ok(OwnerOrchestrateReply::LaneAuthoritySet(LaneAuthoritySet {
+        Ok(MetaOrchestrateReply::LaneAuthoritySet(LaneAuthoritySet {
             lane: change.lane,
             authority: change.authority,
         }))

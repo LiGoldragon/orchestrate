@@ -50,14 +50,14 @@ fn orchestrate_schema_reads_local_imports_and_lowers_both_contract_legs() {
 
     let create = assembled
         .route_for_short_header(Leg::Owner, u64::from_le_bytes([0, 0, 0, 0, 0, 0, 0, 0]))
-        .expect("owner create route");
+        .expect("meta create route");
     assert_eq!(create.root().as_str(), "Create");
     assert_eq!(create.endpoint().name().as_str(), "CreateRoleOrder");
     assert_eq!(create.body(), &RouteBody::Type(name("CreateRoleOrder")));
 
     let set_authority = assembled
         .route_for_short_header(Leg::Owner, u64::from_le_bytes([4, 0, 0, 0, 0, 0, 0, 0]))
-        .expect("owner set-authority route");
+        .expect("meta set-authority route");
     assert_eq!(set_authority.root().as_str(), "SetAuthority");
     assert_eq!(
         set_authority.endpoint().name().as_str(),

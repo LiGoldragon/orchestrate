@@ -24,7 +24,7 @@ path = "src/bin/orchestrate.rs"
 sema                        = { git = "https://github.com/LiGoldragon/sema.git" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git" }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
-owner-signal-orchestrate = { git = "https://github.com/LiGoldragon/owner-signal-orchestrate.git", branch = "main" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "main" }
 signal-executor             = { git = "https://github.com/LiGoldragon/signal-executor.git", branch = "main" }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }

@@ -23,8 +23,8 @@ pub use daemon::OrchestrateDaemon;
 pub use divergence::DivergenceLedger;
 pub use error::{Error, Result};
 pub use execution::{
-    OrdinaryCommand, OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering, OwnerCommand,
-    OwnerCommandExecutor, OwnerEffect, OwnerLowering,
+    MetaCommand, MetaCommandExecutor, MetaEffect, MetaLowering, OrdinaryCommand,
+    OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::LaneRegistry;
@@ -32,9 +32,9 @@ pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
 pub use lowering::{LoweredOperation, OperationLowering};
-pub use owner_signal_orchestrate::{
+pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAuthorityChange, LaneAuthoritySet, LaneRegistered,
-    LaneRegistrationRequest, LaneRetired, OwnerOrchestrateReply, OwnerOrchestrateRequest,
+    LaneRegistrationRequest, LaneRetired, MetaOrchestrateReply, MetaOrchestrateRequest,
     RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement,
 };
 pub use repository::RepositoryRegistry;

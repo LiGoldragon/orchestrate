@@ -1,4 +1,4 @@
-use owner_signal_orchestrate::{OwnerOperationKind, OwnerOrchestrateRequest};
+use meta_signal_orchestrate::{MetaOperationKind, MetaOrchestrateRequest};
 use signal_orchestrate::{OperationKind, OrchestrateRequest};
 use signal_sema::SemaOperation;
 
@@ -39,13 +39,13 @@ impl OperationLowering {
         LoweredOperation::new(operation.operation_kind(), vec![effect])
     }
 
-    pub fn owner(operation: &OwnerOrchestrateRequest) -> LoweredOperation<OwnerOperationKind> {
+    pub fn meta(operation: &MetaOrchestrateRequest) -> LoweredOperation<MetaOperationKind> {
         let effect = match operation {
-            OwnerOrchestrateRequest::Create(_) => SemaOperation::Mutate,
-            OwnerOrchestrateRequest::Retire(_) => SemaOperation::Retract,
-            OwnerOrchestrateRequest::Refresh(_) => SemaOperation::Mutate,
-            OwnerOrchestrateRequest::Register(_) => SemaOperation::Mutate,
-            OwnerOrchestrateRequest::SetAuthority(_) => SemaOperation::Mutate,
+            MetaOrchestrateRequest::Create(_) => SemaOperation::Mutate,
+            MetaOrchestrateRequest::Retire(_) => SemaOperation::Retract,
+            MetaOrchestrateRequest::Refresh(_) => SemaOperation::Mutate,
+            MetaOrchestrateRequest::Register(_) => SemaOperation::Mutate,
+            MetaOrchestrateRequest::SetAuthority(_) => SemaOperation::Mutate,
         };
         LoweredOperation::new(operation.operation_kind(), vec![effect])
     }

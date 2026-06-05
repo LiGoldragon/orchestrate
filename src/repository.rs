@@ -1,4 +1,4 @@
-use owner_signal_orchestrate::{OwnerOrchestrateReply, RepositoryIndexRefreshed};
+use meta_signal_orchestrate::{MetaOrchestrateReply, RepositoryIndexRefreshed};
 
 use crate::{OrchestrateLayout, OrchestrateTables, Result, StoredRepository, layout::wire_path};
 
@@ -12,7 +12,7 @@ impl<'tables> RepositoryRegistry<'tables> {
         Self { tables, layout }
     }
 
-    pub fn refresh(&self) -> Result<OwnerOrchestrateReply> {
+    pub fn refresh(&self) -> Result<MetaOrchestrateReply> {
         std::fs::create_dir_all(self.layout.git_index_root())?;
         std::fs::create_dir_all(self.layout.workspace_root().join("repos"))?;
 
@@ -37,7 +37,7 @@ impl<'tables> RepositoryRegistry<'tables> {
 
         repositories.sort_by(|left, right| left.name.cmp(&right.name));
         self.tables.replace_repositories(&repositories)?;
-        Ok(OwnerOrchestrateReply::RepositoryIndexRefreshed(
+        Ok(MetaOrchestrateReply::RepositoryIndexRefreshed(
             RepositoryIndexRefreshed {
                 repositories: repositories.len().min(u32::MAX as usize) as u32,
             },

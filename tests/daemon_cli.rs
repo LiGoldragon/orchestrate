@@ -5,15 +5,15 @@ use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use meta_signal_orchestrate::{
+    CreateRoleOrder, Frame as MetaOrchestrateFrame, FrameBody as MetaOrchestrateFrameBody,
+    MetaOrchestrateReply, MetaOrchestrateRequest, RefreshRepositoryIndexOrder,
+};
 use nota_codec::{Decoder, Encoder, NotaDecode, NotaEncode};
 use orchestrate::{
     DaemonConfiguration, HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistration,
     MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName,
     RoleToken, StoreLocation, StoredClaim, WirePath,
-};
-use owner_signal_orchestrate::{
-    CreateRoleOrder, Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody,
-    OwnerOrchestrateReply, OwnerOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -37,7 +37,7 @@ struct DaemonFixture {
     git_index: PathBuf,
     store: PathBuf,
     ordinary_socket: PathBuf,
-    owner_socket: PathBuf,
+    meta_socket: PathBuf,
     upgrade_socket: PathBuf,
     child: Child,
 }
@@ -56,12 +56,12 @@ impl DaemonFixture {
 
         let store = temporary.path().join("orchestrate.redb");
         let ordinary_socket = temporary.path().join("ordinary.sock");
-        let owner_socket = temporary.path().join("owner.sock");
+        let meta_socket = temporary.path().join("meta.sock");
         let upgrade_socket = temporary.path().join("upgrade.sock");
         let configuration = DaemonConfiguration::new(
             wire_path(&store),
             wire_path(&ordinary_socket),
-            wire_path(&owner_socket),
+            wire_path(&meta_socket),
             wire_path(&upgrade_socket),
             wire_path(&workspace),
             wire_path(&git_index),
@@ -79,7 +79,7 @@ impl DaemonFixture {
             git_index,
             store,
             ordinary_socket,
-            owner_socket,
+            meta_socket,
             upgrade_socket,
             child,
         };
@@ -91,7 +91,7 @@ impl DaemonFixture {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
             if self.ordinary_socket.exists()
-                && self.owner_socket.exists()
+                && self.meta_socket.exists()
                 && self.upgrade_socket.exists()
             {
                 return;
@@ -112,7 +112,7 @@ impl DaemonFixture {
     fn cli(&self, request: impl NotaEncode) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_orchestrate"))
             .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
-            .env("PERSONA_ORCHESTRATE_OWNER_SOCKET", &self.owner_socket)
+            .env("PERSONA_ORCHESTRATE_OWNER_SOCKET", &self.meta_socket)
             .arg(encode_nota(&request))
             .output()
             .expect("cli output")
@@ -285,11 +285,11 @@ fn test_mirror_payload() -> MirrorPayload {
 }
 
 #[test]
-fn cli_creates_dynamic_role_through_daemon_owner_socket() {
+fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let fixture = DaemonFixture::start("orchestrate-cli-role");
     let role = role("primary-orchestrate-daemon-zxq9-never-collide");
 
-    let output = fixture.cli(OwnerOrchestrateRequest::Create(CreateRoleOrder {
+    let output = fixture.cli(MetaOrchestrateRequest::Create(CreateRoleOrder {
         role: role.clone(),
         harness: HarnessKind::Codex,
     }));
@@ -298,8 +298,8 @@ fn cli_creates_dynamic_role_through_daemon_owner_socket() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let reply: OwnerOrchestrateReply = decode_nota(&output.stdout);
-    let OwnerOrchestrateReply::RoleCreated(created) = reply else {
+    let reply: MetaOrchestrateReply = decode_nota(&output.stdout);
+    let MetaOrchestrateReply::RoleCreated(created) = reply else {
         panic!("expected role created");
     };
     assert_eq!(created.role, role);
@@ -354,7 +354,7 @@ fn upgrade_socket_serves_marker_readiness_completion_and_retires_public_paths() 
         MirrorSnapshot::current_contract_version()
     );
     assert!(!fixture.ordinary_socket.exists());
-    assert!(!fixture.owner_socket.exists());
+    assert!(!fixture.meta_socket.exists());
     assert!(fixture.upgrade_socket.exists());
 }
 
@@ -457,11 +457,11 @@ fn upgrade_socket_rejects_wrong_mirror_target() {
 }
 
 #[test]
-fn ordinary_socket_rejects_owner_frame() {
-    let fixture = DaemonFixture::start("orchestrate-owner-reject");
-    let frame = OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Request {
+fn ordinary_socket_rejects_meta_frame() {
+    let fixture = DaemonFixture::start("orchestrate-meta-reject");
+    let frame = MetaOrchestrateFrame::new(MetaOrchestrateFrameBody::Request {
         exchange: exchange(),
-        request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
+        request: MetaOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
     });
     let mut stream = UnixStream::connect(&fixture.ordinary_socket).expect("connect ordinary");
     stream
@@ -493,13 +493,13 @@ fn upgrade_socket_rejects_ordinary_frame() {
 }
 
 #[test]
-fn owner_socket_rejects_ordinary_frame() {
+fn meta_socket_rejects_ordinary_frame() {
     let fixture = DaemonFixture::start("orchestrate-ordinary-reject");
     let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
         exchange: exchange(),
         request: OrchestrateRequest::Observe(Observation::Roles).into_request(),
     });
-    let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
+    let mut stream = UnixStream::connect(&fixture.meta_socket).expect("connect meta");
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .expect("timeout");
@@ -532,17 +532,16 @@ fn ordinary_socket_rejects_mismatched_short_header_before_dispatch() {
 }
 
 #[test]
-fn owner_socket_rejects_mismatched_short_header_before_dispatch() {
-    let fixture = DaemonFixture::start("orchestrate-owner-header");
-    let frame = OwnerOrchestrateFrame::with_short_header(
+fn meta_socket_rejects_mismatched_short_header_before_dispatch() {
+    let fixture = DaemonFixture::start("orchestrate-meta-header");
+    let frame = MetaOrchestrateFrame::with_short_header(
         ShortHeader::new(0),
-        OwnerOrchestrateFrameBody::Request {
+        MetaOrchestrateFrameBody::Request {
             exchange: exchange(),
-            request: OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {})
-                .into_request(),
+            request: MetaOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}).into_request(),
         },
     );
-    let mut stream = UnixStream::connect(&fixture.owner_socket).expect("connect owner");
+    let mut stream = UnixStream::connect(&fixture.meta_socket).expect("connect meta");
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .expect("timeout");

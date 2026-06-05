@@ -6,8 +6,8 @@ Synthesised from psyche statements; not embellished.*
 ## Goals
 
 - `orchestrate` is a real triad component: daemon, thin CLI,
-  ordinary `signal-orchestrate` contract, and owner-only
-  `owner-signal-orchestrate` contract.
+  ordinary `signal-orchestrate` contract, and meta-signal
+  `meta-signal-orchestrate` contract.
 - `orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
-use owner_signal_orchestrate::{
-    Frame as OwnerOrchestrateFrame, FrameBody as OwnerOrchestrateFrameBody, OwnerOrchestrateRequest,
+use meta_signal_orchestrate::{
+    Frame as MetaOrchestrateFrame, FrameBody as MetaOrchestrateFrameBody, MetaOrchestrateRequest,
 };
 use signal_frame::{
     AcceptedOutcome, OperationDispatchError, Reply, Request, ShortHeader, SubReply,
@@ -26,7 +26,7 @@ const MAX_FRAME_LENGTH: usize = 16 * 1024 * 1024;
 pub struct OrchestrateDaemon {
     service: Arc<OrchestrateService>,
     ordinary_socket_path: PathBuf,
-    owner_socket_path: PathBuf,
+    meta_socket_path: PathBuf,
     upgrade_socket_path: PathBuf,
 }
 
@@ -43,37 +43,37 @@ impl OrchestrateDaemon {
         Ok(Self {
             service: Arc::new(service),
             ordinary_socket_path: PathBuf::from(configuration.ordinary_socket_path.as_str()),
-            owner_socket_path: PathBuf::from(configuration.owner_socket_path.as_str()),
+            meta_socket_path: PathBuf::from(configuration.meta_socket_path.as_str()),
             upgrade_socket_path: PathBuf::from(configuration.upgrade_socket_path.as_str()),
         })
     }
 
     pub fn run(self) -> Result<()> {
         let ordinary_listener = bind_socket(&self.ordinary_socket_path)?;
-        let owner_listener = bind_socket(&self.owner_socket_path)?;
+        let meta_listener = bind_socket(&self.meta_socket_path)?;
         let upgrade_listener = bind_socket(&self.upgrade_socket_path)?;
         let ordinary_service = Arc::clone(&self.service);
-        let owner_service = Arc::clone(&self.service);
+        let meta_service = Arc::clone(&self.service);
         let upgrade_service = Arc::clone(&self.service);
         let ordinary_socket_path = self.ordinary_socket_path.clone();
-        let owner_socket_path = self.owner_socket_path.clone();
+        let meta_socket_path = self.meta_socket_path.clone();
 
         let ordinary_thread =
             thread::spawn(move || accept_ordinary(ordinary_listener, ordinary_service));
-        let owner_thread = thread::spawn(move || accept_owner(owner_listener, owner_service));
+        let meta_thread = thread::spawn(move || accept_meta(meta_listener, meta_service));
         let upgrade_thread = thread::spawn(move || {
             accept_upgrade(
                 upgrade_listener,
                 upgrade_service,
                 ordinary_socket_path,
-                owner_socket_path,
+                meta_socket_path,
             )
         });
 
         ordinary_thread
             .join()
             .map_err(|_| Error::DaemonThreadPanicked)??;
-        owner_thread
+        meta_thread
             .join()
             .map_err(|_| Error::DaemonThreadPanicked)??;
         upgrade_thread
@@ -111,12 +111,12 @@ fn accept_ordinary(listener: UnixListener, service: Arc<OrchestrateService>) -> 
     Ok(())
 }
 
-fn accept_owner(listener: UnixListener, service: Arc<OrchestrateService>) -> Result<()> {
+fn accept_meta(listener: UnixListener, service: Arc<OrchestrateService>) -> Result<()> {
     for stream in listener.incoming() {
         let mut stream = stream?;
         let service = Arc::clone(&service);
         thread::spawn(move || {
-            if let Ok(response) = handle_owner_stream(&mut stream, &service) {
+            if let Ok(response) = handle_meta_stream(&mut stream, &service) {
                 let _ = stream.write_all(&response);
             }
         });
@@ -128,19 +128,19 @@ fn accept_upgrade(
     listener: UnixListener,
     service: Arc<OrchestrateService>,
     ordinary_socket_path: PathBuf,
-    owner_socket_path: PathBuf,
+    meta_socket_path: PathBuf,
 ) -> Result<()> {
     for stream in listener.incoming() {
         let mut stream = stream?;
         let service = Arc::clone(&service);
         let ordinary_socket_path = ordinary_socket_path.clone();
-        let owner_socket_path = owner_socket_path.clone();
+        let meta_socket_path = meta_socket_path.clone();
         thread::spawn(move || {
             if let Ok(response) = handle_upgrade_stream(
                 &mut stream,
                 &service,
                 &ordinary_socket_path,
-                &owner_socket_path,
+                &meta_socket_path,
             ) {
                 let _ = stream.write_all(&response);
             }
@@ -168,18 +168,18 @@ fn handle_ordinary_stream(
         .map_err(Error::SignalFrame)
 }
 
-fn handle_owner_stream(stream: &mut UnixStream, service: &OrchestrateService) -> Result<Vec<u8>> {
+fn handle_meta_stream(stream: &mut UnixStream, service: &OrchestrateService) -> Result<Vec<u8>> {
     let bytes = read_length_prefixed(stream)?;
-    let frame = OwnerOrchestrateFrame::decode_length_prefixed(&bytes)?;
+    let frame = MetaOrchestrateFrame::decode_length_prefixed(&bytes)?;
     let short_header = frame.short_header();
-    let OwnerOrchestrateFrameBody::Request { exchange, request } = frame.into_body() else {
+    let MetaOrchestrateFrameBody::Request { exchange, request } = frame.into_body() else {
         return Err(Error::SocketExpectedRequestFrame);
     };
-    validate_owner_request_header(short_header, &request)?;
+    validate_meta_request_header(short_header, &request)?;
 
-    let reply = service.handle_owner_request(request);
+    let reply = service.handle_meta_request(request);
 
-    OwnerOrchestrateFrame::new(OwnerOrchestrateFrameBody::Reply { exchange, reply })
+    MetaOrchestrateFrame::new(MetaOrchestrateFrameBody::Reply { exchange, reply })
         .encode_length_prefixed()
         .map_err(Error::SignalFrame)
 }
@@ -188,7 +188,7 @@ fn handle_upgrade_stream(
     stream: &mut UnixStream,
     service: &OrchestrateService,
     ordinary_socket_path: &Path,
-    owner_socket_path: &Path,
+    meta_socket_path: &Path,
 ) -> Result<Vec<u8>> {
     let bytes = read_length_prefixed(stream)?;
     let frame = UpgradeFrame::decode_length_prefixed(&bytes)?;
@@ -201,7 +201,7 @@ fn handle_upgrade_stream(
     let reply = service.handle_upgrade_request(request);
     if reply_finalized_handover(&reply) {
         remove_socket_path(ordinary_socket_path)?;
-        remove_socket_path(owner_socket_path)?;
+        remove_socket_path(meta_socket_path)?;
     }
 
     UpgradeFrame::new(UpgradeFrameBody::Reply { exchange, reply })
@@ -242,12 +242,12 @@ fn validate_ordinary_request_header(
     Ok(())
 }
 
-fn validate_owner_request_header(
+fn validate_meta_request_header(
     short_header: ShortHeader,
-    request: &Request<OwnerOrchestrateRequest>,
+    request: &Request<MetaOrchestrateRequest>,
 ) -> Result<()> {
     let expected = short_header.to_le_bytes()[0];
-    let expected_kind = OwnerOrchestrateRequest::kind_from_short_header(short_header)
+    let expected_kind = MetaOrchestrateRequest::kind_from_short_header(short_header)
         .ok_or(OperationDispatchError::UnknownOperationRoot { root: expected })?;
     let actual_kind = request.payloads().head().kind();
     if actual_kind != expected_kind {

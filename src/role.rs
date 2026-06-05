@@ -1,5 +1,5 @@
-use owner_signal_orchestrate::{
-    CreateRoleOrder, OwnerOrchestrateReply, RetireRoleOrder, RoleCreated, RoleCreationRejected,
+use meta_signal_orchestrate::{
+    CreateRoleOrder, MetaOrchestrateReply, RetireRoleOrder, RoleCreated, RoleCreationRejected,
     RoleCreationRejectionReason, RoleRetired,
 };
 use signal_orchestrate::{HarnessKind, RoleName};
@@ -32,9 +32,9 @@ impl<'tables> RoleRegistry<'tables> {
         Ok(())
     }
 
-    pub fn create_role(&self, order: CreateRoleOrder) -> Result<OwnerOrchestrateReply> {
+    pub fn create_role(&self, order: CreateRoleOrder) -> Result<MetaOrchestrateReply> {
         if self.tables.role_record(&order.role)?.is_some() {
-            return Ok(OwnerOrchestrateReply::RoleCreationRejected(
+            return Ok(MetaOrchestrateReply::RoleCreationRejected(
                 RoleCreationRejected {
                     role: order.role,
                     reason: RoleCreationRejectionReason::RoleAlreadyExists,
@@ -44,7 +44,7 @@ impl<'tables> RoleRegistry<'tables> {
 
         let report_repository_path = self.layout.report_repository_path(&order.role);
         if report_repository_path.exists() {
-            return Ok(OwnerOrchestrateReply::RoleCreationRejected(
+            return Ok(MetaOrchestrateReply::RoleCreationRejected(
                 RoleCreationRejected {
                     role: order.role,
                     reason: RoleCreationRejectionReason::ReportRepositoryAlreadyExists,
@@ -54,7 +54,7 @@ impl<'tables> RoleRegistry<'tables> {
 
         let report_lane_path = self.layout.report_lane_path(&order.role);
         if report_lane_path.exists() {
-            return Ok(OwnerOrchestrateReply::RoleCreationRejected(
+            return Ok(MetaOrchestrateReply::RoleCreationRejected(
                 RoleCreationRejected {
                     role: order.role,
                     reason: RoleCreationRejectionReason::ReportLaneAlreadyExists,
@@ -79,7 +79,7 @@ impl<'tables> RoleRegistry<'tables> {
             report_lane.clone(),
         ))?;
 
-        Ok(OwnerOrchestrateReply::RoleCreated(RoleCreated {
+        Ok(MetaOrchestrateReply::RoleCreated(RoleCreated {
             role: order.role,
             harness: order.harness,
             report_repository_path: report_repository,
@@ -87,9 +87,9 @@ impl<'tables> RoleRegistry<'tables> {
         }))
     }
 
-    pub fn retire_role(&self, order: RetireRoleOrder) -> Result<OwnerOrchestrateReply> {
+    pub fn retire_role(&self, order: RetireRoleOrder) -> Result<MetaOrchestrateReply> {
         self.tables.remove_role(&order.role)?;
-        Ok(OwnerOrchestrateReply::RoleRetired(RoleRetired {
+        Ok(MetaOrchestrateReply::RoleRetired(RoleRetired {
             role: order.role,
         }))
     }

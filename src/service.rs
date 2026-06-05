@@ -1,4 +1,4 @@
-use owner_signal_orchestrate::{OwnerOrchestrateReply, OwnerOrchestrateRequest};
+use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest};
 use signal_executor::{Executor, ObserverSet};
 use signal_frame::{
     AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, RequestRejectionReason, SubReply,
@@ -14,8 +14,8 @@ use std::sync::{Mutex, MutexGuard};
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LockProjection, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateTables,
-    OrdinaryCommandExecutor, OrdinaryLowering, OwnerCommandExecutor, OwnerLowering, Result,
+    Error, LockProjection, MetaCommandExecutor, MetaLowering, MirrorSnapshot, MirrorVersions,
+    OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor, OrdinaryLowering, Result,
     RoleRegistry, StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
@@ -50,8 +50,8 @@ impl OrchestrateService {
         first_committed_payload(reply, engine_error)
     }
 
-    pub fn handle_owner(&self, request: OwnerOrchestrateRequest) -> Result<OwnerOrchestrateReply> {
-        let (reply, engine_error) = self.execute_owner_request(request.into_request());
+    pub fn handle_meta(&self, request: MetaOrchestrateRequest) -> Result<MetaOrchestrateReply> {
+        let (reply, engine_error) = self.execute_meta_request(request.into_request());
         first_committed_payload(reply, engine_error)
     }
 
@@ -60,11 +60,11 @@ impl OrchestrateService {
         reply
     }
 
-    pub fn handle_owner_request(
+    pub fn handle_meta_request(
         &self,
-        request: Request<OwnerOrchestrateRequest>,
-    ) -> Reply<OwnerOrchestrateReply> {
-        let (reply, _engine_error) = self.execute_owner_request(request);
+        request: Request<MetaOrchestrateRequest>,
+    ) -> Reply<MetaOrchestrateReply> {
+        let (reply, _engine_error) = self.execute_meta_request(request);
         reply
     }
 
@@ -97,12 +97,12 @@ impl OrchestrateService {
         (reply, engine_error)
     }
 
-    fn execute_owner_request(
+    fn execute_meta_request(
         &self,
-        request: Request<OwnerOrchestrateRequest>,
-    ) -> (Reply<OwnerOrchestrateReply>, Option<Error>) {
-        let command_executor = OwnerCommandExecutor::new(self);
-        let mut executor = Executor::new(OwnerLowering, command_executor, ObserverSet::no_op());
+        request: Request<MetaOrchestrateRequest>,
+    ) -> (Reply<MetaOrchestrateReply>, Option<Error>) {
+        let command_executor = MetaCommandExecutor::new(self);
+        let mut executor = Executor::new(MetaLowering, command_executor, ObserverSet::no_op());
         let reply = futures::executor::block_on(executor.execute(request));
         let engine_error = executor.take_last_engine_error();
         (reply, engine_error)

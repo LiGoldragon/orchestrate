@@ -317,7 +317,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "nota-codec",
- "owner-signal-orchestrate",
+ "meta-signal-orchestrate",
  "rkyv",
  "schema",
  "sema",
@@ -333,9 +333,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "owner-signal-orchestrate"
+name = "meta-signal-orchestrate"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/owner-signal-orchestrate.git?branch=main#499eb68a058eb9df84355ddc900757d6ea6908ba"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#bb421a9f5e9ddc0d47a2595459f703a025e45a86"
 dependencies = [
  "nota-codec",
  "rkyv",

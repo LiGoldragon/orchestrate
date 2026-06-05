@@ -1,12 +1,12 @@
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
-    HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry, Observation,
-    ObservationSubscription, ObservationToken, OperationKind, OperationLowering, OrchestrateLayout,
-    OrchestrateReply, OrchestrateRequest, OrchestrateService, OwnerOrchestrateReply,
-    OwnerOrchestrateRequest, PartialApplied, RefreshRepositoryIndexOrder, RetireRoleOrder,
-    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
-    ScopeReference, StoreLocation, TaskToken, WirePath,
+    HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry,
+    MetaOrchestrateReply, MetaOrchestrateRequest, Observation, ObservationSubscription,
+    ObservationToken, OperationKind, OperationLowering, OrchestrateLayout, OrchestrateReply,
+    OrchestrateRequest, OrchestrateService, PartialApplied, RefreshRepositoryIndexOrder,
+    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
+    ScopeReason, ScopeReference, StoreLocation, TaskToken, WirePath,
 };
 use signal_sema::SemaOperation;
 use std::path::PathBuf;
@@ -254,48 +254,48 @@ fn ordinary_contract_operations_lower_to_sema_effects() {
 }
 
 #[test]
-fn owner_contract_operations_lower_to_sema_effects() {
+fn meta_contract_operations_lower_to_sema_effects() {
     let cases = [
         (
-            OwnerOrchestrateRequest::Create(CreateRoleOrder {
+            MetaOrchestrateRequest::Create(CreateRoleOrder {
                 role: role("primary-lowering-owner-create"),
                 harness: HarnessKind::Codex,
             }),
-            owner_signal_orchestrate::OwnerOperationKind::Create,
+            meta_signal_orchestrate::MetaOperationKind::Create,
             SemaOperation::Mutate,
         ),
         (
-            OwnerOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
+            MetaOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
                 role: role("primary-lowering-owner-retire"),
             })),
-            owner_signal_orchestrate::OwnerOperationKind::Retire,
+            meta_signal_orchestrate::MetaOperationKind::Retire,
             SemaOperation::Retract,
         ),
         (
-            OwnerOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}),
-            owner_signal_orchestrate::OwnerOperationKind::Refresh,
+            MetaOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}),
+            meta_signal_orchestrate::MetaOperationKind::Refresh,
             SemaOperation::Mutate,
         ),
         (
-            OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+            MetaOrchestrateRequest::Register(LaneRegistrationRequest {
                 role: role_vector(&["Designer"]),
                 authority: LaneAuthority::Structural,
             }),
-            owner_signal_orchestrate::OwnerOperationKind::Register,
+            meta_signal_orchestrate::MetaOperationKind::Register,
             SemaOperation::Mutate,
         ),
         (
-            OwnerOrchestrateRequest::SetAuthority(owner_signal_orchestrate::LaneAuthorityChange {
+            MetaOrchestrateRequest::SetAuthority(meta_signal_orchestrate::LaneAuthorityChange {
                 lane: lane("designer"),
                 authority: LaneAuthority::Support,
             }),
-            owner_signal_orchestrate::OwnerOperationKind::SetAuthority,
+            meta_signal_orchestrate::MetaOperationKind::SetAuthority,
             SemaOperation::Mutate,
         ),
     ];
 
     for (operation, kind, effect) in cases {
-        let lowered = OperationLowering::owner(&operation);
+        let lowered = OperationLowering::meta(&operation);
         assert_eq!(*lowered.kind(), kind);
         assert_eq!(lowered.effects(), &[effect]);
     }
@@ -517,12 +517,12 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
 
     let reply = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Create(CreateRoleOrder {
+        .handle_meta(MetaOrchestrateRequest::Create(CreateRoleOrder {
             role: role.clone(),
             harness: HarnessKind::Codex,
         }))
         .expect("create role");
-    let OwnerOrchestrateReply::RoleCreated(created) = reply else {
+    let MetaOrchestrateReply::RoleCreated(created) = reply else {
         panic!("expected role created");
     };
     assert_eq!(created.role, role);
@@ -572,24 +572,24 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 
     let first = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: designer_role.clone(),
             authority: LaneAuthority::Structural,
         }))
         .expect("register first lane");
-    let OwnerOrchestrateReply::LaneRegistered(first) = first else {
+    let MetaOrchestrateReply::LaneRegistered(first) = first else {
         panic!("expected lane registered");
     };
     assert_eq!(first.registration.lane.as_wire_token(), "designer");
 
     let second = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Register(LaneRegistrationRequest {
+        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: designer_role,
             authority: LaneAuthority::Structural,
         }))
         .expect("register second lane");
-    let OwnerOrchestrateReply::LaneRegistered(second) = second else {
+    let MetaOrchestrateReply::LaneRegistered(second) = second else {
         panic!("expected lane registered");
     };
     assert_eq!(second.registration.lane.as_wire_token(), "second-designer");
@@ -617,14 +617,14 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 
     let set = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::SetAuthority(
-            owner_signal_orchestrate::LaneAuthorityChange {
+        .handle_meta(MetaOrchestrateRequest::SetAuthority(
+            meta_signal_orchestrate::LaneAuthorityChange {
                 lane: lane("designer"),
                 authority: LaneAuthority::Support,
             },
         ))
         .expect("set authority");
-    let OwnerOrchestrateReply::LaneAuthoritySet(set) = set else {
+    let MetaOrchestrateReply::LaneAuthoritySet(set) = set else {
         panic!("expected authority set");
     };
     assert_eq!(set.lane.as_wire_token(), "designer");
@@ -632,11 +632,11 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 
     let retired = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Retire(Retirement::Lane(lane(
+        .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
             "designer",
         ))))
         .expect("retire lane");
-    let OwnerOrchestrateReply::LaneRetired(retired) = retired else {
+    let MetaOrchestrateReply::LaneRetired(retired) = retired else {
         panic!("expected lane retired");
     };
     assert_eq!(retired.lane.as_wire_token(), "designer");
@@ -653,7 +653,7 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 
     let missing = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Retire(Retirement::Lane(lane(
+        .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
             "missing-designer",
         ))));
     assert!(matches!(
@@ -671,11 +671,11 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
 
     let reply = fixture
         .service
-        .handle_owner(OwnerOrchestrateRequest::Refresh(
+        .handle_meta(MetaOrchestrateRequest::Refresh(
             RefreshRepositoryIndexOrder {},
         ))
         .expect("refresh repositories");
-    let OwnerOrchestrateReply::RepositoryIndexRefreshed(refreshed) = reply else {
+    let MetaOrchestrateReply::RepositoryIndexRefreshed(refreshed) = reply else {
         panic!("expected repository index refresh");
     };
     assert_eq!(refreshed.repositories, 1);
