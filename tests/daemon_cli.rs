@@ -44,6 +44,10 @@ struct DaemonFixture {
 
 impl DaemonFixture {
     fn start(name: &str) -> Self {
+        Self::start_with_legacy_locks(name, &[])
+    }
+
+    fn start_with_legacy_locks(name: &str, legacy_locks: &[(&str, &str)]) -> Self {
         let temporary = tempfile::Builder::new()
             .prefix(name)
             .tempdir()
@@ -52,6 +56,16 @@ impl DaemonFixture {
         let git_index = temporary.path().join("git-index");
         std::fs::create_dir_all(workspace.join("reports")).expect("reports directory");
         std::fs::create_dir_all(workspace.join("repos")).expect("repos directory");
+        std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
+        std::fs::write(
+            workspace.join("orchestrate").join("roles.list"),
+            "operator\ndesigner\nsystem-operator\n",
+        )
+        .expect("role registry");
+        for (file_name, body) in legacy_locks {
+            std::fs::write(workspace.join("orchestrate").join(file_name), body)
+                .expect("legacy lock");
+        }
         std::fs::create_dir_all(&git_index).expect("git index directory");
 
         let store = temporary.path().join("orchestrate.redb");
@@ -341,6 +355,38 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
         std::fs::read_to_string(lock_path).expect("lock file"),
         "/tmp/primary-orchestrate-daemon-zxq9-never-collide # daemon CLI claim projection\n"
     );
+}
+
+#[test]
+fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
+    let fixture = DaemonFixture::start_with_legacy_locks(
+        "orchestrate-import-legacy-lock",
+        &[(
+            "system-operator.lock",
+            "/git/github.com/LiGoldragon/orchestrate # production cutover\n",
+        )],
+    );
+
+    let output = fixture.cli(OrchestrateRequest::Observe(Observation::Roles));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: OrchestrateReply = decode_nota(&output.stdout);
+    let OrchestrateReply::RoleSnapshot(snapshot) = reply else {
+        panic!("expected role snapshot");
+    };
+    let system_operator = snapshot
+        .roles
+        .iter()
+        .find(|status| status.role.as_wire_token() == "system-operator")
+        .expect("system-operator role");
+    assert!(system_operator.claims.iter().any(|claim| matches!(
+        &claim.scope,
+        ScopeReference::Path(path)
+            if path.as_str() == "/git/github.com/LiGoldragon/orchestrate"
+    )));
 }
 
 #[test]

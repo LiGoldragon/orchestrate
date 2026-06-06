@@ -8,6 +8,7 @@ pub mod execution;
 pub mod handover;
 pub mod lane;
 pub mod layout;
+pub mod legacy_lock_import;
 pub mod location;
 pub mod lock_projection;
 pub mod lowering;
@@ -29,6 +30,7 @@ pub use execution::{
 pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::LaneRegistry;
 pub use layout::OrchestrateLayout;
+pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
 pub use lowering::{LoweredOperation, OperationLowering};

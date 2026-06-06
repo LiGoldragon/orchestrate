@@ -14,9 +14,9 @@ use std::sync::{Mutex, MutexGuard};
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LockProjection, MetaCommandExecutor, MetaLowering, MirrorSnapshot, MirrorVersions,
-    OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor, OrdinaryLowering, Result,
-    RoleRegistry, StoreLocation, StoredDivergence,
+    Error, LegacyLockImport, LockProjection, MetaCommandExecutor, MetaLowering, MirrorSnapshot,
+    MirrorVersions, OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor,
+    OrdinaryLowering, Result, RoleRegistry, StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
@@ -36,6 +36,7 @@ impl OrchestrateService {
     pub fn open_with_layout(store: &StoreLocation, layout: OrchestrateLayout) -> Result<Self> {
         let tables = OrchestrateTables::open(store)?;
         RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
+        LegacyLockImport::new(&tables, &layout).import_if_store_has_no_claims()?;
         Ok(Self {
             tables,
             layout,

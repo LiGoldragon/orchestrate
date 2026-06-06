@@ -11,15 +11,32 @@ pub struct RoleRegistry<'tables> {
     layout: &'tables OrchestrateLayout,
 }
 
+struct WorkspaceRoleRegistryFile<'layout> {
+    layout: &'layout OrchestrateLayout,
+}
+
+struct WorkspaceRoleRegistryLine<'line> {
+    text: &'line str,
+}
+
+struct WorkspaceRoleToken {
+    token: String,
+}
+
+struct ReportLaneLink<'path> {
+    repository_path: &'path std::path::Path,
+    lane_path: &'path std::path::Path,
+}
+
 impl<'tables> RoleRegistry<'tables> {
     pub fn new(tables: &'tables OrchestrateTables, layout: &'tables OrchestrateLayout) -> Self {
         Self { tables, layout }
     }
 
     pub fn seed_current_workspace_roles(&self) -> Result<()> {
-        for token in RoleName::CURRENT_WORKSPACE_ROLE_TOKENS {
-            let role = RoleName::from_wire_token(token)?;
-            let harness = current_workspace_harness(token);
+        for token in WorkspaceRoleRegistryFile::new(self.layout).tokens()? {
+            let role = RoleName::from_wire_token(token.as_str())?;
+            let harness = token.harness();
             let report_repository_path = self.layout.report_repository_path(&role);
             let report_lane_path = self.layout.report_lane_path(&role);
             self.tables.insert_role_if_missing(&StoredRole::new(
@@ -68,7 +85,7 @@ impl<'tables> RoleRegistry<'tables> {
                 .parent()
                 .expect("report lane path has parent"),
         )?;
-        create_report_lane(&report_repository_path, &report_lane_path)?;
+        ReportLaneLink::new(&report_repository_path, &report_lane_path).create()?;
 
         let report_repository = wire_path(&report_repository_path)?;
         let report_lane = wire_path(&report_lane_path)?;
@@ -95,33 +112,73 @@ impl<'tables> RoleRegistry<'tables> {
     }
 }
 
-fn current_workspace_harness(token: &str) -> HarnessKind {
-    match token {
-        "designer"
-        | "designer-assistant"
-        | "second-designer-assistant"
-        | "poet"
-        | "poet-assistant" => HarnessKind::Claude,
-        _ => HarnessKind::Codex,
+impl<'layout> WorkspaceRoleRegistryFile<'layout> {
+    fn new(layout: &'layout OrchestrateLayout) -> Self {
+        Self { layout }
+    }
+
+    fn tokens(&self) -> Result<Vec<WorkspaceRoleToken>> {
+        let body = std::fs::read_to_string(self.layout.role_registry_path())?;
+        let tokens = body
+            .lines()
+            .filter_map(|line| WorkspaceRoleRegistryLine { text: line }.token())
+            .map(WorkspaceRoleToken::new)
+            .collect();
+        Ok(tokens)
     }
 }
 
-#[cfg(unix)]
-fn create_report_lane(
-    report_repository_path: &std::path::Path,
-    report_lane_path: &std::path::Path,
-) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(report_repository_path, report_lane_path)
+impl WorkspaceRoleRegistryLine<'_> {
+    fn token(&self) -> Option<String> {
+        let trimmed = self.text.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+        trimmed
+            .split_whitespace()
+            .next()
+            .map(std::string::ToString::to_string)
+    }
 }
 
-#[cfg(not(unix))]
-fn create_report_lane(
-    report_repository_path: &std::path::Path,
-    report_lane_path: &std::path::Path,
-) -> std::io::Result<()> {
-    std::fs::create_dir(report_lane_path)?;
-    std::fs::write(
-        report_lane_path.join("REPORT_REPOSITORY"),
-        report_repository_path.display().to_string(),
-    )
+impl WorkspaceRoleToken {
+    fn new(token: String) -> Self {
+        Self { token }
+    }
+
+    fn as_str(&self) -> &str {
+        &self.token
+    }
+
+    fn harness(&self) -> HarnessKind {
+        match self.as_str() {
+            "designer" | "second-designer" | "third-designer" | "nota-designer"
+            | "system-designer" | "cloud-designer" | "poet" | "counselor" => HarnessKind::Claude,
+            _ => HarnessKind::Codex,
+        }
+    }
+}
+
+impl<'path> ReportLaneLink<'path> {
+    fn new(repository_path: &'path std::path::Path, lane_path: &'path std::path::Path) -> Self {
+        Self {
+            repository_path,
+            lane_path,
+        }
+    }
+
+    fn create(&self) -> std::io::Result<()> {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(self.repository_path, self.lane_path)
+        }
+        #[cfg(not(unix))]
+        {
+            std::fs::create_dir(self.lane_path)?;
+            std::fs::write(
+                self.lane_path.join("REPORT_REPOSITORY"),
+                self.repository_path.display().to_string(),
+            )
+        }
+    }
 }

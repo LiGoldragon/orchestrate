@@ -56,6 +56,10 @@ impl OrchestrateLayout {
             .join("orchestrate")
             .join(format!("{}.lock", role.as_wire_token()))
     }
+
+    pub fn role_registry_path(&self) -> PathBuf {
+        self.workspace_root.join("orchestrate").join("roles.list")
+    }
 }
 
 pub fn wire_path(path: &Path) -> Result<WirePath> {

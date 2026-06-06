@@ -32,7 +32,12 @@ impl Fixture {
             .expect("temporary directory");
         let workspace = temporary.path().join("workspace");
         let git_index = temporary.path().join("git-index");
-        std::fs::create_dir_all(&workspace).expect("workspace directory");
+        std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
+        std::fs::write(
+            workspace.join("orchestrate").join("roles.list"),
+            "operator\ndesigner\nsystem-operator\n",
+        )
+        .expect("role registry");
         std::fs::create_dir_all(&git_index).expect("git index directory");
         let store = StoreLocation::new(
             temporary
@@ -63,6 +68,12 @@ impl LayoutFixture {
         let git_index = temporary.path().join("git-index");
         std::fs::create_dir_all(workspace.join("reports")).expect("reports directory");
         std::fs::create_dir_all(workspace.join("repos")).expect("repos directory");
+        std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
+        std::fs::write(
+            workspace.join("orchestrate").join("roles.list"),
+            "operator\ndesigner\nsystem-operator\n",
+        )
+        .expect("role registry");
         std::fs::create_dir_all(&git_index).expect("git index directory");
         let store = StoreLocation::new(
             temporary
@@ -121,24 +132,12 @@ fn operator_assistant() -> RoleName {
     role("operator-assistant")
 }
 
-fn second_operator_assistant() -> RoleName {
-    role("second-operator-assistant")
-}
-
 fn designer() -> RoleName {
     role("designer")
 }
 
-fn second_designer_assistant() -> RoleName {
-    role("second-designer-assistant")
-}
-
-fn second_system_assistant() -> RoleName {
-    role("second-system-assistant")
-}
-
 fn current_workspace_roles() -> Vec<RoleName> {
-    let mut roles = RoleName::CURRENT_WORKSPACE_ROLE_TOKENS
+    let mut roles = ["operator", "designer", "system-operator"]
         .into_iter()
         .map(role)
         .collect::<Vec<_>>();
@@ -505,9 +504,6 @@ fn role_observation_includes_current_workspace_lanes() {
         .collect::<Vec<_>>();
 
     assert_eq!(roles, current_workspace_roles());
-    assert!(roles.contains(&second_operator_assistant()));
-    assert!(roles.contains(&second_designer_assistant()));
-    assert!(roles.contains(&second_system_assistant()));
 }
 
 #[test]

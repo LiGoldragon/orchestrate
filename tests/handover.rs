@@ -20,7 +20,12 @@ impl Fixture {
             .expect("temporary directory");
         let workspace = temporary.path().join("workspace");
         let git_index = temporary.path().join("git-index");
-        std::fs::create_dir_all(&workspace).expect("workspace directory");
+        std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
+        std::fs::write(
+            workspace.join("orchestrate").join("roles.list"),
+            "operator\ndesigner\nsystem-operator\n",
+        )
+        .expect("role registry");
         std::fs::create_dir_all(&git_index).expect("git index directory");
         let store = StoreLocation::new(
             temporary

@@ -17,9 +17,12 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > handler now serves marker/readiness/completion and Mirror restore
 > frames. GitHub/ghq-backed report-repository creation is still
 > missing.
-> `tools/orchestrate` remains the live workspace helper until the
-> daemon is supervised as a workspace service and the operator chooses
-> the cutover point.
+> `tools/orchestrate` is now the live compatibility helper: it
+> preserves the old ergonomic argv shape, self-starts
+> `orchestrate-daemon` when needed, talks through the ordinary Signal
+> socket, and renders daemon-projected lock state. A managed user
+> service is still missing; the helper currently performs lazy daemon
+> startup.
 
 ## 0 - TL;DR
 
@@ -35,7 +38,8 @@ The current implemented slice is the usable triad skeleton: ordinary
 `meta-signal-orchestrate`, a daemon that owns the
 `orchestrate.redb` sema store, and a thin
 `orchestrate` CLI that sends Signal frames to the daemon
-sockets.
+sockets. The workspace `tools/orchestrate` wrapper is a compatibility
+client for agents, not a second state owner.
 
 ## Migration history - contract-local verbs (2026-05-19)
 
@@ -222,10 +226,10 @@ has bootstrapped into sema state, meta-signal is the mutation path.
 
 ## 6 - Lock-File Projection
 
-`tools/orchestrate` writes `orchestrate/*.lock` today. That is the
-transitional surface. In the component shape, the daemon owns typed
-claim state and projects lock files as compatibility output for
-human and cross-harness visibility.
+`tools/orchestrate` submits claim/release/status requests to
+`orchestrate-daemon`. The daemon owns typed claim state and projects
+`orchestrate/*.lock` files as compatibility output for human and
+cross-harness visibility.
 
 The projection is downstream of accepted state mutation. Lock files
 are never the source of truth once the daemon is live. Every registered

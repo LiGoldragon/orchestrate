@@ -11,6 +11,10 @@ Synthesised from psyche statements; not embellished.*
 - `orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.
+- `tools/orchestrate` is the production compatibility surface for
+  agents today: it keeps the old ergonomic argv shape, starts the
+  `orchestrate` daemon when needed, sends typed Signal requests, and
+  treats lock files only as daemon projections.
 - The immediate MVP should create dynamic roles named by the work they
   own, create report lanes for those roles, and track enough typed
   claim state to replace fixed assistant-lane lock files.
@@ -44,6 +48,8 @@ Synthesised from psyche statements; not embellished.*
 
 - Do not deepen the transitional shell helper as the final
   orchestration surface.
+- Do not let compatibility lock files become a second state model
+  after daemon cutover. The daemon store is the source of truth.
 - Do not put orchestration machinery in `persona-mind`.
 - Do not model lane churn by recompiling closed role enums as the
   long-term solution.

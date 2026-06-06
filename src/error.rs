@@ -61,6 +61,13 @@ pub enum Error {
     #[error("socket path exists and is not a socket: {0}")]
     SocketPathIsNotSocket(String),
 
+    #[error("invalid legacy lock line in {path}:{line_number}: {line}")]
+    InvalidLegacyLockLine {
+        path: String,
+        line_number: usize,
+        line: String,
+    },
+
     #[error("daemon socket handler expected a request frame")]
     SocketExpectedRequestFrame,
 
