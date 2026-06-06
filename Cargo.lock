@@ -266,6 +266,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
+name = "meta-signal-orchestrate"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#bb421a9f5e9ddc0d47a2595459f703a025e45a86"
+dependencies = [
+ "nota-codec",
+ "rkyv",
+ "signal-frame",
+ "signal-orchestrate",
+ "thiserror",
+]
+
+[[package]]
 name = "munge"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -313,11 +325,11 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
- "nota-codec",
  "meta-signal-orchestrate",
+ "nota-codec",
  "rkyv",
  "schema",
  "sema",
@@ -329,19 +341,8 @@ dependencies = [
  "signal-version-handover",
  "tempfile",
  "thiserror",
+ "triad-runtime",
  "version-projection",
-]
-
-[[package]]
-name = "meta-signal-orchestrate"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#bb421a9f5e9ddc0d47a2595459f703a025e45a86"
-dependencies = [
- "nota-codec",
- "rkyv",
- "signal-frame",
- "signal-orchestrate",
- "thiserror",
 ]
 
 [[package]]
@@ -725,6 +726,16 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "triad-runtime"
+version = "0.2.1"
+source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#f9c38e22ae6e34133a77f91ba18656ae2e05e7f7"
+dependencies = [
+ "rustix",
+ "signal-frame",
+ "thiserror",
+]
 
 [[package]]
 name = "unicode-ident"

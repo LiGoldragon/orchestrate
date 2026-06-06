@@ -64,6 +64,9 @@ pub enum Error {
     #[error("daemon socket handler expected a request frame")]
     SocketExpectedRequestFrame,
 
+    #[error("daemon listener: {0}")]
+    DaemonListener(#[from] triad_runtime::ListenerError),
+
     #[error("daemon socket thread panicked")]
     DaemonThreadPanicked,
 

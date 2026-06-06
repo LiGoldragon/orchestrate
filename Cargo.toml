@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.1.0"
+version      = "0.1.1"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -29,6 +29,7 @@ signal-executor             = { git = "https://github.com/LiGoldragon/signal-exe
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
+triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
 nota-codec                  = { git = "https://github.com/LiGoldragon/nota-codec.git", branch = "main" }
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 futures                     = { version = "0.3", default-features = false, features = ["executor"] }

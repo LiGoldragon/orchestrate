@@ -51,3 +51,19 @@ fn daemon_routes_signal_requests_through_executor_backed_service() {
     assert!(!daemon.contains("service.handle_meta(operation)"));
     assert!(!daemon.contains("single_payload"));
 }
+
+#[test]
+fn daemon_uses_triad_multi_listener_runtime_instead_of_manual_accept_loops() {
+    let manifest = include_str!("../Cargo.toml");
+    let daemon = include_str!("../src/daemon.rs");
+
+    assert!(manifest.contains("triad-runtime"));
+    assert!(daemon.contains("MultiListenerDaemon::new"));
+    assert!(daemon.contains("impl MultiListenerRuntime for OrchestrateRuntime"));
+    assert!(daemon.contains("BoundedWorkers::new"));
+    assert!(daemon.contains("validate_bind_preconditions"));
+    assert!(!daemon.contains("UnixListener"));
+    assert!(!daemon.contains("std::thread"));
+    assert!(!daemon.contains("thread::spawn"));
+    assert!(!daemon.contains("fn accept_"));
+}

@@ -6,12 +6,13 @@ daemon boundary that replaces the transitional workspace lock helper.*
 
 > Status: the repo, ordinary contract, meta-signal contract, sema-backed
 > claim/activity store, dynamic role registry, raw role-creation path,
-> local repository-index refresh, daemon socket runtime, and thin CLI
-> client exist. The CLI has no direct-store path. Lock-file projection
-> from daemon state exists. Ordinary and meta daemon sockets validate
-> the Signal `ShortHeader` against the decoded request root before
-> dispatch. The runtime can now encode, validate, decode, and restore
-> an orchestrate Mirror snapshot carried by
+> local repository-index refresh, triad-runtime multi-listener socket
+> runtime, bounded request workers, and thin CLI client exist. The CLI
+> has no direct-store path. Lock-file projection from daemon state
+> exists. Ordinary and meta daemon sockets validate the Signal
+> `ShortHeader` against the decoded request root before dispatch. The
+> runtime can now encode, validate, decode, and restore an orchestrate
+> Mirror snapshot carried by
 > `signal-version-handover::MirrorPayload`; the private upgrade socket
 > handler now serves marker/readiness/completion and Mirror restore
 > frames. GitHub/ghq-backed report-repository creation is still
@@ -99,10 +100,11 @@ This runtime repo contains:
   local repository-index refresh;
 - compatibility lock-file projection from accepted daemon state into
   workspace `orchestrate/<role>.lock` files;
-- a daemon binary that accepts one NOTA config argument, binds ordinary
-  meta, and private upgrade Unix sockets, decodes Signal frames,
-  dispatches to the service, validates frame short headers before
-  dispatch, and writes Signal replies;
+- a daemon binary that accepts one NOTA config argument, binds
+  ordinary, meta, and private upgrade Unix sockets through
+  `triad-runtime::MultiListenerDaemon`, handles requests on bounded
+  workers, decodes Signal frames, dispatches to the service, validates
+  frame short headers before dispatch, and writes Signal replies;
 - a thin CLI client that accepts one NOTA request argument, encodes it
   as a Signal frame, and connects only to the `orchestrate`
   daemon sockets.
@@ -250,6 +252,9 @@ Task scopes render in bracketed human form:
 - The daemon's external traffic is Signal frames only.
 - The daemon has one typed listener and dispatch path per Signal
   contract socket.
+- The daemon uses `triad-runtime::MultiListenerDaemon` and
+  `BoundedWorkers`; it does not own ad hoc socket accept loops or
+  unbounded request threads.
 - The ordinary socket accepts ordinary frames; the meta socket
   accepts meta frames; the private upgrade socket accepts
   `signal-version-handover` frames; each rejects the other's
@@ -311,8 +316,9 @@ src/error.rs      crate error enum
 src/configuration.rs
                   daemon NOTA config record, including the private
                   upgrade socket path
-src/daemon.rs     ordinary/meta/upgrade socket listeners and frame
-                  dispatch with ShortHeader ingress validation
+src/daemon.rs     triad-runtime ordinary/meta/upgrade listener runtime,
+                  bounded request workers, and frame dispatch with
+                  ShortHeader ingress validation
 src/divergence.rs partial downstream application recorder
 src/handover.rs   version-handover marker state plus Mirror snapshot
                   encoding, validation, decoding, and restoration

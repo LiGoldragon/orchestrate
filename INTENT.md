@@ -52,7 +52,11 @@ Synthesised from psyche statements; not embellished.*
 
 **Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
 
-**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
+**Target:** this component's hand-written contract/runtime surface converts to
+the current three-plane schema-engine shape: ordinary signal schema, nexus
+schema, and sema schema, plus the emitted daemon module over triad-runtime.
+The generated surface emits wire types, ShortHeader projection, dispatcher,
+VersionProjection, daemon spine, and storage descriptors.
 
 **Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound owner calls should land on the schema engine after the contracts at both ends.
 
