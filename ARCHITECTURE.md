@@ -26,7 +26,7 @@ daemon boundary that replaces the transitional workspace lock helper.*
 
 ## 0 - TL;DR
 
-`orchestrate` owns orchestration machinery. `persona-mind`
+`orchestrate` owns orchestration machinery. `mind`
 owns state: work graph, thoughts, memories, relations, durable policy
 truth, and channel-grant authority decisions. Orchestrate owns the
 mechanics that make work run: claims, handoffs, activity, agent-run
@@ -67,14 +67,14 @@ opens `orchestrate.redb`.
 
 ```mermaid
 flowchart TB
-    mind["persona-mind<br/>state + policy truth"]
+    mind["mind<br/>state + policy truth"]
     cli["orchestrate CLI<br/>one NOTA request"]
     daemon["orchestrate daemon"]
     ordinary["signal-orchestrate<br/>ordinary peer surface"]
     owner["meta-signal-orchestrate<br/>meta-signal surface"]
     store["orchestrate.redb<br/>sema-engine"]
-    router["persona-router"]
-    harness["persona-harness"]
+    router["router"]
+    harness["harness"]
     locks["orchestrate/*.lock<br/>temporary projection"]
 
     cli -- "ordinary/meta Signal frames" --> daemon
@@ -141,15 +141,15 @@ runtime, actor tree, socket binding, lock-file projection, and
 
 ## 2 - Authority Chain
 
-`persona-mind` owns `orchestrate` through
+`mind` owns `orchestrate` through
 `meta-signal-orchestrate`. Orchestrate then owns the runtime
 execution edges it controls:
 
 | Link | Contract | Direction |
 |---|---|---|
-| `persona-mind -> orchestrate` | `meta-signal-orchestrate` | mind orders orchestration machinery |
-| `orchestrate -> persona-router` | `meta-signal-router` | orchestrate orders channel grants and retractions |
-| `orchestrate -> persona-harness` | `meta-signal-harness` | orchestrate orders agent-run lifecycle transitions |
+| `mind -> orchestrate` | `meta-signal-orchestrate` | mind orders orchestration machinery |
+| `orchestrate -> router` | `meta-signal-router` | orchestrate orders channel grants and retractions |
+| `orchestrate -> harness` | `meta-signal-harness` | orchestrate orders agent-run lifecycle transitions |
 
 Observation flows back through subscription surfaces. Authority moves
 down through meta-signal contract operations, which the daemon lowers to
@@ -377,7 +377,7 @@ tests/smoke.rs    legacy claim-state smoke test
 - `../signal-frame/ARCHITECTURE.md` - Signal frame kernel.
 - `../signal-sema/ARCHITECTURE.md` - lower Sema operation vocabulary.
 - `../persona/ARCHITECTURE.md` - Persona component topology.
-- `../persona-mind/ARCHITECTURE.md` - mind state boundary.
+- `../mind/ARCHITECTURE.md` - mind state boundary.
 - `/home/li/primary/orchestrate/ARCHITECTURE.md` - workspace helper
   today and component destination.
 - `/home/li/primary/skills/component-triad.md` - daemon + CLI +
