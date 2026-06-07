@@ -1,0 +1,29 @@
+{
+  OrdinaryInput signal-orchestrate:lib:Input
+  OrdinaryOutput signal-orchestrate:lib:Output
+  MetaInput meta-signal-orchestrate:lib:Input
+  MetaOutput meta-signal-orchestrate:lib:Output
+  RoleSnapshot signal-orchestrate:lib:RoleSnapshot
+  LanesObserved signal-orchestrate:lib:LanesObserved
+  ActivityList signal-orchestrate:lib:ActivityList
+}
+[SemaReadInput SemaWriteInput]
+[SemaReadOutput SemaWriteOutput]
+{
+  SemaReadInput [(ReadRoles ReadRoles) (ReadLanes ReadLanes) (ReadActivity ReadActivity)]
+  ReadRoles {}
+  ReadLanes {}
+  ReadActivity {}
+
+  SemaReadOutput [(RolesRead RoleSnapshot) (LanesRead LanesObserved) (ActivityRead ActivityList) (ReadMiss ReadMiss)]
+  ReadMiss { reason ReadMissReason }
+  ReadMissReason [NotFound NotBuiltYet]
+
+  SemaWriteInput [(ApplyOrdinary ApplyOrdinary) (ApplyMeta ApplyMeta)]
+  ApplyOrdinary OrdinaryInput
+  ApplyMeta MetaInput
+
+  SemaWriteOutput [(OrdinaryApplied OrdinaryOutput) (MetaApplied MetaOutput) (WriteRejected WriteRejected)]
+  WriteRejected { reason WriteRejectionReason }
+  WriteRejectionReason [Conflict InvalidOperation DependencyUnavailable NotBuiltYet]
+}

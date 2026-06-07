@@ -1,0 +1,27 @@
+{
+  OrdinaryInput signal-orchestrate:lib:Input
+  OrdinaryOutput signal-orchestrate:lib:Output
+  MetaInput meta-signal-orchestrate:lib:Input
+  MetaOutput meta-signal-orchestrate:lib:Output
+  SemaReadInput orchestrate:sema:SemaReadInput
+  SemaReadOutput orchestrate:sema:SemaReadOutput
+  SemaWriteInput orchestrate:sema:SemaWriteInput
+  SemaWriteOutput orchestrate:sema:SemaWriteOutput
+}
+[NexusWork]
+[NexusAction]
+{
+  SignalArrived SignalInput
+  SemaReadCompleted SemaReadOutput
+  SemaWriteCompleted SemaWriteOutput
+
+  CommandSemaRead SemaReadInput
+  CommandSemaWrite SemaWriteInput
+  ReplyToSignal SignalOutput
+  Continue NexusWork
+
+  SignalInput [(OrdinaryInput OrdinaryInput) (MetaInput MetaInput)]
+  SignalOutput [(OrdinaryOutput OrdinaryOutput) (MetaOutput MetaOutput)]
+  NexusWork [(SignalArrived SignalArrived) (SemaReadCompleted SemaReadCompleted) (SemaWriteCompleted SemaWriteCompleted)]
+  NexusAction [(CommandSemaRead CommandSemaRead) (CommandSemaWrite CommandSemaWrite) (ReplyToSignal ReplyToSignal) (Continue Continue)]
+}

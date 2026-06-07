@@ -14,6 +14,7 @@ pub mod lock_projection;
 pub mod lowering;
 pub mod repository;
 pub mod role;
+pub mod schema;
 pub mod service;
 pub mod tables;
 

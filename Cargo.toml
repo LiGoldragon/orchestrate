@@ -1,12 +1,13 @@
 [package]
 name         = "orchestrate"
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/LiGoldragon/orchestrate"
 description  = "Typed orchestration state for Persona agents."
 publish      = false
+build        = "build.rs"
 
 [lib]
 name = "orchestrate"
@@ -20,6 +21,10 @@ path = "src/main.rs"
 name = "orchestrate"
 path = "src/bin/orchestrate.rs"
 
+[features]
+default   = []
+nota-text = ["dep:nota-next"]
+
 [dependencies]
 sema                        = { git = "https://github.com/LiGoldragon/sema.git" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git" }
@@ -31,13 +36,17 @@ signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sem
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
 triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
 nota-codec                  = { git = "https://github.com/LiGoldragon/nota-codec.git", branch = "main" }
+nota-next                   = { git = "https://github.com/LiGoldragon/nota-next.git", branch = "main", optional = true }
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 futures                     = { version = "0.3", default-features = false, features = ["executor"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 
+[build-dependencies]
+schema-rust-next = { git = "https://github.com/LiGoldragon/schema-rust-next.git", branch = "main" }
+
 [dev-dependencies]
-schema = { git = "https://github.com/LiGoldragon/schema.git", branch = "main" }
+schema-next = { git = "https://github.com/LiGoldragon/schema-next.git", branch = "main" }
 tempfile = "3"
 
 [lints.rust]
