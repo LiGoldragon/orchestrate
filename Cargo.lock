@@ -268,7 +268,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.2.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#b7c580bfd145fc5d80229a8d2097a2289c934ebd"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#5af546c980e3eec7de5784fcaf5d55b22cbb3e91"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -679,7 +679,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.2.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#2c8d7eba31f46f27a922a60a318df096e2258a3c"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#71292f0cb572e48f7a66c62b930beb8d0ce998dc"
 dependencies = [
  "nota-codec",
  "rkyv",
