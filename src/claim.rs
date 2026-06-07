@@ -61,8 +61,10 @@ impl<'tables> ClaimLedger<'tables> {
             if Self::role_already_owns(&next_entries, &claim.role, scope) {
                 continue;
             }
-            next_entries
-                .retain(|entry| entry.role != claim.role || !scope_contains(scope, &entry.scope));
+            next_entries.retain(|entry| {
+                entry.role != claim.role
+                    || !ScopeRelation::new(scope, &entry.scope).left_contains_right()
+            });
             next_entries.push(StoredClaim::new(
                 claim.role.clone(),
                 scope.clone(),
@@ -183,7 +185,8 @@ impl<'tables> ClaimLedger<'tables> {
                 entries
                     .iter()
                     .filter(move |entry| {
-                        entry.role != claim.role && scopes_overlap(scope, &entry.scope)
+                        entry.role != claim.role
+                            && ScopeRelation::new(scope, &entry.scope).overlaps()
                     })
                     .map(move |entry| ScopeConflict {
                         scope: scope.clone(),
@@ -195,9 +198,9 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     fn role_already_owns(entries: &[StoredClaim], role: &RoleName, scope: &ScopeReference) -> bool {
-        entries
-            .iter()
-            .any(|entry| entry.role == *role && scope_contains(&entry.scope, scope))
+        entries.iter().any(|entry| {
+            entry.role == *role && ScopeRelation::new(&entry.scope, scope).left_contains_right()
+        })
     }
 
     fn source_holds_all(entries: &[StoredClaim], handoff: &RoleHandoff) -> bool {
@@ -223,7 +226,7 @@ impl<'tables> ClaimLedger<'tables> {
                     .filter(move |entry| {
                         entry.role != handoff.from
                             && entry.role != handoff.to
-                            && scopes_overlap(scope, &entry.scope)
+                            && ScopeRelation::new(scope, &entry.scope).overlaps()
                     })
                     .map(move |entry| ScopeConflict {
                         scope: scope.clone(),
@@ -237,7 +240,8 @@ impl<'tables> ClaimLedger<'tables> {
     fn removed_by_handoff(entry: &StoredClaim, handoff: &RoleHandoff) -> bool {
         handoff.scopes.iter().any(|scope| {
             (entry.role == handoff.from && entry.scope == *scope)
-                || (entry.role == handoff.to && scope_contains(scope, &entry.scope))
+                || (entry.role == handoff.to
+                    && ScopeRelation::new(scope, &entry.scope).left_contains_right())
         })
     }
 
@@ -263,24 +267,51 @@ impl<'tables> ClaimLedger<'tables> {
     }
 }
 
-fn scopes_overlap(left: &ScopeReference, right: &ScopeReference) -> bool {
-    scope_contains(left, right) || scope_contains(right, left)
+struct ScopeRelation<'scope> {
+    left: &'scope ScopeReference,
+    right: &'scope ScopeReference,
 }
 
-fn scope_contains(left: &ScopeReference, right: &ScopeReference) -> bool {
-    match (left, right) {
-        (ScopeReference::Path(left), ScopeReference::Path(right)) => {
-            path_contains(left.as_str(), right.as_str())
+impl<'scope> ScopeRelation<'scope> {
+    fn new(left: &'scope ScopeReference, right: &'scope ScopeReference) -> Self {
+        Self { left, right }
+    }
+
+    fn overlaps(&self) -> bool {
+        self.left_contains_right() || self.right_contains_left()
+    }
+
+    fn left_contains_right(&self) -> bool {
+        match (self.left, self.right) {
+            (ScopeReference::Path(left), ScopeReference::Path(right)) => {
+                PathRelation::new(left.as_str(), right.as_str()).left_contains_right()
+            }
+            (ScopeReference::Task(left), ScopeReference::Task(right)) => left == right,
+            _ => false,
         }
-        (ScopeReference::Task(left), ScopeReference::Task(right)) => left == right,
-        _ => false,
+    }
+
+    fn right_contains_left(&self) -> bool {
+        Self::new(self.right, self.left).left_contains_right()
     }
 }
 
-fn path_contains(left: &str, right: &str) -> bool {
-    left == "/"
-        || left == right
-        || right
-            .strip_prefix(left)
-            .is_some_and(|tail| tail.starts_with('/'))
+struct PathRelation<'path> {
+    left: &'path str,
+    right: &'path str,
+}
+
+impl<'path> PathRelation<'path> {
+    fn new(left: &'path str, right: &'path str) -> Self {
+        Self { left, right }
+    }
+
+    fn left_contains_right(&self) -> bool {
+        self.left == "/"
+            || self.left == self.right
+            || self
+                .right
+                .strip_prefix(self.left)
+                .is_some_and(|tail| tail.starts_with('/'))
+    }
 }

@@ -171,7 +171,7 @@ impl<'service> OrdinaryCommandExecutor<'service> {
             });
         }
         let operation = plan.into_operations().into_head();
-        let command = single_command(operation)?;
+        let command = SingleCommandPlan::new(operation).into_command()?;
         let effect = self.execute_command(command)?;
         Ok(BatchEffects::single(OperationEffects::new(
             NonEmpty::single(effect),
@@ -337,7 +337,7 @@ impl<'service> MetaCommandExecutor<'service> {
             });
         }
         let operation = plan.into_operations().into_head();
-        let command = single_command(operation)?;
+        let command = SingleCommandPlan::new(operation).into_command()?;
         let effect = self.execute_command(command)?;
         Ok(BatchEffects::single(OperationEffects::new(
             NonEmpty::single(effect),
@@ -361,13 +361,23 @@ impl CommandExecutor for MetaCommandExecutor<'_> {
     }
 }
 
-fn single_command<Command>(plan: OperationPlan<Command>) -> Result<Command> {
-    let commands = plan.into_commands();
-    let command_count = commands.len();
-    if command_count != 1 {
-        return Err(Error::UnsupportedAtomicOperationPlan { command_count });
+struct SingleCommandPlan<Command> {
+    plan: OperationPlan<Command>,
+}
+
+impl<Command> SingleCommandPlan<Command> {
+    fn new(plan: OperationPlan<Command>) -> Self {
+        Self { plan }
     }
-    Ok(commands.into_head())
+
+    fn into_command(self) -> Result<Command> {
+        let commands = self.plan.into_commands();
+        let command_count = commands.len();
+        if command_count != 1 {
+            return Err(Error::UnsupportedAtomicOperationPlan { command_count });
+        }
+        Ok(commands.into_head())
+    }
 }
 
 impl signal_frame::BatchErrorClassification for Error {
