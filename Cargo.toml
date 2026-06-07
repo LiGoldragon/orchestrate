@@ -23,7 +23,11 @@ path = "src/bin/orchestrate.rs"
 
 [features]
 default   = []
-nota-text = ["dep:nota-next"]
+nota-text = [
+    "dep:nota-next",
+    "signal-orchestrate/nota-text",
+    "meta-signal-orchestrate/nota-text",
+]
 
 [dependencies]
 sema                        = { git = "https://github.com/LiGoldragon/sema.git" }

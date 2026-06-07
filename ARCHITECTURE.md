@@ -38,7 +38,7 @@ scheduling, escalation, and the lane registry.
 The current implemented slice is the usable triad skeleton: ordinary
 `signal-orchestrate` request/reply surface, meta-signal
 `meta-signal-orchestrate`, a daemon that owns the
-`orchestrate.redb` sema store, and a thin
+`orchestrate.sema` sema store, and a thin
 `orchestrate` CLI that sends Signal frames to the daemon
 sockets. The workspace `tools/orchestrate` wrapper is a compatibility
 client for agents, not a second state owner and not the destination
@@ -66,7 +66,7 @@ Commands.
 
 The daemon/CLI boundary did not change: the CLI remains a thin
 NOTA-to-Signal adapter and the daemon remains the only process that
-opens `orchestrate.redb`.
+opens `orchestrate.sema`.
 
 ```mermaid
 flowchart TB
@@ -75,7 +75,7 @@ flowchart TB
     daemon["orchestrate daemon"]
     ordinary["signal-orchestrate<br/>ordinary peer surface"]
     owner["meta-signal-orchestrate<br/>meta-signal surface"]
-    store["orchestrate.redb<br/>sema-engine"]
+    store["orchestrate.sema<br/>sema-engine"]
     router["router"]
     harness["harness"]
     locks["orchestrate/*.lock<br/>temporary projection"]
@@ -103,7 +103,7 @@ This runtime repo contains:
   and activity-query handlers;
 - observation subscription open/close handlers for the public
   observer hook;
-- owner-request handlers for role creation, role retirement, and
+- meta-request handlers for role creation, role retirement, and
   local repository-index refresh;
 - compatibility lock-file projection from accepted daemon state into
   workspace `orchestrate/<role>.lock` files;
@@ -140,7 +140,7 @@ meta-signal-orchestrate/
 
 The contract crates carry wire vocabulary only. This repo owns the
 runtime, actor tree, socket binding, lock-file projection, and
-`orchestrate.redb`.
+`orchestrate.sema`.
 
 ## 2 - Authority Chain
 
@@ -174,7 +174,7 @@ The current ordinary contract uses `RoleIdentifier` for dynamic role
 identity. `RoleName` remains as a compatibility alias only; role
 creation is data in the runtime registry, not a contract enum edit.
 
-## 4 - Owner Wire Surface
+## 4 - Meta Wire Surface
 
 `meta-signal-orchestrate` is the meta-signal surface. The
 implemented MVP carries:
@@ -193,7 +193,7 @@ The daemon binds a separate socket and actor for this surface.
 
 ## 5 - State And Ownership
 
-Durable state lives in one `orchestrate.redb` opened through
+Durable state lives in one `orchestrate.sema` opened through
 `sema-engine`. No other component opens that database directly.
 
 Policy tables change only through meta-signal contract operations
@@ -253,7 +253,7 @@ Task scopes render in bracketed human form:
 
 - The CLI accepts exactly one NOTA request and talks to exactly one
   Signal peer: the `orchestrate` daemon.
-- The CLI never opens `orchestrate.redb`, sema-engine, or the
+- The CLI never opens `orchestrate.sema`, sema-engine, or the
   in-process `OrchestrateService`; all state mutation and reads cross
   the daemon boundary.
 - The daemon's external traffic is Signal frames only.
@@ -273,7 +273,7 @@ Task scopes render in bracketed human form:
   the contract crates.
 - Public observer subscriptions allocate typed observation tokens on
   the ordinary socket.
-- The runtime store is `orchestrate.redb`.
+- The runtime store is `orchestrate.sema`.
 - Activity timestamps and slots are minted by the store, never by the
   caller.
 - Claim conflicts reject overlapping path scopes across different
@@ -329,7 +329,7 @@ src/daemon.rs     triad-runtime ordinary/meta/upgrade listener runtime,
 src/divergence.rs partial downstream application recorder
 src/handover.rs   version-handover marker state plus Mirror snapshot
                   encoding, validation, decoding, and restoration
-src/location.rs   redb store path wrapper
+src/location.rs   sema store path wrapper
 src/layout.rs     workspace/git-index path policy
 src/lock_projection.rs
                   compatibility lock-file projection

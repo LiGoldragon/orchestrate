@@ -34,7 +34,7 @@ impl Fixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("orchestrate.redb")
+                .join("orchestrate.sema")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -143,7 +143,7 @@ fn orchestrate_cli_cannot_open_component_database() {
         "OrchestrateTables",
         "StoreLocation",
         "sema_engine",
-        "orchestrate.redb",
+        "orchestrate.sema",
         "PERSONA_ORCHESTRATE_STORE",
     ];
 

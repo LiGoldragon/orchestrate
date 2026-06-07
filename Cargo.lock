@@ -271,6 +271,7 @@ version = "0.2.0"
 source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#5af546c980e3eec7de5784fcaf5d55b22cbb3e91"
 dependencies = [
  "nota-codec",
+ "nota-next",
  "rkyv",
  "schema-rust-next",
  "signal-frame",
@@ -552,7 +553,7 @@ dependencies = [
 [[package]]
 name = "sema"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/sema.git#7207fe194dbcddb70bf1978d750a6f4085ad9b04"
+source = "git+https://github.com/LiGoldragon/sema.git#09f2a423ecaaa9984d913e6f009aa346280a29bd"
 dependencies = [
  "redb",
  "rkyv",
@@ -562,11 +563,11 @@ dependencies = [
 [[package]]
 name = "sema-engine"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/sema-engine.git#620d30656ce9c786cdb3ecc7c745e71c1f140ed2"
+source = "git+https://github.com/LiGoldragon/sema-engine.git#f6f0e03dc039c1f7731974245afa536a62db8d8c"
 dependencies = [
  "rkyv",
  "sema",
- "signal-core",
+ "signal-frame",
  "signal-sema",
  "thiserror",
 ]
@@ -620,30 +621,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-core"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-core.git#03c2f030d38e0633c44d11c847df74c2de932792"
-dependencies = [
- "nota-codec",
- "rkyv",
- "signal-core-macros",
- "thiserror",
-]
-
-[[package]]
-name = "signal-core-macros"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-core.git#03c2f030d38e0633c44d11c847df74c2de932792"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "signal-executor"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-executor.git?branch=main#63d3732fc0fe998a3b4b9ee0ff35da66a63a501a"
+source = "git+https://github.com/LiGoldragon/signal-executor.git?branch=main#3830f51c91c6e3ba4a577e9ad70d40d9318907f4"
 dependencies = [
  "rkyv",
  "signal-frame",
@@ -682,6 +662,7 @@ version = "0.2.0"
 source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#71292f0cb572e48f7a66c62b930beb8d0ce998dc"
 dependencies = [
  "nota-codec",
+ "nota-next",
  "rkyv",
  "schema-rust-next",
  "signal-frame",
@@ -702,7 +683,7 @@ dependencies = [
 [[package]]
 name = "signal-version-handover"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-version-handover.git?branch=main#eb3af073b06ff6e649e8e6c9955f1ae9c87968c3"
+source = "git+https://github.com/LiGoldragon/signal-version-handover.git?branch=main#c9b32809cc26f15e91785ce889e17606d945154d"
 dependencies = [
  "nota-codec",
  "rkyv",
@@ -785,7 +766,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "triad-runtime"
 version = "0.2.1"
-source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#f9c38e22ae6e34133a77f91ba18656ae2e05e7f7"
+source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#cdda1b1f95283f36d488fa2435281e6201fe7fdb"
 dependencies = [
  "rustix",
  "signal-frame",
@@ -817,7 +798,7 @@ dependencies = [
 [[package]]
 name = "version-projection"
 version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/version-projection.git?branch=main#59932721ee0a25256bca6056a525d863568a2032"
+source = "git+https://github.com/LiGoldragon/version-projection.git?branch=main#8f1a1962c7defc22fc7b3d850c55f15d3970e417"
 dependencies = [
  "nota-codec",
  "rkyv",

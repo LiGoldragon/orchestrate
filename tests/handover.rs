@@ -30,7 +30,7 @@ impl Fixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("orchestrate.redb")
+                .join("orchestrate.sema")
                 .to_string_lossy()
                 .into_owned(),
         );

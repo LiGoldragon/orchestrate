@@ -68,7 +68,7 @@ impl DaemonFixture {
         }
         std::fs::create_dir_all(&git_index).expect("git index directory");
 
-        let store = temporary.path().join("orchestrate.redb");
+        let store = temporary.path().join("orchestrate.sema");
         let ordinary_socket = temporary.path().join("ordinary.sock");
         let meta_socket = temporary.path().join("meta.sock");
         let upgrade_socket = temporary.path().join("upgrade.sock");

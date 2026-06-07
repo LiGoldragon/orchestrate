@@ -36,7 +36,7 @@ Synthesised from psyche statements; not embellished.*
 ## Principles
 
 - Lane definitions are data, not permanent enum variants. The
-  runtime registry belongs in `orchestrate` state, and owner
+  runtime registry belongs in `orchestrate` state, and meta
   authority mutates it.
 - Harness assignment is a typed role field (`Codex` or `Claude` in
   the MVP), not information hidden inside the role string.
@@ -69,7 +69,7 @@ schema, and sema schema, plus the emitted daemon module over triad-runtime.
 The generated surface emits wire types, ShortHeader projection, dispatcher,
 VersionProjection, daemon spine, and storage descriptors.
 
-**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound owner calls should land on the schema engine after the contracts at both ends.
+**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound meta calls should land on the schema engine after the contracts at both ends.
 
 **Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Lane definitions stay data (not closed role enums) under the schema — the schema must enable dynamic-role registry persistence without baking the live role set into the wire.
 

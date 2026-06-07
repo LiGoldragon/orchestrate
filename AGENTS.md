@@ -17,4 +17,4 @@ deepening the transitional BEADS dependency.
 - BEADS is shared coordination state and is never claimed or exclusively locked.
 - No polling. Orchestration status is pushed through explicit writes and future
   Persona messages.
-- Durable orchestration state uses `redb + rkyv`.
+- Durable orchestration state uses `sema-engine` over the redb + rkyv substrate.

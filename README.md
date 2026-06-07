@@ -7,4 +7,4 @@ log that replaces primary workspace lock files over time.
 
 It is not Persona's central mind database. Work graph state, thoughts,
 relations, and policy truth belong in `persona-mind`; this crate owns
-collaborative orchestration machinery in `orchestrate.redb`.
+collaborative orchestration machinery in `orchestrate.sema`.

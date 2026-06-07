@@ -42,7 +42,7 @@ impl Fixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("orchestrate.redb")
+                .join("orchestrate.sema")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -78,7 +78,7 @@ impl LayoutFixture {
         let store = StoreLocation::new(
             temporary
                 .path()
-                .join("orchestrate.redb")
+                .join("orchestrate.sema")
                 .to_string_lossy()
                 .into_owned(),
         );
@@ -257,7 +257,7 @@ fn meta_contract_operations_lower_to_sema_effects() {
     let cases = [
         (
             MetaOrchestrateRequest::Create(CreateRoleOrder {
-                role: role("primary-lowering-owner-create"),
+                role: role("primary-lowering-meta-create"),
                 harness: HarnessKind::Codex,
             }),
             meta_signal_orchestrate::MetaOperationKind::Create,
@@ -265,7 +265,7 @@ fn meta_contract_operations_lower_to_sema_effects() {
         ),
         (
             MetaOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
-                role: role("primary-lowering-owner-retire"),
+                role: role("primary-lowering-meta-retire"),
             })),
             meta_signal_orchestrate::MetaOperationKind::Retire,
             SemaOperation::Retract,
