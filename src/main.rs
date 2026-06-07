@@ -1,4 +1,4 @@
-use nota_codec::{Decoder, NotaDecode};
+use nota_next::NotaSource;
 use orchestrate::{DaemonConfiguration, OrchestrateDaemon};
 use triad_runtime::{ComponentArgument, ComponentCommand, ExitReport};
 
@@ -19,8 +19,7 @@ impl DaemonCommand {
 
     fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         let configuration_text = self.configuration_text()?;
-        let mut decoder = Decoder::new(&configuration_text);
-        let configuration = DaemonConfiguration::decode(&mut decoder)?;
+        let configuration = NotaSource::new(&configuration_text).parse::<DaemonConfiguration>()?;
         OrchestrateDaemon::open(configuration)?.run()?;
         Ok(())
     }

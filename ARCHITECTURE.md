@@ -74,7 +74,7 @@ flowchart TB
     cli["orchestrate CLI<br/>one NOTA request"]
     daemon["orchestrate daemon"]
     ordinary["signal-orchestrate<br/>ordinary peer surface"]
-    owner["meta-signal-orchestrate<br/>meta-signal surface"]
+    meta["meta-signal-orchestrate<br/>meta-signal surface"]
     store["orchestrate.sema<br/>sema-engine"]
     router["router"]
     harness["harness"]
@@ -82,8 +82,8 @@ flowchart TB
 
     cli -- "ordinary/meta Signal frames" --> daemon
     daemon -- "ordinary surface" --> ordinary
-    mind --> owner
-    owner --> daemon
+    mind --> meta
+    meta --> daemon
     daemon --> store
     daemon --> locks
     daemon -- "meta-signal-router" --> router
@@ -184,7 +184,7 @@ implemented MVP carries:
 - `Refresh(RefreshRepositoryIndexOrder)`
 
 Destination additions include agent-run orders, scope acquisition
-orders, scheduling/supervision policy, escalation orders, and owner
+orders, scheduling/supervision policy, escalation orders, and meta
 subscriptions for snapshots, agent lifecycle, executor capacity, and
 scope events.
 
@@ -337,7 +337,7 @@ src/lowering.rs   contract-operation to Sema-effect lowering
 src/tables.rs     sema-backed claim/activity/role/repository tables
 src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
-src/role.rs       owner role creation and retirement handlers
+src/role.rs       meta role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
 src/service.rs    ordinary, meta, and upgrade request dispatch
 src/main.rs       daemon binary, one NOTA config argument

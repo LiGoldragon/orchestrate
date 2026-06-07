@@ -1,7 +1,7 @@
-use nota_codec::NotaRecord;
+use nota_next::{NotaDecode, NotaEncode};
 use signal_orchestrate::WirePath;
 
-#[derive(NotaRecord, Debug, Clone, PartialEq, Eq)]
+#[derive(NotaEncode, NotaDecode, Debug, Clone, PartialEq, Eq)]
 pub struct DaemonConfiguration {
     pub store_path: WirePath,
     pub ordinary_socket_path: WirePath,

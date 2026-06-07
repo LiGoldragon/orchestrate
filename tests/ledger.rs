@@ -233,7 +233,7 @@ fn ordinary_contract_operations_lower_to_sema_effects() {
         (
             OrchestrateRequest::Watch(ObservationSubscription {
                 include_operations: true,
-                include_sema_effects: true,
+                include_effects: true,
             }),
             OperationKind::Watch,
             SemaOperation::Subscribe,
@@ -308,7 +308,7 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
         .service
         .handle(OrchestrateRequest::Watch(ObservationSubscription {
             include_operations: true,
-            include_sema_effects: false,
+            include_effects: false,
         }))
         .expect("watch");
     let OrchestrateReply::ObservationOpened(first) = first else {
@@ -319,7 +319,7 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
         .service
         .handle(OrchestrateRequest::Watch(ObservationSubscription {
             include_operations: false,
-            include_sema_effects: true,
+            include_effects: true,
         }))
         .expect("watch");
     let OrchestrateReply::ObservationOpened(second) = second else {

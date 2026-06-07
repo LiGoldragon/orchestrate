@@ -24,7 +24,6 @@ path = "src/bin/orchestrate.rs"
 [features]
 default   = []
 nota-text = [
-    "dep:nota-next",
     "signal-orchestrate/nota-text",
     "meta-signal-orchestrate/nota-text",
 ]
@@ -39,12 +38,12 @@ signal-frame                = { git = "https://github.com/LiGoldragon/signal-fra
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
 triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
-nota-codec                  = { git = "https://github.com/LiGoldragon/nota-codec.git", branch = "main" }
-nota-next                   = { git = "https://github.com/LiGoldragon/nota-next.git", branch = "main", optional = true }
+nota-next                   = { git = "https://github.com/LiGoldragon/nota-next.git", branch = "main" }
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 futures                     = { version = "0.3", default-features = false, features = ["executor"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
+tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }
 
 [build-dependencies]
 schema-rust-next = { git = "https://github.com/LiGoldragon/schema-rust-next.git", branch = "main" }

@@ -9,7 +9,7 @@ use meta_signal_orchestrate::{
     CreateRoleOrder, Frame as MetaOrchestrateFrame, FrameBody as MetaOrchestrateFrameBody,
     MetaOrchestrateReply, MetaOrchestrateRequest, RefreshRepositoryIndexOrder,
 };
-use nota_codec::{Decoder, Encoder, NotaDecode, NotaEncode};
+use nota_next::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
     DaemonConfiguration, HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistration,
     MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName,
@@ -126,7 +126,7 @@ impl DaemonFixture {
     fn cli(&self, request: impl NotaEncode) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_orchestrate"))
             .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
-            .env("PERSONA_ORCHESTRATE_OWNER_SOCKET", &self.meta_socket)
+            .env("PERSONA_ORCHESTRATE_META_SOCKET", &self.meta_socket)
             .arg(encode_nota(&request))
             .output()
             .expect("cli output")
@@ -165,15 +165,12 @@ fn reason(value: &str) -> ScopeReason {
 }
 
 fn encode_nota(value: &impl NotaEncode) -> String {
-    let mut encoder = Encoder::new();
-    value.encode(&mut encoder).expect("encode nota");
-    encoder.into_string()
+    value.to_nota()
 }
 
 fn decode_nota<Value: NotaDecode>(bytes: &[u8]) -> Value {
     let text = std::str::from_utf8(bytes).expect("utf8").trim();
-    let mut decoder = Decoder::new(text);
-    Value::decode(&mut decoder).expect("decode nota")
+    NotaSource::new(text).parse::<Value>().expect("decode nota")
 }
 
 fn exchange() -> ExchangeIdentifier {
