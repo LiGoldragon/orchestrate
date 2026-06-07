@@ -1,7 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sema::{SchemaVersion, Table};
-use sema_engine::{Engine, EngineOpen};
+use sema_engine::{Engine, EngineOpen, SchemaVersion, StorageKernelTable as Table};
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, HarnessKind, LaneIdentifier,
     LaneRegistration, PartialApplied, RoleName, ScopeReason, ScopeReference, TimestampNanos,

@@ -355,21 +355,27 @@ tests/handover.rs version-handover Mirror payload encode/decode/restore
 tests/smoke.rs    legacy claim-state smoke test
 ```
 
-## Pending schema-engine upgrade
+## Schema-Engine Shape
 
-**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+`orchestrate` is on the current schema-engine runtime shape:
+`schema/nexus.schema` declares the internal decision plane,
+`schema/sema.schema` declares the storage plane, and build-time
+generation emits checked-in `src/schema/{nexus,sema,daemon}.rs`.
+The ordinary and meta wire contracts remain separate contract crates:
+`signal-orchestrate` and `meta-signal-orchestrate`. The daemon schema
+imports those wire roots and binds them to distinct ordinary and meta
+listener tiers through `triad-runtime`.
 
-**Target:** this component's hand-written `signal_channel!` invocation + Layer 2 Component Commands + storage types convert to a single `orchestrate/orchestrate.schema` file. The brilliant macro library (`primary-ezqx.1`) reads the schema + emits all the wire types + ShortHeader projection + dispatcher + VersionProjection + storage descriptors.
-
-**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`; orchestrate cuts over after Spirit and mind. The sequencing matters because orchestrate consumes `meta-signal-router` and `meta-signal-harness` for the authority chain (per `## 2 - Authority Chain`); those downstream meta-signal contracts should land on the schema engine before orchestrate's outbound calls cut over.
-
-**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Orchestrate already implements `OperationLowering` as the contract-to-Component-Command translation point (per `src/lowering.rs`) — the schema must keep that boundary intact and have the macro emit the same lowering shape. The meta-signal contract surface (`meta-signal-orchestrate` with `Create` / `Retire` / `Refresh`) is distinct from the ordinary surface (`signal-orchestrate` with `Claim` / `Release` / `Handoff` / `Observe` / `Submit` / `Query` / `Watch` / `Unwatch`); both must remain inexpressible on the wrong socket after schema cutover. The sema-backed `claims`, `roles`, `repositories`, `activities`, `activity_next_slot`, and `divergences` tables need schema storage descriptors that emit equivalent `sema-engine` registrations. Lock-file projection from accepted daemon state must keep working.
-
-**References:**
-- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
-- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
-- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
-- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
+`OperationLowering` remains the hand-written contract-to-command
+translation point for the service slice that has not yet been
+rewritten as generated Nexus decisions. The meta-signal contract
+surface (`Create` / `Retire` / `Refresh`) is distinct from the
+ordinary surface (`Claim` / `Release` / `Handoff` / `Observe` /
+`Submit` / `Query` / `Watch` / `Unwatch`); both are inexpressible on
+the wrong socket. The sema-backed `claims`, `roles`, `repositories`,
+`activities`, `activity_next_slot`, and `divergences` tables are
+registered through `sema-engine` and opened at `orchestrate.sema`.
+Lock-file projection remains downstream of accepted daemon state.
 
 ## See Also
 

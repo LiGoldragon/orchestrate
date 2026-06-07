@@ -26,12 +26,12 @@ Synthesised from psyche statements; not embellished.*
 
 ## Boundaries
 
-- `persona-mind` owns state: work graph, memory, thoughts, durable
+- `mind` owns state: work graph, memory, thoughts, durable
   policy truth, and channel-grant authority decisions.
 - `orchestrate` owns machinery: role claims, activity log,
   agent-run lifecycle, spawn plans, scope-acquisition workflow,
   executor capacity, scheduling, escalation, and lane registry.
-- `orchestrate` is not folded into `persona-mind`.
+- `orchestrate` is not folded into `mind`.
 
 ## Principles
 
@@ -55,29 +55,21 @@ Synthesised from psyche statements; not embellished.*
   orchestration surface.
 - Do not let compatibility lock files become a second state model
   after daemon cutover. The daemon store is the source of truth.
-- Do not put orchestration machinery in `persona-mind`.
+- Do not put orchestration machinery in `mind`.
 - Do not model lane churn by recompiling closed role enums as the
   long-term solution.
 
-## Pending schema-engine upgrade
+## Current schema-engine shape
 
-**Status:** scheduled for migration to schema-language-based contract per `reports/designer/326-v13-spirit-complete-schema-vision.md` + `reports/designer/324-migration-mvp-spirit-handover-re-specification.md`.
+`orchestrate` now carries authored Nexus and SEMA schemas in
+`schema/nexus.schema` and `schema/sema.schema`, imports the ordinary
+`signal-orchestrate` and `meta-signal-orchestrate` wire contracts, and
+emits checked-in `src/schema/{nexus,sema,daemon}.rs` through
+`schema-rust-next`. The emitted daemon module uses
+`triad-runtime`'s multi-listener runtime for the ordinary and meta
+sockets. The hand-written runtime keeps the service, storage, lock-file
+projection, handover, and command execution logic.
 
-**Target:** this component's hand-written contract/runtime surface converts to
-the current three-plane schema-engine shape: ordinary signal schema, nexus
-schema, and sema schema, plus the emitted daemon module over triad-runtime.
-The generated surface emits wire types, ShortHeader projection, dispatcher,
-VersionProjection, daemon spine, and storage descriptors.
-
-**Sequence:** Spirit is the MVP pilot landing first via `primary-ezqx.1`. Orchestrate cuts over after Spirit and mind because the authority chain `mind -> orchestrate -> router/harness` means orchestrate's outbound meta calls should land on the schema engine after the contracts at both ends.
-
-**Per-component concerns:** Cluster/lifecycle orchestration; schema cutover after Spirit + mind. Lane definitions stay data (not closed role enums) under the schema — the schema must enable dynamic-role registry persistence without baking the live role set into the wire.
-
-**References:**
-- `reports/designer/326-v13-spirit-complete-schema-vision.md` — uniform header form + schema-language design
-- `reports/designer/324-migration-mvp-spirit-handover-re-specification.md` — migration MVP + handover state
-- `reports/designer/322-spirit-mvp-positional-schema-worked-example.md` — Spirit MVP worked example
-- `reports/operator/174-schema-import-header-design-critique-2026-05-24.md` — header/body/feature separation + lowering rules
-
-*Source statements live in `/home/li/primary/intent/persona.nota` and
-`/home/li/primary/intent/component-shape.nota`.*
+Lane definitions stay data, not closed role enums. The schema-backed
+runtime must preserve dynamic role registry persistence without baking
+the live role set into the wire.

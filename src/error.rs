@@ -46,8 +46,8 @@ pub enum Error {
     #[error("signal-orchestrate: {0}")]
     SignalOrchestrate(#[from] signal_orchestrate::Error),
 
-    #[error("sema: {0}")]
-    Sema(#[from] sema::Error),
+    #[error("sema storage kernel: {0}")]
+    SemaStorageKernel(#[from] sema_engine::StorageKernelError),
 
     #[error("sema engine: {0}")]
     SemaEngine(#[from] sema_engine::Error),
