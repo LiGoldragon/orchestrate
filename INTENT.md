@@ -15,6 +15,11 @@ Synthesised from psyche statements; not embellished.*
   agents today: it keeps the old ergonomic argv shape, starts the
   `orchestrate` daemon when needed, sends typed Signal requests, and
   treats lock files only as daemon projections.
+- The replacement target is **not** legacy argv compatibility. The
+  real component replacement is `orchestrate` as a one-argument NOTA
+  client talking to `orchestrate-daemon`; callers should migrate to
+  NOTA operations rather than preserve `claim/release/status` argv
+  grammar.
 - The immediate MVP should create dynamic roles named by the work they
   own, create report lanes for those roles, and track enough typed
   claim state to replace fixed assistant-lane lock files.

@@ -22,7 +22,9 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > `orchestrate-daemon` when needed, talks through the ordinary Signal
 > socket, and renders daemon-projected lock state. A managed user
 > service is still missing; the helper currently performs lazy daemon
-> startup.
+> startup. This helper is transitional only. The intended replacement
+> surface is the real component CLI with one NOTA argument, not an
+> argv-compatible clone of `tools/orchestrate`.
 
 ## 0 - TL;DR
 
@@ -39,7 +41,8 @@ The current implemented slice is the usable triad skeleton: ordinary
 `orchestrate.redb` sema store, and a thin
 `orchestrate` CLI that sends Signal frames to the daemon
 sockets. The workspace `tools/orchestrate` wrapper is a compatibility
-client for agents, not a second state owner.
+client for agents, not a second state owner and not the destination
+syntax.
 
 ## Migration history - contract-local verbs (2026-05-19)
 
