@@ -50,6 +50,14 @@ impl Fixture {
     }
 }
 
+fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(future)
+}
+
 struct DirectDependencyWitness;
 
 impl DirectDependencyWitness {
@@ -73,8 +81,23 @@ impl DirectDependencyWitness {
         accepts(engine);
     }
 
-    fn triad_runtime_workers_are_linked() {
-        let _workers = triad_runtime::BoundedWorkers::new(1);
+    fn generated_daemon_owns_the_engine_in_a_kameo_actor() {
+        // The engine→actor migration replaced the old `BoundedWorkers` thread
+        // pool with a schema-emitted kameo `EngineActor` owning the engine. The
+        // generated runtime references it through an `ActorRef`; assert the
+        // emitted source shape rather than constructing the (generic) actor.
+        let generated = include_str!("../src/schema/daemon.rs");
+        for marker in [
+            "pub struct EngineActor<Daemon: ComponentDaemon>",
+            "impl<Daemon: ComponentDaemon> Actor for EngineActor<Daemon>",
+            "engine: ActorRef<EngineActor<Daemon>>",
+            "self.engine.ask(WorkingInput",
+        ] {
+            assert!(
+                generated.contains(marker),
+                "generated daemon must own the engine in a kameo actor: missing {marker}"
+            );
+        }
     }
 
     fn signal_frame_request_payloads_are_linked() {
@@ -120,13 +143,17 @@ fn orchestrate_cli_cannot_open_component_database() {
 
 #[test]
 fn orchestrate_direct_dependencies_have_type_level_witnesses() {
-    let fixture = Fixture::new("orchestrate-direct-dependencies");
-    let mut nexus = OrchestrateNexusEngine::new(&fixture.service);
-    let mut sema = OrchestrateSemaEngine::new(&fixture.service);
+    let mut fixture = Fixture::new("orchestrate-direct-dependencies");
+    {
+        let mut nexus = OrchestrateNexusEngine::new(&mut fixture.service);
+        DirectDependencyWitness::nexus_engine_implements_generated_trait(&mut nexus);
+    }
+    {
+        let mut sema = OrchestrateSemaEngine::new(&mut fixture.service);
+        DirectDependencyWitness::sema_engine_implements_generated_trait(&mut sema);
+    }
 
-    DirectDependencyWitness::nexus_engine_implements_generated_trait(&mut nexus);
-    DirectDependencyWitness::sema_engine_implements_generated_trait(&mut sema);
-    DirectDependencyWitness::triad_runtime_workers_are_linked();
+    DirectDependencyWitness::generated_daemon_owns_the_engine_in_a_kameo_actor();
     DirectDependencyWitness::signal_frame_request_payloads_are_linked();
     DirectDependencyWitness::sema_engine_error_flows_through_component_error();
     DirectDependencyWitness::version_projection_types_are_linked();
@@ -134,10 +161,12 @@ fn orchestrate_direct_dependencies_have_type_level_witnesses() {
 
 #[test]
 fn ordinary_requests_execute_through_generated_nexus_engine() {
-    let fixture = Fixture::new("orchestrate-ordinary-nexus");
+    let mut fixture = Fixture::new("orchestrate-ordinary-nexus");
 
-    let (reply, engine_error) =
-        OrchestrateRequestExecution::new(&fixture.service, role_claim().into_request()).execute();
+    let (reply, engine_error) = block_on(
+        OrchestrateRequestExecution::new(&mut fixture.service, role_claim().into_request())
+            .execute(),
+    );
 
     let Reply::Accepted {
         outcome: AcceptedOutcome::Committed,
@@ -156,14 +185,14 @@ fn ordinary_requests_execute_through_generated_nexus_engine() {
 
 #[test]
 fn meta_requests_execute_through_generated_nexus_engine() {
-    let fixture = Fixture::new("orchestrate-meta-nexus");
+    let mut fixture = Fixture::new("orchestrate-meta-nexus");
     let request = MetaOrchestrateRequest::Register(LaneRegistrationRequest {
         role: role_vector(&["Schema", "Designer"]),
         authority: LaneAuthority::Structural,
     });
 
     let (reply, engine_error) =
-        MetaRequestExecution::new(&fixture.service, request.into_request()).execute();
+        block_on(MetaRequestExecution::new(&mut fixture.service, request.into_request()).execute());
 
     let Reply::Accepted {
         outcome: AcceptedOutcome::Committed,
@@ -186,14 +215,14 @@ fn meta_requests_execute_through_generated_nexus_engine() {
 
 #[test]
 fn generated_nexus_path_rejects_multi_payload_atomic_batches_before_commit() {
-    let fixture = Fixture::new("orchestrate-nexus-multi-payload");
+    let mut fixture = Fixture::new("orchestrate-nexus-multi-payload");
     let request = Request::from_payloads(NonEmpty::from_head_and_tail(
         role_claim(),
         vec![role_claim()],
     ));
 
     let (reply, engine_error) =
-        OrchestrateRequestExecution::new(&fixture.service, request).execute();
+        block_on(OrchestrateRequestExecution::new(&mut fixture.service, request).execute());
 
     let Reply::Accepted {
         outcome: AcceptedOutcome::BatchAborted { .. },
@@ -208,11 +237,12 @@ fn generated_nexus_path_rejects_multi_payload_atomic_batches_before_commit() {
         Some(Error::UnsupportedAtomicBatch { operation_count: 2 })
     ));
 
-    let OrchestrateReply::RoleSnapshot(snapshot) = fixture
-        .service
-        .handle(OrchestrateRequest::Observe(Observation::Roles))
-        .expect("roles observe")
-    else {
+    let OrchestrateReply::RoleSnapshot(snapshot) = block_on(
+        fixture
+            .service
+            .handle(OrchestrateRequest::Observe(Observation::Roles)),
+    )
+    .expect("roles observe") else {
         panic!("expected role snapshot");
     };
     let operator = snapshot
@@ -249,12 +279,30 @@ fn orchestrate_source_does_not_depend_on_old_executor() {
 fn daemon_has_no_manual_listener_shortcuts() {
     let daemon = include_str!("../src/daemon.rs");
 
-    for forbidden in ["UnixListener", "std::thread", "thread::spawn", "fn accept_"] {
+    for forbidden in [
+        "UnixListener",
+        "std::thread",
+        "thread::spawn",
+        "fn accept_",
+        "BoundedWorkers",
+        "MultiListenerDaemon",
+    ] {
         assert!(
             !daemon.contains(forbidden),
             "daemon source must not contain manual listener shortcut {forbidden}"
         );
     }
+
+    // The daemon hand-writes only the `ComponentDaemon` escape hatches; the
+    // listener spine + engine actor are schema-emitted.
+    assert!(
+        daemon.contains("impl ComponentDaemon for OrchestrateDaemon"),
+        "daemon must implement the emitted ComponentDaemon hook trait"
+    );
+    assert!(
+        daemon.contains("type Engine = OrchestrateService"),
+        "the orchestrate engine is the actor-owned OrchestrateService"
+    );
 }
 
 fn role_claim() -> OrchestrateRequest {

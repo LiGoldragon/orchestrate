@@ -44,6 +44,25 @@ impl Fixture {
             service,
         }
     }
+
+    fn handle(&mut self, request: OrchestrateRequest) -> orchestrate::Result<OrchestrateReply> {
+        block_on(self.service.handle(request))
+    }
+
+    fn handle_meta(
+        &mut self,
+        request: MetaOrchestrateRequest,
+    ) -> orchestrate::Result<MetaOrchestrateReply> {
+        block_on(self.service.handle_meta(request))
+    }
+}
+
+fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(future)
 }
 
 fn role(value: &str) -> RoleName {
@@ -79,11 +98,10 @@ fn mirror_versions() -> MirrorVersions {
 
 #[test]
 fn mirror_payload_carries_claim_and_lane_state_between_services() {
-    let old = Fixture::new("orchestrate-old-handover");
+    let mut old = Fixture::new("orchestrate-old-handover");
     let claim_scope = path("/git/github.com/LiGoldragon/orchestrate");
 
     let accepted = old
-        .service
         .handle(OrchestrateRequest::Claim(RoleClaim {
             role: role("operator"),
             scopes: vec![claim_scope.clone()],
@@ -93,7 +111,6 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
 
     let registered = old
-        .service
         .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: role_vector(&["Designer"]),
             authority: LaneAuthority::Structural,
@@ -111,7 +128,7 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     assert_eq!(payload.component.as_str(), "orchestrate");
     assert_eq!(payload.kind.as_str(), "MirrorSnapshot");
 
-    let new = Fixture::new("orchestrate-new-handover");
+    let mut new = Fixture::new("orchestrate-new-handover");
     let restored = new
         .service
         .restore_mirror_payload(&payload)
@@ -120,7 +137,6 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     assert_eq!(restored.lanes.len(), 1);
 
     let roles = new
-        .service
         .handle(OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe roles");
     let OrchestrateReply::RoleSnapshot(roles) = roles else {
@@ -134,7 +150,6 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     assert_eq!(operator.claims[0].scope, claim_scope);
 
     let lanes = new
-        .service
         .handle(OrchestrateRequest::Observe(Observation::Lanes))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(lanes) = lanes else {

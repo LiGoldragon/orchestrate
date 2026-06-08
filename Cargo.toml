@@ -20,6 +20,15 @@ path = "src/main.rs"
 [[bin]]
 name = "orchestrate"
 path = "src/bin/orchestrate.rs"
+required-features = ["nota-text"]
+
+# The daemon-and-CLI end-to-end test drives the schema-frame `orchestrate` CLI
+# binary, which decodes/encodes NOTA — so it needs `nota-text` active to build
+# that binary. `cargo test --features nota-text` runs the full suite.
+[[test]]
+name = "daemon_cli"
+path = "tests/daemon_cli.rs"
+required-features = ["nota-text"]
 
 [features]
 default   = []
@@ -38,7 +47,6 @@ signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-ver
 triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
 nota-next                   = { git = "https://github.com/LiGoldragon/nota-next.git", branch = "main" }
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
-futures                     = { version = "0.3", default-features = false, features = ["executor"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }

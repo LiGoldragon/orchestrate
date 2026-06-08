@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 use schema_rust_next::{
-    MetaListenerTier, NexusDaemonShape, SocketModeBits, WorkingListenerTier,
+    MetaListenerTier, NexusDaemonShape, SocketModeBits, UpgradeListenerTier, WorkingListenerTier,
     build::{DependencySchema, GenerationDriver, GenerationPlan, ModuleEmission},
 };
 
@@ -73,6 +73,9 @@ impl SchemaBuild {
             WorkingListenerTier::dependency("signal_orchestrate::schema::lib"),
         )
         .with_meta_tier(MetaListenerTier::new(SocketModeBits::new(
+            OWNER_ONLY_SOCKET_MODE,
+        )))
+        .with_upgrade_tier(UpgradeListenerTier::new(SocketModeBits::new(
             OWNER_ONLY_SOCKET_MODE,
         )))
     }

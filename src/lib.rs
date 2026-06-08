@@ -11,17 +11,20 @@ pub mod layout;
 pub mod legacy_lock_import;
 pub mod location;
 pub mod lock_projection;
-pub mod lowering;
 pub mod repository;
 pub mod role;
 pub mod schema;
 pub mod service;
+#[cfg(feature = "nota-text")]
+pub mod signal_transport;
+pub mod socket_retirement;
 pub mod tables;
+pub mod upgrade_frame;
 
 pub use activity::ActivityLedger;
 pub use claim::{ClaimLedger, ClaimState};
-pub use configuration::DaemonConfiguration;
-pub use daemon::OrchestrateDaemon;
+pub use configuration::{ConfigurationError, DaemonConfiguration};
+pub use daemon::{OrchestrateDaemon, OrchestrateDaemonError};
 pub use divergence::DivergenceLedger;
 pub use error::{Error, Result};
 pub use execution::{
@@ -34,7 +37,6 @@ pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
-pub use lowering::{LoweredOperation, OperationLowering};
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAuthorityChange, LaneAuthoritySet, LaneRegistered,
     LaneRegistrationRequest, LaneRetired, MetaOrchestrateReply, MetaOrchestrateRequest,
@@ -52,7 +54,11 @@ pub use signal_orchestrate::{
     RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
     TaskToken, TimestampNanos, WirePath,
 };
+#[cfg(feature = "nota-text")]
+pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
+pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
     OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredRepository, StoredRole,
 };
+pub use upgrade_frame::UpgradeRequestFrame;

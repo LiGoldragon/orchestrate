@@ -25,7 +25,7 @@ pub struct OrchestrateNexusEngine<'service> {
 }
 
 pub struct OrchestrateSemaEngine<'service> {
-    service: &'service OrchestrateService,
+    service: &'service mut OrchestrateService,
     last_error: Option<Error>,
 }
 
@@ -33,8 +33,45 @@ trait ProjectInto<Target> {
     fn project_into(self) -> Result<Target>;
 }
 
+impl OrchestrateService {
+    /// Drive one ordinary working `Input` (the schema-emitted root the daemon
+    /// decodes off the wire) through the nexus runner and return the schema
+    /// `Output` root the daemon encodes back. This is the actor handler's
+    /// working entry — it runs the runner natively on the Tokio runtime, the
+    /// `&mut self` access coming from the engine actor's mailbox.
+    pub async fn handle_signal_input(
+        &mut self,
+        input: ordinary_schema::Input,
+    ) -> Result<ordinary_schema::Output> {
+        let signal_input = nexus_schema::SignalInput::ordinary_input(input);
+        match OrchestrateRequestExecution::drive_nexus(self, signal_input).await? {
+            nexus_schema::SignalOutput::OrdinaryOutput(output) => Ok(output),
+            nexus_schema::SignalOutput::MetaOutput(_) => Err(Error::NexusReplyTierMismatch {
+                expected: "ordinary",
+                actual: "meta",
+            }),
+        }
+    }
+
+    /// Drive one meta `Input` (the owner-only policy root) through the nexus
+    /// runner and return the meta schema `Output` root.
+    pub async fn handle_signal_meta_input(
+        &mut self,
+        input: meta_schema::Input,
+    ) -> Result<meta_schema::Output> {
+        let signal_input = nexus_schema::SignalInput::meta_input(input);
+        match MetaRequestExecution::drive_nexus(self, signal_input).await? {
+            nexus_schema::SignalOutput::MetaOutput(output) => Ok(output),
+            nexus_schema::SignalOutput::OrdinaryOutput(_) => Err(Error::NexusReplyTierMismatch {
+                expected: "meta",
+                actual: "ordinary",
+            }),
+        }
+    }
+}
+
 impl<'service> OrchestrateNexusEngine<'service> {
-    pub fn new(service: &'service OrchestrateService) -> Self {
+    pub fn new(service: &'service mut OrchestrateService) -> Self {
         Self {
             sema: OrchestrateSemaEngine::new(service),
             signal_tier: None,
@@ -204,7 +241,7 @@ impl nexus_schema::NexusEngine for OrchestrateNexusEngine<'_> {
 }
 
 impl<'service> OrchestrateSemaEngine<'service> {
-    pub fn new(service: &'service OrchestrateService) -> Self {
+    pub fn new(service: &'service mut OrchestrateService) -> Self {
         Self {
             service,
             last_error: None,
@@ -216,10 +253,10 @@ impl<'service> OrchestrateSemaEngine<'service> {
     }
 
     fn apply_write(
-        &self,
+        &mut self,
         input: sema_schema::SemaWriteInput,
     ) -> Result<sema_schema::SemaWriteOutput> {
-        let _sequence = self.service.lock_sequence()?;
+        // The actor mailbox serialises every write; no sequence lock is needed.
         match input {
             sema_schema::SemaWriteInput::ApplyOrdinary(input) => {
                 let request = input.project_into()?;
@@ -279,7 +316,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
     }
 
     fn apply_ordinary_request(
-        &self,
+        &mut self,
         request: ordinary_contract::OrchestrateRequest,
     ) -> Result<ordinary_contract::OrchestrateReply> {
         let reply = match request {
@@ -327,7 +364,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
     }
 
     fn apply_meta_request(
-        &self,
+        &mut self,
         request: meta_contract::MetaOrchestrateRequest,
     ) -> Result<meta_contract::MetaOrchestrateReply> {
         let reply = match request {
@@ -372,24 +409,24 @@ impl<'service> OrchestrateSemaEngine<'service> {
 }
 
 pub struct OrchestrateRequestExecution<'service> {
-    service: &'service OrchestrateService,
+    service: &'service mut OrchestrateService,
     request: signal_frame::Request<ordinary_contract::OrchestrateRequest>,
 }
 
 pub struct MetaRequestExecution<'service> {
-    service: &'service OrchestrateService,
+    service: &'service mut OrchestrateService,
     request: signal_frame::Request<meta_contract::MetaOrchestrateRequest>,
 }
 
 impl<'service> OrchestrateRequestExecution<'service> {
     pub fn new(
-        service: &'service OrchestrateService,
+        service: &'service mut OrchestrateService,
         request: signal_frame::Request<ordinary_contract::OrchestrateRequest>,
     ) -> Self {
         Self { service, request }
     }
 
-    pub fn execute(self) -> (Reply<ordinary_contract::OrchestrateReply>, Option<Error>) {
+    pub async fn execute(self) -> (Reply<ordinary_contract::OrchestrateReply>, Option<Error>) {
         if let Some(error) = self.single_payload_error() {
             return (Self::batch_aborted_reply(), Some(error));
         }
@@ -397,7 +434,7 @@ impl<'service> OrchestrateRequestExecution<'service> {
             Ok(input) => nexus_schema::SignalInput::ordinary_input(input),
             Err(error) => return (Self::batch_aborted_reply(), Some(error)),
         };
-        let output = Self::drive_nexus(self.service, input);
+        let output = Self::drive_nexus(self.service, input).await;
         let reply = match output {
             Ok(nexus_schema::SignalOutput::OrdinaryOutput(output)) => output.project_into(),
             Ok(nexus_schema::SignalOutput::MetaOutput(_)) => Err(Error::NexusReplyTierMismatch {
@@ -420,16 +457,16 @@ impl<'service> OrchestrateRequestExecution<'service> {
         (operation_count != 1).then_some(Error::UnsupportedAtomicBatch { operation_count })
     }
 
-    fn drive_nexus(
-        service: &OrchestrateService,
+    async fn drive_nexus(
+        service: &mut OrchestrateService,
         input: nexus_schema::SignalInput,
     ) -> Result<nexus_schema::SignalOutput> {
         let mut engine = OrchestrateNexusEngine::new(service);
         let work = nexus_schema::NexusWork::signal_arrived(input)
             .with_origin_route(nexus_schema::OriginRoute(0));
-        let action =
-            futures::executor::block_on(nexus_schema::NexusEngine::execute(&mut engine, work))
-                .into_root();
+        let action = nexus_schema::NexusEngine::execute(&mut engine, work)
+            .await
+            .into_root();
         if let Some(error) = engine.take_last_error() {
             return Err(error);
         }
@@ -453,13 +490,13 @@ impl<'service> OrchestrateRequestExecution<'service> {
 
 impl<'service> MetaRequestExecution<'service> {
     pub fn new(
-        service: &'service OrchestrateService,
+        service: &'service mut OrchestrateService,
         request: signal_frame::Request<meta_contract::MetaOrchestrateRequest>,
     ) -> Self {
         Self { service, request }
     }
 
-    pub fn execute(self) -> (Reply<meta_contract::MetaOrchestrateReply>, Option<Error>) {
+    pub async fn execute(self) -> (Reply<meta_contract::MetaOrchestrateReply>, Option<Error>) {
         if let Some(error) = self.single_payload_error() {
             return (Self::batch_aborted_reply(), Some(error));
         }
@@ -467,7 +504,7 @@ impl<'service> MetaRequestExecution<'service> {
             Ok(input) => nexus_schema::SignalInput::meta_input(input),
             Err(error) => return (Self::batch_aborted_reply(), Some(error)),
         };
-        let output = Self::drive_nexus(self.service, input);
+        let output = Self::drive_nexus(self.service, input).await;
         let reply = match output {
             Ok(nexus_schema::SignalOutput::MetaOutput(output)) => output.project_into(),
             Ok(nexus_schema::SignalOutput::OrdinaryOutput(_)) => {
@@ -492,16 +529,16 @@ impl<'service> MetaRequestExecution<'service> {
         (operation_count != 1).then_some(Error::UnsupportedAtomicBatch { operation_count })
     }
 
-    fn drive_nexus(
-        service: &OrchestrateService,
+    async fn drive_nexus(
+        service: &mut OrchestrateService,
         input: nexus_schema::SignalInput,
     ) -> Result<nexus_schema::SignalOutput> {
         let mut engine = OrchestrateNexusEngine::new(service);
         let work = nexus_schema::NexusWork::signal_arrived(input)
             .with_origin_route(nexus_schema::OriginRoute(0));
-        let action =
-            futures::executor::block_on(nexus_schema::NexusEngine::execute(&mut engine, work))
-                .into_root();
+        let action = nexus_schema::NexusEngine::execute(&mut engine, work)
+            .await
+            .into_root();
         if let Some(error) = engine.take_last_error() {
             return Err(error);
         }

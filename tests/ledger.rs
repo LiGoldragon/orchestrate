@@ -3,12 +3,10 @@ use orchestrate::{
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
     HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry,
     MetaOrchestrateReply, MetaOrchestrateRequest, Observation, ObservationSubscription,
-    ObservationToken, OperationKind, OperationLowering, OrchestrateLayout, OrchestrateReply,
-    OrchestrateRequest, OrchestrateService, PartialApplied, RefreshRepositoryIndexOrder,
-    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
-    ScopeReason, ScopeReference, StoreLocation, TaskToken, WirePath,
+    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, PartialApplied,
+    RefreshRepositoryIndexOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease,
+    RoleToken, ScopeReason, ScopeReference, StoreLocation, TaskToken, WirePath,
 };
-use signal_sema::SemaOperation;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -56,6 +54,25 @@ impl Fixture {
             service,
         }
     }
+
+    fn handle(&mut self, request: OrchestrateRequest) -> orchestrate::Result<OrchestrateReply> {
+        block_on(self.service.handle(request))
+    }
+
+    fn handle_meta(
+        &mut self,
+        request: MetaOrchestrateRequest,
+    ) -> orchestrate::Result<MetaOrchestrateReply> {
+        block_on(self.service.handle_meta(request))
+    }
+}
+
+fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(future)
 }
 
 impl LayoutFixture {
@@ -93,6 +110,17 @@ impl LayoutFixture {
             git_index,
             service,
         }
+    }
+
+    fn handle(&mut self, request: OrchestrateRequest) -> orchestrate::Result<OrchestrateReply> {
+        block_on(self.service.handle(request))
+    }
+
+    fn handle_meta(
+        &mut self,
+        request: MetaOrchestrateRequest,
+    ) -> orchestrate::Result<MetaOrchestrateReply> {
+        block_on(self.service.handle_meta(request))
     }
 }
 
@@ -182,130 +210,10 @@ fn lane_identifier_derivation_follows_role_vector_authority_and_ordinal() {
 }
 
 #[test]
-fn ordinary_contract_operations_lower_to_sema_effects() {
-    let cases = [
-        (
-            OrchestrateRequest::Claim(RoleClaim {
-                role: operator(),
-                scopes: vec![path("/tmp/orchestrate-lowering-claim")],
-                reason: reason("lowering claim"),
-            }),
-            OperationKind::Claim,
-            SemaOperation::Assert,
-        ),
-        (
-            OrchestrateRequest::Release(RoleRelease { role: operator() }),
-            OperationKind::Release,
-            SemaOperation::Retract,
-        ),
-        (
-            OrchestrateRequest::Handoff(RoleHandoff {
-                from: operator(),
-                to: designer(),
-                scopes: vec![path("/tmp/orchestrate-lowering-handoff")],
-                reason: reason("lowering handoff"),
-            }),
-            OperationKind::Handoff,
-            SemaOperation::Mutate,
-        ),
-        (
-            OrchestrateRequest::Observe(Observation::Roles),
-            OperationKind::Observe,
-            SemaOperation::Match,
-        ),
-        (
-            OrchestrateRequest::Submit(ActivitySubmission {
-                role: operator(),
-                scope: task("primary-lowering"),
-                reason: reason("lowering activity"),
-            }),
-            OperationKind::Submit,
-            SemaOperation::Assert,
-        ),
-        (
-            OrchestrateRequest::Query(ActivityQuery {
-                limit: 5,
-                filters: vec![],
-            }),
-            OperationKind::Query,
-            SemaOperation::Match,
-        ),
-        (
-            OrchestrateRequest::Watch(ObservationSubscription {
-                include_operations: true,
-                include_effects: true,
-            }),
-            OperationKind::Watch,
-            SemaOperation::Subscribe,
-        ),
-        (
-            OrchestrateRequest::Unwatch(ObservationToken::new(1)),
-            OperationKind::Unwatch,
-            SemaOperation::Retract,
-        ),
-    ];
-
-    for (operation, kind, effect) in cases {
-        let lowered = OperationLowering::ordinary(&operation);
-        assert_eq!(*lowered.kind(), kind);
-        assert_eq!(lowered.effects(), &[effect]);
-    }
-}
-
-#[test]
-fn meta_contract_operations_lower_to_sema_effects() {
-    let cases = [
-        (
-            MetaOrchestrateRequest::Create(CreateRoleOrder {
-                role: role("primary-lowering-meta-create"),
-                harness: HarnessKind::Codex,
-            }),
-            meta_signal_orchestrate::MetaOperationKind::Create,
-            SemaOperation::Mutate,
-        ),
-        (
-            MetaOrchestrateRequest::Retire(Retirement::Role(RetireRoleOrder {
-                role: role("primary-lowering-meta-retire"),
-            })),
-            meta_signal_orchestrate::MetaOperationKind::Retire,
-            SemaOperation::Retract,
-        ),
-        (
-            MetaOrchestrateRequest::Refresh(RefreshRepositoryIndexOrder {}),
-            meta_signal_orchestrate::MetaOperationKind::Refresh,
-            SemaOperation::Mutate,
-        ),
-        (
-            MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-                role: role_vector(&["Designer"]),
-                authority: LaneAuthority::Structural,
-            }),
-            meta_signal_orchestrate::MetaOperationKind::Register,
-            SemaOperation::Mutate,
-        ),
-        (
-            MetaOrchestrateRequest::SetAuthority(meta_signal_orchestrate::LaneAuthorityChange {
-                lane: lane("designer"),
-                authority: LaneAuthority::Support,
-            }),
-            meta_signal_orchestrate::MetaOperationKind::SetAuthority,
-            SemaOperation::Mutate,
-        ),
-    ];
-
-    for (operation, kind, effect) in cases {
-        let lowered = OperationLowering::meta(&operation);
-        assert_eq!(*lowered.kind(), kind);
-        assert_eq!(lowered.effects(), &[effect]);
-    }
-}
-
-#[test]
 fn observation_subscription_allocates_tokens_and_closes_them() {
-    let fixture = Fixture::new("orchestrate-observation");
+    let mut fixture = Fixture::new("orchestrate-observation");
 
     let first = fixture
-        .service
         .handle(OrchestrateRequest::Watch(ObservationSubscription {
             include_operations: true,
             include_effects: false,
@@ -316,7 +224,6 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
     };
 
     let second = fixture
-        .service
         .handle(OrchestrateRequest::Watch(ObservationSubscription {
             include_operations: false,
             include_effects: true,
@@ -330,7 +237,6 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
     assert_eq!(second.token.value(), 2);
 
     let closed = fixture
-        .service
         .handle(OrchestrateRequest::Unwatch(first.token))
         .expect("unwatch");
     let OrchestrateReply::ObservationClosed(closed) = closed else {
@@ -341,11 +247,10 @@ fn observation_subscription_allocates_tokens_and_closes_them() {
 
 #[test]
 fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
-    let fixture = Fixture::new("orchestrate-claims");
+    let mut fixture = Fixture::new("orchestrate-claims");
     let scope = path("/git/github.com/LiGoldragon/orchestrate");
 
     let accepted = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: operator(),
             scopes: vec![scope.clone()],
@@ -355,7 +260,6 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
 
     let rejected = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: designer(),
             scopes: vec![scope.clone()],
@@ -369,7 +273,6 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     assert_eq!(rejection.conflicts[0].held_by, operator());
 
     let handoff = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Handoff(RoleHandoff {
             from: operator(),
             to: designer(),
@@ -380,7 +283,6 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     assert!(matches!(handoff, OrchestrateReply::HandoffAcceptance(_)));
 
     let snapshot = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -394,7 +296,6 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     assert_eq!(designer_status.claims[0].scope, scope);
 
     let released = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Release(RoleRelease {
             role: designer(),
         }))
@@ -407,11 +308,10 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
 
 #[test]
 fn activity_submission_query_and_observation_are_store_stamped() {
-    let fixture = Fixture::new("orchestrate-activity");
+    let mut fixture = Fixture::new("orchestrate-activity");
     let scope = task("primary-hrhz");
 
     let acknowledgment = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Submit(
             ActivitySubmission {
                 role: operator_assistant(),
@@ -426,7 +326,6 @@ fn activity_submission_query_and_observation_are_store_stamped() {
     ));
 
     let list = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Query(ActivityQuery {
             limit: 10,
             filters: vec![ActivityFilter::TaskToken(
@@ -442,7 +341,6 @@ fn activity_submission_query_and_observation_are_store_stamped() {
     assert!(list.records[0].stamped_at.value() > 0);
 
     let snapshot = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -488,10 +386,9 @@ fn partial_downstream_failure_records_divergence_and_returns_typed_reply() {
 
 #[test]
 fn role_observation_includes_current_workspace_lanes() {
-    let fixture = Fixture::new("orchestrate-roles");
+    let mut fixture = Fixture::new("orchestrate-roles");
 
     let snapshot = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -508,11 +405,10 @@ fn role_observation_includes_current_workspace_lanes() {
 
 #[test]
 fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
-    let fixture = LayoutFixture::new("orchestrate-dynamic-role");
+    let mut fixture = LayoutFixture::new("orchestrate-dynamic-role");
     let role = role("primary-orchestrate-mvp-zxq9-never-collide");
 
     let reply = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::Create(CreateRoleOrder {
             role: role.clone(),
             harness: HarnessKind::Codex,
@@ -532,7 +428,6 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
     assert_eq!(std::fs::read_to_string(&lock_path).expect("lock file"), "");
 
     let snapshot = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Observe(Observation::Roles))
         .expect("observe");
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
@@ -547,7 +442,6 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
 
     let scope = path("/tmp/primary-orchestrate-mvp-zxq9-never-collide");
     let accepted = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: created_status.role.clone(),
             scopes: vec![scope.clone()],
@@ -563,11 +457,10 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
 
 #[test]
 fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
-    let fixture = Fixture::new("orchestrate-lane-registry");
+    let mut fixture = Fixture::new("orchestrate-lane-registry");
     let designer_role = role_vector(&["Designer"]);
 
     let first = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: designer_role.clone(),
             authority: LaneAuthority::Structural,
@@ -579,7 +472,6 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     assert_eq!(first.registration.lane.as_wire_token(), "designer");
 
     let second = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
             role: designer_role,
             authority: LaneAuthority::Structural,
@@ -591,7 +483,6 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     assert_eq!(second.registration.lane.as_wire_token(), "second-designer");
 
     let observed = fixture
-        .service
         .handle(OrchestrateRequest::Observe(Observation::Lanes))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(observed) = observed else {
@@ -612,7 +503,6 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     );
 
     let set = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::SetAuthority(
             meta_signal_orchestrate::LaneAuthorityChange {
                 lane: lane("designer"),
@@ -627,7 +517,6 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     assert_eq!(set.authority, LaneAuthority::Support);
 
     let retired = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
             "designer",
         ))))
@@ -638,7 +527,6 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     assert_eq!(retired.lane.as_wire_token(), "designer");
 
     let observed = fixture
-        .service
         .handle(OrchestrateRequest::Observe(Observation::Lanes))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(observed) = observed else {
@@ -647,11 +535,9 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     assert_eq!(observed.lanes.len(), 1);
     assert_eq!(observed.lanes[0].lane.as_wire_token(), "second-designer");
 
-    let missing = fixture
-        .service
-        .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
-            "missing-designer",
-        ))));
+    let missing = fixture.handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
+        "missing-designer",
+    ))));
     assert!(matches!(
         missing,
         Err(orchestrate::Error::LaneNotRegistered { lane })
@@ -661,12 +547,11 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 
 #[test]
 fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
-    let fixture = LayoutFixture::new("orchestrate-repositories");
+    let mut fixture = LayoutFixture::new("orchestrate-repositories");
     let repository_name = "primary-orchestrate-refresh-zxq9-never-collide";
     std::fs::create_dir_all(fixture.git_index.join(repository_name)).expect("repository");
 
     let reply = fixture
-        .service
         .handle_meta(MetaOrchestrateRequest::Refresh(
             RefreshRepositoryIndexOrder {},
         ))
@@ -690,13 +575,12 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
 
 #[test]
 fn activity_path_prefix_matches_path_boundaries() {
-    let fixture = Fixture::new("orchestrate-prefix");
+    let mut fixture = Fixture::new("orchestrate-prefix");
     let persona_scope = path("/git/github.com/LiGoldragon/persona");
     let orchestrate_scope = path("/git/github.com/LiGoldragon/orchestrate");
 
     for scope in [persona_scope.clone(), orchestrate_scope] {
         fixture
-            .service
             .handle(orchestrate::OrchestrateRequest::Submit(
                 ActivitySubmission {
                     role: operator_assistant(),
@@ -708,7 +592,6 @@ fn activity_path_prefix_matches_path_boundaries() {
     }
 
     let list = fixture
-        .service
         .handle(orchestrate::OrchestrateRequest::Query(ActivityQuery {
             limit: 10,
             filters: vec![ActivityFilter::PathPrefix(

@@ -6,14 +6,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use meta_signal_orchestrate::{
-    CreateRoleOrder, Frame as MetaOrchestrateFrame, FrameBody as MetaOrchestrateFrameBody,
-    MetaOrchestrateReply, MetaOrchestrateRequest, RefreshRepositoryIndexOrder,
+    Frame as MetaOrchestrateFrame, FrameBody as MetaOrchestrateFrameBody, MetaOrchestrateRequest,
+    RefreshRepositoryIndexOrder,
 };
 use nota_next::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
-    DaemonConfiguration, HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistration,
-    MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName,
-    RoleToken, StoreLocation, StoredClaim, WirePath,
+    DaemonConfiguration, LaneAuthority, LaneIdentifier, LaneRegistration, MirrorSnapshot,
+    MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName, RoleToken,
+    StoreLocation, StoredClaim, WirePath,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -21,7 +21,19 @@ use signal_frame::{
 };
 use signal_orchestrate::{
     Observation, OrchestrateFrame, OrchestrateFrameBody, OrchestrateReply, OrchestrateRequest,
-    RoleClaim, ScopeReason, ScopeReference,
+    ScopeReason, ScopeReference,
+};
+// The CLI now speaks the schema-emitted `Input`/`Output` wire (matching spirit),
+// so the end-to-end CLI tests build schema requests and decode schema replies.
+// In the schema projection the role/scope newtypes flatten to `String`, so
+// these requests are constructed from plain strings.
+use meta_signal_orchestrate::schema::lib::{
+    CreateRoleOrder as SchemaCreateRoleOrder, HarnessKind as SchemaHarnessKind,
+    Input as MetaSchemaInput, Output as MetaSchemaOutput,
+};
+use signal_orchestrate::schema::lib::{
+    Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
+    RoleClaim as SchemaRoleClaim, ScopeReference as SchemaScopeReference,
 };
 use signal_version_handover::{
     CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
@@ -80,8 +92,14 @@ impl DaemonFixture {
             wire_path(&workspace),
             wire_path(&git_index),
         );
-        let configuration_path = temporary.path().join("daemon.nota");
-        std::fs::write(&configuration_path, encode_nota(&configuration)).expect("config write");
+        // Daemons accept only a binary rkyv startup file (hard override:
+        // daemons never parse NOTA). Encode the typed configuration to rkyv.
+        let configuration_path = temporary.path().join("daemon.signal");
+        std::fs::write(
+            &configuration_path,
+            configuration.to_signal_bytes().expect("config encode"),
+        )
+        .expect("config write");
 
         let child = Command::new(env!("CARGO_BIN_EXE_orchestrate-daemon"))
             .arg(&configuration_path)
@@ -104,6 +122,8 @@ impl DaemonFixture {
     fn wait_for_sockets(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < deadline {
+            // The actor-shell daemon binds all three listener tiers: working
+            // (ordinary), meta, and the version-handover upgrade socket.
             if self.ordinary_socket.exists()
                 && self.meta_socket.exists()
                 && self.upgrade_socket.exists()
@@ -138,6 +158,14 @@ impl Drop for DaemonFixture {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+        .block_on(future)
 }
 
 fn wire_path(path: &Path) -> WirePath {
@@ -298,46 +326,48 @@ fn test_mirror_payload() -> MirrorPayload {
 #[test]
 fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let fixture = DaemonFixture::start("orchestrate-cli-role");
-    let role = role("primary-orchestrate-daemon-zxq9-never-collide");
+    let role = String::from("primary-orchestrate-daemon-zxq9-never-collide");
 
-    let output = fixture.cli(MetaOrchestrateRequest::Create(CreateRoleOrder {
+    let output = fixture.cli(MetaSchemaInput::Create(SchemaCreateRoleOrder {
         role: role.clone(),
-        harness: HarnessKind::Codex,
+        harness: SchemaHarnessKind::Codex,
     }));
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let reply: MetaOrchestrateReply = decode_nota(&output.stdout);
-    let MetaOrchestrateReply::RoleCreated(created) = reply else {
-        panic!("expected role created");
+    let reply: MetaSchemaOutput = decode_nota(&output.stdout);
+    let MetaSchemaOutput::RoleCreated(created) = reply else {
+        panic!("expected role created, got {reply:?}");
     };
     assert_eq!(created.role, role);
     assert!(Path::new(created.report_repository_path.as_str()).is_dir());
     assert!(Path::new(created.report_lane_path.as_str()).exists());
 
-    let output = fixture.cli(OrchestrateRequest::Observe(Observation::Roles));
+    let output = fixture.cli(SchemaInput::Observe(SchemaObservation::Roles));
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let reply: OrchestrateReply = decode_nota(&output.stdout);
-    let OrchestrateReply::RoleSnapshot(snapshot) = reply else {
-        panic!("expected role snapshot");
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::RoleSnapshot(snapshot) = reply else {
+        panic!("expected role snapshot, got {reply:?}");
     };
-    assert!(snapshot.roles.iter().any(
-        |status| status.role.as_wire_token() == "primary-orchestrate-daemon-zxq9-never-collide"
-    ));
+    assert!(
+        snapshot
+            .roles
+            .iter()
+            .any(|status| status.role == "primary-orchestrate-daemon-zxq9-never-collide")
+    );
 
-    let output = fixture.cli(OrchestrateRequest::Claim(RoleClaim {
+    let output = fixture.cli(SchemaInput::Claim(SchemaRoleClaim {
         role,
-        scopes: vec![ScopeReference::Path(
-            WirePath::from_absolute_path("/tmp/primary-orchestrate-daemon-zxq9-never-collide")
-                .expect("claim path"),
-        )],
-        reason: ScopeReason::from_text("daemon CLI claim projection").expect("reason"),
+        scopes: vec![SchemaScopeReference::Path(String::from(
+            "/tmp/primary-orchestrate-daemon-zxq9-never-collide",
+        ))],
+        reason: String::from("daemon CLI claim projection"),
     }));
     assert!(
         output.status.success(),
@@ -364,28 +394,33 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
         )],
     );
 
-    let output = fixture.cli(OrchestrateRequest::Observe(Observation::Roles));
+    let output = fixture.cli(SchemaInput::Observe(SchemaObservation::Roles));
     assert!(
         output.status.success(),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let reply: OrchestrateReply = decode_nota(&output.stdout);
-    let OrchestrateReply::RoleSnapshot(snapshot) = reply else {
-        panic!("expected role snapshot");
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::RoleSnapshot(snapshot) = reply else {
+        panic!("expected role snapshot, got {reply:?}");
     };
     let system_operator = snapshot
         .roles
         .iter()
-        .find(|status| status.role.as_wire_token() == "system-operator")
+        .find(|status| status.role == "system-operator")
         .expect("system-operator role");
     assert!(system_operator.claims.iter().any(|claim| matches!(
         &claim.scope,
-        ScopeReference::Path(path)
-            if path.as_str() == "/git/github.com/LiGoldragon/orchestrate"
+        SchemaScopeReference::Path(path)
+            if path == "/git/github.com/LiGoldragon/orchestrate"
     )));
 }
 
+// The version-handover upgrade socket is the daemon's third listener tier. The
+// emitter now emits an upgrade listener that routes each accepted connection
+// through the engine actor's `handle_upgrade_connection`, which drives the
+// handover state machine on the `&mut` engine and retires the public (working +
+// meta) sockets on finalization.
 #[test]
 fn upgrade_socket_serves_marker_readiness_completion_and_retires_public_paths() {
     let fixture = DaemonFixture::start("orchestrate-upgrade-complete");
@@ -455,8 +490,8 @@ fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
         OrchestrateLayout::new(fixture.workspace.clone(), fixture.git_index.clone()),
     )
     .expect("reopen service");
-    let roles = service
-        .handle(OrchestrateRequest::Observe(Observation::Roles))
+    let mut service = service;
+    let roles = block_on(service.handle(OrchestrateRequest::Observe(Observation::Roles)))
         .expect("observe roles");
     let OrchestrateReply::RoleSnapshot(roles) = roles else {
         panic!("expected role snapshot");
@@ -472,8 +507,7 @@ fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
             if path.as_str() == "/tmp/orchestrate-upgrade-mirror-claim"
     )));
 
-    let lanes = service
-        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+    let lanes = block_on(service.handle(OrchestrateRequest::Observe(Observation::Lanes)))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lane snapshot");

@@ -9,22 +9,26 @@ use signal_version_handover::{
     MirrorAcknowledgement, MirrorPayload, Operation as UpgradeOperation, ReadinessReport,
     RecoveryResult, Reply as UpgradeReply,
 };
-use std::sync::{Mutex, MutexGuard};
 use version_projection::ComponentName;
 
 use crate::{
     Error, LegacyLockImport, LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions,
-    OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables, Result, RoleRegistry,
-    StoreLocation, StoredDivergence,
+    OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement,
+    Result, RoleRegistry, StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
+/// The orchestrate engine. It is owned exclusively by the schema-emitted
+/// `EngineActor`, so the actor mailbox serialises every request and each
+/// handler holds `&mut self` — no component-internal lock is required. The
+/// write-sequence gate, observation-token counter, and handover state machine
+/// that previously needed a `Mutex` are now plain fields mutated under `&mut`.
 pub struct OrchestrateService {
     tables: OrchestrateTables,
     layout: OrchestrateLayout,
-    sequence: Mutex<()>,
-    next_observation_token: Mutex<u64>,
-    handover: Mutex<HandoverState>,
+    next_observation_token: u64,
+    handover: HandoverState,
+    public_sockets: PublicSocketRetirement,
 }
 
 impl OrchestrateService {
@@ -39,65 +43,101 @@ impl OrchestrateService {
         Ok(Self {
             tables,
             layout,
-            sequence: Mutex::new(()),
-            next_observation_token: Mutex::new(1),
-            handover: Mutex::new(HandoverState::Active),
+            next_observation_token: 1,
+            handover: HandoverState::Active,
+            public_sockets: PublicSocketRetirement::none(),
         })
     }
 
-    pub fn handle(&self, request: OrchestrateRequest) -> Result<OrchestrateReply> {
-        let (reply, engine_error) = self.execute_request(request.into_request());
+    /// Register the ordinary and meta socket paths the engine retires once a
+    /// handover finalizes — the version-handover protocol's last step is to
+    /// stop accepting public (working + meta) traffic on the retiring instance.
+    /// The daemon's `build_runtime` calls this with the configured paths; tests
+    /// that open the engine directly leave it empty (`none`).
+    pub fn with_public_socket_retirement(mut self, retirement: PublicSocketRetirement) -> Self {
+        self.public_sockets = retirement;
+        self
+    }
+
+    pub async fn handle(&mut self, request: OrchestrateRequest) -> Result<OrchestrateReply> {
+        let (reply, engine_error) = self.execute_request(request.into_request()).await;
         first_committed_payload(reply, engine_error)
     }
 
-    pub fn handle_meta(&self, request: MetaOrchestrateRequest) -> Result<MetaOrchestrateReply> {
-        let (reply, engine_error) = self.execute_meta_request(request.into_request());
+    pub async fn handle_meta(
+        &mut self,
+        request: MetaOrchestrateRequest,
+    ) -> Result<MetaOrchestrateReply> {
+        let (reply, engine_error) = self.execute_meta_request(request.into_request()).await;
         first_committed_payload(reply, engine_error)
     }
 
-    pub fn handle_request(&self, request: Request<OrchestrateRequest>) -> Reply<OrchestrateReply> {
-        let (reply, _engine_error) = self.execute_request(request);
+    pub async fn handle_request(
+        &mut self,
+        request: Request<OrchestrateRequest>,
+    ) -> Reply<OrchestrateReply> {
+        let (reply, _engine_error) = self.execute_request(request).await;
         reply
     }
 
-    pub fn handle_meta_request(
-        &self,
+    pub async fn handle_meta_request(
+        &mut self,
         request: Request<MetaOrchestrateRequest>,
     ) -> Reply<MetaOrchestrateReply> {
-        let (reply, _engine_error) = self.execute_meta_request(request);
+        let (reply, _engine_error) = self.execute_meta_request(request).await;
         reply
     }
 
     pub fn handle_upgrade_request(
-        &self,
+        &mut self,
         request: Request<UpgradeOperation>,
-    ) -> Reply<UpgradeReply> {
-        let replies = request
-            .payloads()
-            .iter()
-            .cloned()
-            .map(|operation| self.handle_upgrade_operation(operation))
-            .collect::<Result<Vec<_>>>();
-        match replies {
-            Ok(replies) => Reply::committed(
-                NonEmpty::try_from_vec(replies).expect("request payloads are non-empty"),
-            ),
-            Err(_) => Reply::rejected(RequestRejectionReason::Internal),
+    ) -> Result<Reply<UpgradeReply>> {
+        let operations: Vec<UpgradeOperation> = request.payloads().iter().cloned().collect();
+        let mut replies = Vec::with_capacity(operations.len());
+        for operation in operations {
+            match self.handle_upgrade_operation(operation) {
+                Ok(reply) => replies.push(reply),
+                Err(_) => return Ok(Reply::rejected(RequestRejectionReason::Internal)),
+            }
         }
+        let reply = Reply::committed(
+            NonEmpty::try_from_vec(replies).expect("request payloads are non-empty"),
+        );
+        if Self::reply_finalized_handover(&reply) {
+            self.public_sockets.retire()?;
+        }
+        Ok(reply)
     }
 
-    fn execute_request(
-        &self,
+    /// Whether an upgrade reply committed a `HandoverFinalized` — the signal to
+    /// retire the public (working + meta) sockets on the retiring instance.
+    fn reply_finalized_handover(reply: &Reply<UpgradeReply>) -> bool {
+        let Reply::Accepted {
+            outcome: AcceptedOutcome::Committed,
+            per_operation,
+        } = reply
+        else {
+            return false;
+        };
+        per_operation
+            .iter()
+            .any(|sub_reply| matches!(sub_reply, SubReply::Ok(UpgradeReply::HandoverFinalized(_))))
+    }
+
+    async fn execute_request(
+        &mut self,
         request: Request<OrchestrateRequest>,
     ) -> (Reply<OrchestrateReply>, Option<Error>) {
-        OrchestrateRequestExecution::new(self, request).execute()
+        OrchestrateRequestExecution::new(self, request)
+            .execute()
+            .await
     }
 
-    fn execute_meta_request(
-        &self,
+    async fn execute_meta_request(
+        &mut self,
         request: Request<MetaOrchestrateRequest>,
     ) -> (Reply<MetaOrchestrateReply>, Option<Error>) {
-        MetaRequestExecution::new(self, request).execute()
+        MetaRequestExecution::new(self, request).execute().await
     }
 
     pub fn roles(&self) -> Result<Vec<crate::StoredRole>> {
@@ -155,28 +195,18 @@ impl OrchestrateService {
         &self.layout
     }
 
-    pub(crate) fn lock_sequence(&self) -> Result<MutexGuard<'_, ()>> {
-        self.sequence
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)
-    }
-
     pub(crate) fn project_locks(&self) -> Result<()> {
         LockProjection::new(&self.tables, &self.layout).project()
     }
 
-    pub(crate) fn next_observation_token(&self) -> Result<ObservationToken> {
-        let mut next = self
-            .next_observation_token
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        let token = ObservationToken::new(*next);
-        *next += 1;
+    pub(crate) fn next_observation_token(&mut self) -> Result<ObservationToken> {
+        let token = ObservationToken::new(self.next_observation_token);
+        self.next_observation_token += 1;
         Ok(token)
     }
 
     fn handle_upgrade_operation(
-        &self,
+        &mut self,
         operation: UpgradeOperation,
     ) -> Result<SubReply<UpgradeReply>> {
         let reply = match operation {
@@ -207,17 +237,13 @@ impl OrchestrateService {
         ))
     }
 
-    fn ready_to_handover(&self, report: ReadinessReport) -> Result<UpgradeReply> {
+    fn ready_to_handover(&mut self, report: ReadinessReport) -> Result<UpgradeReply> {
         let current_marker = self.handover_marker(report.component.clone())?;
-        let mut state = self
-            .handover
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        match &*state {
+        match &self.handover {
             HandoverState::Active
                 if current_marker.commit_sequence == report.source_marker.commit_sequence =>
             {
-                *state = HandoverState::Ready {
+                self.handover = HandoverState::Ready {
                     accepted_marker: current_marker.clone(),
                 };
                 Ok(UpgradeReply::HandoverAccepted(HandoverAcceptance {
@@ -235,18 +261,14 @@ impl OrchestrateService {
         }
     }
 
-    fn handover_completed(&self, report: CompletionReport) -> Result<UpgradeReply> {
+    fn handover_completed(&mut self, report: CompletionReport) -> Result<UpgradeReply> {
         let current_marker = self.handover_marker(report.component.clone())?;
-        let mut state = self
-            .handover
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        match &*state {
+        match &self.handover {
             HandoverState::Ready { accepted_marker }
                 if accepted_marker == &report.accepted_marker
                     && current_marker.commit_sequence == accepted_marker.commit_sequence =>
             {
-                *state = HandoverState::Complete;
+                self.handover = HandoverState::Complete;
                 Ok(UpgradeReply::HandoverFinalized(HandoverFinalization {
                     finalized_marker: report.accepted_marker,
                 }))
@@ -262,19 +284,14 @@ impl OrchestrateService {
         }
     }
 
-    fn restore_mirror(&self, payload: MirrorPayload) -> Result<UpgradeReply> {
+    fn restore_mirror(&mut self, payload: MirrorPayload) -> Result<UpgradeReply> {
         let component = payload.component.clone();
-        let state = self
-            .handover
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        if matches!(*state, HandoverState::Complete) {
+        if matches!(self.handover, HandoverState::Complete) {
             return Ok(reject_handover(
                 component,
                 HandoverRejectionReason::NotReady,
             ));
         }
-        drop(state);
 
         match self.restore_mirror_payload(&payload) {
             Ok(_) => Ok(UpgradeReply::MirrorAcknowledged(MirrorAcknowledgement {
@@ -294,15 +311,11 @@ impl OrchestrateService {
         }
     }
 
-    fn recover_handover(&self) -> Result<bool> {
-        let mut state = self
-            .handover
-            .lock()
-            .map_err(|_| Error::ServiceSequencePoisoned)?;
-        match &*state {
+    fn recover_handover(&mut self) -> Result<bool> {
+        match &self.handover {
             HandoverState::Active => Ok(true),
             HandoverState::Ready { .. } => {
-                *state = HandoverState::Active;
+                self.handover = HandoverState::Active;
                 Ok(true)
             }
             HandoverState::Complete => Ok(false),
