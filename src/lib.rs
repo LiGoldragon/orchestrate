@@ -25,8 +25,8 @@ pub use daemon::OrchestrateDaemon;
 pub use divergence::DivergenceLedger;
 pub use error::{Error, Result};
 pub use execution::{
-    MetaCommand, MetaCommandExecutor, MetaEffect, MetaLowering, OrdinaryCommand,
-    OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering,
+    MetaRequestExecution, OrchestrateNexusEngine, OrchestrateRequestExecution,
+    OrchestrateSemaEngine,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::LaneRegistry;

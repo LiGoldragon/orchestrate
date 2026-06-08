@@ -106,4 +106,16 @@ pub enum Error {
 
     #[error("executor did not commit the single operation")]
     ExecutorReplyNotCommitted,
+
+    #[error("schema bridge: {message}")]
+    SchemaBridge { message: String },
+
+    #[error("nexus replied on the {actual} tier while {expected} was expected")]
+    NexusReplyTierMismatch {
+        expected: &'static str,
+        actual: &'static str,
+    },
+
+    #[error("nexus did not produce a signal reply; action route: {route}")]
+    NexusDidNotReply { route: String },
 }

@@ -44,7 +44,7 @@ sockets. The workspace `tools/orchestrate` wrapper is a compatibility
 client for agents, not a second state owner and not the destination
 syntax.
 
-## Migration history - contract-local verbs (2026-05-19)
+## Migration history - contract-local verbs and generated execution
 
 The runtime consumes `signal-frame` contracts with public
 contract-local operation roots. The old public `SignalVerb` wrapper is
@@ -53,16 +53,22 @@ affirmed 2026-05-20 (per
 `~/primary/skills/component-triad.md` §"Verbs come in three layers"
 and
 `primary/reports/designer/246-v4-bundled-fix-deep-design-with-examples.md`),
-the runtime owns its typed Component Commands (Layer 2) that lower
-contract operations to executable form, and projects them to
-payloadless `signal-sema::SemaOperation` class labels (Layer 3) for
-cross-component observation via `ToSemaOperation`. Sema classes are
-observation-only; they do not carry executable payloads on the wire.
+the runtime owns its internal Nexus feature surface (Layer 2) and can
+project contract operations to payloadless `signal-sema::SemaOperation`
+class labels (Layer 3) for cross-component observation via
+`ToSemaOperation`. Sema classes are observation-only; they do not carry
+executable payloads on the wire.
 
-`OperationLowering` (or equivalent — likely renamed in the
-implementation work the operator is doing) is the runtime-owned
-translation point from contract operations to typed Component
-Commands.
+Execution now enters the generated Nexus/SEMA path. The ordinary and
+meta request handlers project public contract payloads into
+`schema::nexus::SignalInput`, drive
+`OrchestrateNexusEngine` through the generated `NexusEngine` trait,
+and delegate durable reads/writes to `OrchestrateSemaEngine` through
+the generated `SemaEngine` trait. The previous hand-written
+`signal-executor` lowering and command-executor implementation has
+been removed from the runtime dependency graph. `OperationLowering`
+remains only as an observation-classification helper for the current
+tests and compatibility vocabulary.
 
 The daemon/CLI boundary did not change: the CLI remains a thin
 NOTA-to-Signal adapter and the daemon remains the only process that

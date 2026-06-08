@@ -67,8 +67,13 @@ Synthesised from psyche statements; not embellished.*
 emits checked-in `src/schema/{nexus,sema,daemon}.rs` through
 `schema-rust-next`. The emitted daemon module uses
 `triad-runtime`'s multi-listener runtime for the ordinary and meta
-sockets. The hand-written runtime keeps the service, storage, lock-file
-projection, handover, and command execution logic.
+sockets. Runtime execution enters the generated Nexus/SEMA schema
+surface: ordinary and meta Signal inputs become `SignalArrived`
+Nexus work, Nexus commands SEMA writes/reads, and SEMA owns the
+storage-backed claim, lane, role, repository, activity, lock-file
+projection, and handover mutation surface. The old
+`signal-executor` lowering/command-executor path is no longer a
+runtime dependency.
 
 Lane definitions stay data, not closed role enums. The schema-backed
 runtime must preserve dynamic role registry persistence without baking

@@ -2,13 +2,13 @@ use meta_signal_orchestrate::{
     LaneRegistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
 };
 use orchestrate::{
-    Error, LaneAuthority, MetaCommand, MetaCommandExecutor, MetaEffect, MetaLowering,
-    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, OrdinaryCommand,
-    OrdinaryCommandExecutor, OrdinaryEffect, OrdinaryLowering, Role, RoleClaim, RoleName,
-    RoleToken, ScopeReason, ScopeReference, StoreLocation, TaskToken,
+    Error, LaneAuthority, MetaRequestExecution, OrchestrateLayout, OrchestrateNexusEngine,
+    OrchestrateReply, OrchestrateRequest, OrchestrateRequestExecution, OrchestrateSemaEngine,
+    OrchestrateService, Role, RoleClaim, RoleName, RoleToken, ScopeReason, ScopeReference,
+    StoreLocation, TaskToken,
 };
-use signal_executor::{CommandExecutor, Executor, Lowering, ObserverSet};
-use signal_frame::{AcceptedOutcome, Reply, RequestPayload, SubReply};
+use signal_frame::{AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, SubReply};
+use signal_orchestrate::Observation;
 use tempfile::TempDir;
 
 struct Fixture {
@@ -53,61 +53,24 @@ impl Fixture {
 struct DirectDependencyWitness;
 
 impl DirectDependencyWitness {
-    fn ordinary_lowering_is_signal_executor_lowering(lowering: &OrdinaryLowering) {
-        fn accepts<LoweringType>(_: &LoweringType)
+    fn nexus_engine_implements_generated_trait(engine: &mut OrchestrateNexusEngine<'_>) {
+        fn accepts<EngineType>(_: &mut EngineType)
         where
-            LoweringType: Lowering<
-                    Operation = OrchestrateRequest,
-                    Reply = OrchestrateReply,
-                    Command = OrdinaryCommand,
-                    ComponentEffect = OrdinaryEffect,
-                >,
+            EngineType: orchestrate::schema::nexus::NexusEngine,
         {
         }
 
-        accepts(lowering);
+        accepts(engine);
     }
 
-    fn meta_lowering_is_signal_executor_lowering(lowering: &MetaLowering) {
-        fn accepts<LoweringType>(_: &LoweringType)
+    fn sema_engine_implements_generated_trait(engine: &mut OrchestrateSemaEngine<'_>) {
+        fn accepts<EngineType>(_: &mut EngineType)
         where
-            LoweringType: Lowering<
-                    Operation = MetaOrchestrateRequest,
-                    Reply = MetaOrchestrateReply,
-                    Command = MetaCommand,
-                    ComponentEffect = MetaEffect,
-                >,
+            EngineType: orchestrate::schema::sema::SemaEngine,
         {
         }
 
-        accepts(lowering);
-    }
-
-    fn ordinary_executor_is_signal_executor_command_executor(
-        executor: &OrdinaryCommandExecutor<'_>,
-    ) {
-        fn accepts<ExecutorType>(_: &ExecutorType)
-        where
-            ExecutorType: CommandExecutor<
-                    Command = OrdinaryCommand,
-                    ComponentEffect = OrdinaryEffect,
-                    Error = Error,
-                >,
-        {
-        }
-
-        accepts(executor);
-    }
-
-    fn meta_executor_is_signal_executor_command_executor(executor: &MetaCommandExecutor<'_>) {
-        fn accepts<ExecutorType>(_: &ExecutorType)
-        where
-            ExecutorType:
-                CommandExecutor<Command = MetaCommand, ComponentEffect = MetaEffect, Error = Error>,
-        {
-        }
-
-        accepts(executor);
+        accepts(engine);
     }
 
     fn triad_runtime_workers_are_linked() {
@@ -158,17 +121,11 @@ fn orchestrate_cli_cannot_open_component_database() {
 #[test]
 fn orchestrate_direct_dependencies_have_type_level_witnesses() {
     let fixture = Fixture::new("orchestrate-direct-dependencies");
-    let ordinary_lowering = OrdinaryLowering;
-    let meta_lowering = MetaLowering;
-    let ordinary_executor = OrdinaryCommandExecutor::new(&fixture.service);
-    let meta_executor = MetaCommandExecutor::new(&fixture.service);
+    let mut nexus = OrchestrateNexusEngine::new(&fixture.service);
+    let mut sema = OrchestrateSemaEngine::new(&fixture.service);
 
-    DirectDependencyWitness::ordinary_lowering_is_signal_executor_lowering(&ordinary_lowering);
-    DirectDependencyWitness::meta_lowering_is_signal_executor_lowering(&meta_lowering);
-    DirectDependencyWitness::ordinary_executor_is_signal_executor_command_executor(
-        &ordinary_executor,
-    );
-    DirectDependencyWitness::meta_executor_is_signal_executor_command_executor(&meta_executor);
+    DirectDependencyWitness::nexus_engine_implements_generated_trait(&mut nexus);
+    DirectDependencyWitness::sema_engine_implements_generated_trait(&mut sema);
     DirectDependencyWitness::triad_runtime_workers_are_linked();
     DirectDependencyWitness::signal_frame_request_payloads_are_linked();
     DirectDependencyWitness::sema_engine_error_flows_through_component_error();
@@ -176,15 +133,11 @@ fn orchestrate_direct_dependencies_have_type_level_witnesses() {
 }
 
 #[test]
-fn ordinary_requests_execute_through_signal_executor() {
-    let fixture = Fixture::new("orchestrate-ordinary-executor");
-    let mut executor = Executor::new(
-        OrdinaryLowering,
-        OrdinaryCommandExecutor::new(&fixture.service),
-        ObserverSet::no_op(),
-    );
+fn ordinary_requests_execute_through_generated_nexus_engine() {
+    let fixture = Fixture::new("orchestrate-ordinary-nexus");
 
-    let reply = futures::executor::block_on(executor.execute(role_claim().into_request()));
+    let (reply, engine_error) =
+        OrchestrateRequestExecution::new(&fixture.service, role_claim().into_request()).execute();
 
     let Reply::Accepted {
         outcome: AcceptedOutcome::Committed,
@@ -198,23 +151,19 @@ fn ordinary_requests_execute_through_signal_executor() {
         panic!("expected claim acceptance");
     };
     assert_eq!(acceptance.role, role("operator"));
-    assert!(executor.take_last_engine_error().is_none());
+    assert!(engine_error.is_none());
 }
 
 #[test]
-fn meta_requests_execute_through_signal_executor() {
-    let fixture = Fixture::new("orchestrate-meta-executor");
-    let mut executor = Executor::new(
-        MetaLowering,
-        MetaCommandExecutor::new(&fixture.service),
-        ObserverSet::no_op(),
-    );
+fn meta_requests_execute_through_generated_nexus_engine() {
+    let fixture = Fixture::new("orchestrate-meta-nexus");
     let request = MetaOrchestrateRequest::Register(LaneRegistrationRequest {
         role: role_vector(&["Schema", "Designer"]),
         authority: LaneAuthority::Structural,
     });
 
-    let reply = futures::executor::block_on(executor.execute(request.into_request()));
+    let (reply, engine_error) =
+        MetaRequestExecution::new(&fixture.service, request.into_request()).execute();
 
     let Reply::Accepted {
         outcome: AcceptedOutcome::Committed,
@@ -232,7 +181,68 @@ fn meta_requests_execute_through_signal_executor() {
         registration.registration.lane.as_wire_token(),
         "schema-designer"
     );
-    assert!(executor.take_last_engine_error().is_none());
+    assert!(engine_error.is_none());
+}
+
+#[test]
+fn generated_nexus_path_rejects_multi_payload_atomic_batches_before_commit() {
+    let fixture = Fixture::new("orchestrate-nexus-multi-payload");
+    let request = Request::from_payloads(NonEmpty::from_head_and_tail(
+        role_claim(),
+        vec![role_claim()],
+    ));
+
+    let (reply, engine_error) =
+        OrchestrateRequestExecution::new(&fixture.service, request).execute();
+
+    let Reply::Accepted {
+        outcome: AcceptedOutcome::BatchAborted { .. },
+        per_operation,
+    } = reply
+    else {
+        panic!("expected batch-aborted generated nexus reply");
+    };
+    assert!(matches!(per_operation.into_head(), SubReply::Invalidated));
+    assert!(matches!(
+        engine_error,
+        Some(Error::UnsupportedAtomicBatch { operation_count: 2 })
+    ));
+
+    let OrchestrateReply::RoleSnapshot(snapshot) = fixture
+        .service
+        .handle(OrchestrateRequest::Observe(Observation::Roles))
+        .expect("roles observe")
+    else {
+        panic!("expected role snapshot");
+    };
+    let operator = snapshot
+        .roles
+        .into_iter()
+        .find(|status| status.role == role("operator"))
+        .expect("operator role exists");
+    assert!(
+        operator.claims.is_empty(),
+        "multi-payload batch must not commit the first claim before rejecting"
+    );
+}
+
+#[test]
+fn orchestrate_source_does_not_depend_on_old_executor() {
+    let sources = [
+        include_str!("../Cargo.toml"),
+        include_str!("../src/lib.rs"),
+        include_str!("../src/service.rs"),
+        include_str!("../src/execution.rs"),
+    ];
+    let hyphenated_name = ["signal", "executor"].join("-");
+    let module_name = ["signal", "executor"].join("_");
+
+    for source in sources {
+        assert!(
+            !source.contains(&hyphenated_name) && !source.contains(&module_name),
+            "orchestrate migrated execution must not name the old execution crate"
+        );
+    }
 }
 
 #[test]

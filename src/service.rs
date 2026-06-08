@@ -1,5 +1,4 @@
 use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest};
-use signal_executor::{Executor, ObserverSet};
 use signal_frame::{
     AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, RequestRejectionReason, SubReply,
 };
@@ -14,9 +13,9 @@ use std::sync::{Mutex, MutexGuard};
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LegacyLockImport, LockProjection, MetaCommandExecutor, MetaLowering, MirrorSnapshot,
-    MirrorVersions, OrchestrateLayout, OrchestrateTables, OrdinaryCommandExecutor,
-    OrdinaryLowering, Result, RoleRegistry, StoreLocation, StoredDivergence,
+    Error, LegacyLockImport, LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions,
+    OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables, Result, RoleRegistry,
+    StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
@@ -91,22 +90,14 @@ impl OrchestrateService {
         &self,
         request: Request<OrchestrateRequest>,
     ) -> (Reply<OrchestrateReply>, Option<Error>) {
-        let command_executor = OrdinaryCommandExecutor::new(self);
-        let mut executor = Executor::new(OrdinaryLowering, command_executor, ObserverSet::no_op());
-        let reply = futures::executor::block_on(executor.execute(request));
-        let engine_error = executor.take_last_engine_error();
-        (reply, engine_error)
+        OrchestrateRequestExecution::new(self, request).execute()
     }
 
     fn execute_meta_request(
         &self,
         request: Request<MetaOrchestrateRequest>,
     ) -> (Reply<MetaOrchestrateReply>, Option<Error>) {
-        let command_executor = MetaCommandExecutor::new(self);
-        let mut executor = Executor::new(MetaLowering, command_executor, ObserverSet::no_op());
-        let reply = futures::executor::block_on(executor.execute(request));
-        let engine_error = executor.take_last_engine_error();
-        (reply, engine_error)
+        MetaRequestExecution::new(self, request).execute()
     }
 
     pub fn roles(&self) -> Result<Vec<crate::StoredRole>> {
