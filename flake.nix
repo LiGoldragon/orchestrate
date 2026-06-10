@@ -79,7 +79,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test daemon_cli";
+              cargoTestExtraArgs = "--features nota-text --test daemon_cli";
             }
           );
           test-doc = craneLib.cargoTest (

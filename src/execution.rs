@@ -71,6 +71,8 @@ impl OrchestrateService {
 }
 
 impl<'service> OrchestrateNexusEngine<'service> {
+    const MAXIMUM_NEXUS_STEPS: usize = 8;
+
     pub fn new(service: &'service mut OrchestrateService) -> Self {
         Self {
             sema: OrchestrateSemaEngine::new(service),
@@ -83,6 +85,75 @@ impl<'service> OrchestrateNexusEngine<'service> {
         self.last_error
             .take()
             .or_else(|| self.sema.take_last_error())
+    }
+
+    async fn drive_until_reply(
+        &mut self,
+        input: nexus_schema::SignalInput,
+    ) -> Result<nexus_schema::SignalOutput> {
+        let mut work =
+            nexus_schema::NexusWork::signal_arrived(input).with_origin_route(Self::origin_route());
+        for _step in 0..Self::MAXIMUM_NEXUS_STEPS {
+            let origin_route = work.origin_route();
+            let action = nexus_schema::NexusEngine::execute(self, work)
+                .await
+                .into_root();
+            match action {
+                nexus_schema::NexusAction::ReplyToSignal(reply) => {
+                    return Ok(reply.into_payload());
+                }
+                nexus_schema::NexusAction::CommandSemaWrite(command) => {
+                    let output = self.apply_sema_write(origin_route, command.into_payload());
+                    work = nexus_schema::NexusWork::sema_write_completed(output)
+                        .with_origin_route(origin_route);
+                }
+                nexus_schema::NexusAction::CommandSemaRead(command) => {
+                    let output = self.observe_sema_read(origin_route, command.into_payload());
+                    work = nexus_schema::NexusWork::sema_read_completed(output)
+                        .with_origin_route(origin_route);
+                }
+                nexus_schema::NexusAction::Continue(next) => {
+                    work = next.into_payload().with_origin_route(origin_route);
+                }
+            }
+        }
+        Ok(self.rejection_output())
+    }
+
+    fn apply_sema_write(
+        &mut self,
+        origin_route: nexus_schema::OriginRoute,
+        input: sema_schema::SemaWriteInput,
+    ) -> sema_schema::SemaWriteOutput {
+        let output = sema_schema::SemaEngine::apply(
+            &mut self.sema,
+            input.with_origin_route(Self::sema_origin_route(origin_route)),
+        )
+        .into_root();
+        if let Some(error) = self.sema.take_last_error() {
+            self.last_error = Some(error);
+        }
+        output
+    }
+
+    fn observe_sema_read(
+        &self,
+        origin_route: nexus_schema::OriginRoute,
+        input: sema_schema::SemaReadInput,
+    ) -> sema_schema::SemaReadOutput {
+        sema_schema::SemaEngine::observe(
+            &self.sema,
+            input.with_origin_route(Self::sema_origin_route(origin_route)),
+        )
+        .into_root()
+    }
+
+    fn origin_route() -> nexus_schema::OriginRoute {
+        nexus_schema::OriginRoute::new(0)
+    }
+
+    fn sema_origin_route(origin_route: nexus_schema::OriginRoute) -> sema_schema::OriginRoute {
+        sema_schema::OriginRoute::new(origin_route.payload())
     }
 
     fn project_signal_arrived(
@@ -188,52 +259,20 @@ impl sema_schema::SemaEngine for OrchestrateSemaEngine<'_> {
 }
 
 impl nexus_schema::NexusEngine for OrchestrateNexusEngine<'_> {
-    async fn apply_sema_write(
-        &mut self,
-        origin_route: nexus_schema::OriginRoute,
-        input: nexus_schema::CommandSemaWrite,
-    ) -> nexus_schema::SemaWriteCompleted {
-        let sema_origin_route = sema_schema::OriginRoute(origin_route.0);
-        let output = sema_schema::SemaEngine::apply(
-            &mut self.sema,
-            input.with_origin_route(sema_origin_route),
-        )
-        .into_root();
-        if let Some(error) = self.sema.take_last_error() {
-            self.last_error = Some(error);
-        }
-        output
-    }
-
-    async fn observe_sema_read(
-        &mut self,
-        origin_route: nexus_schema::OriginRoute,
-        input: nexus_schema::CommandSemaRead,
-    ) -> nexus_schema::SemaReadCompleted {
-        let sema_origin_route = sema_schema::OriginRoute(origin_route.0);
-        sema_schema::SemaEngine::observe(&self.sema, input.with_origin_route(sema_origin_route))
-            .into_root()
-    }
-
-    fn budget_exhausted_reply(
-        &self,
-        _exhausted: triad_runtime::ContinuationExhausted,
-    ) -> nexus_schema::ReplyToSignal {
-        self.rejection_output()
-    }
-
     fn decide(
         &mut self,
         input: nexus_schema::nexus::Nexus<nexus_schema::nexus::Work>,
     ) -> nexus_schema::nexus::Nexus<nexus_schema::nexus::Action> {
         let origin_route = input.origin_route();
         let action = match input.into_root() {
-            nexus_schema::NexusWork::SignalArrived(input) => self.project_signal_arrived(input),
+            nexus_schema::NexusWork::SignalArrived(input) => {
+                self.project_signal_arrived(input.into_payload())
+            }
             nexus_schema::NexusWork::SemaReadCompleted(output) => {
-                self.project_sema_read_completed(output)
+                self.project_sema_read_completed(output.into_payload())
             }
             nexus_schema::NexusWork::SemaWriteCompleted(output) => {
-                self.project_sema_write_completed(output)
+                self.project_sema_write_completed(output.into_payload())
             }
         };
         action.with_origin_route(origin_route)
@@ -259,14 +298,14 @@ impl<'service> OrchestrateSemaEngine<'service> {
         // The actor mailbox serialises every write; no sequence lock is needed.
         match input {
             sema_schema::SemaWriteInput::ApplyOrdinary(input) => {
-                let request = input.project_into()?;
+                let request = input.into_payload().project_into()?;
                 let reply = self.apply_ordinary_request(request)?;
                 Ok(sema_schema::SemaWriteOutput::ordinary_applied(
                     reply.project_into()?,
                 ))
             }
             sema_schema::SemaWriteInput::ApplyMeta(input) => {
-                let request = input.project_into()?;
+                let request = input.into_payload().project_into()?;
                 let reply = self.apply_meta_request(request)?;
                 Ok(sema_schema::SemaWriteOutput::meta_applied(
                     reply.project_into()?,
@@ -462,20 +501,11 @@ impl<'service> OrchestrateRequestExecution<'service> {
         input: nexus_schema::SignalInput,
     ) -> Result<nexus_schema::SignalOutput> {
         let mut engine = OrchestrateNexusEngine::new(service);
-        let work = nexus_schema::NexusWork::signal_arrived(input)
-            .with_origin_route(nexus_schema::OriginRoute(0));
-        let action = nexus_schema::NexusEngine::execute(&mut engine, work)
-            .await
-            .into_root();
+        let output = engine.drive_until_reply(input).await;
         if let Some(error) = engine.take_last_error() {
             return Err(error);
         }
-        match action {
-            nexus_schema::NexusAction::ReplyToSignal(output) => Ok(output),
-            action => Err(Error::NexusDidNotReply {
-                route: format!("{:?}", action.route()),
-            }),
-        }
+        output
     }
 
     fn batch_aborted_reply() -> Reply<ordinary_contract::OrchestrateReply> {
@@ -534,20 +564,11 @@ impl<'service> MetaRequestExecution<'service> {
         input: nexus_schema::SignalInput,
     ) -> Result<nexus_schema::SignalOutput> {
         let mut engine = OrchestrateNexusEngine::new(service);
-        let work = nexus_schema::NexusWork::signal_arrived(input)
-            .with_origin_route(nexus_schema::OriginRoute(0));
-        let action = nexus_schema::NexusEngine::execute(&mut engine, work)
-            .await
-            .into_root();
+        let output = engine.drive_until_reply(input).await;
         if let Some(error) = engine.take_last_error() {
             return Err(error);
         }
-        match action {
-            nexus_schema::NexusAction::ReplyToSignal(output) => Ok(output),
-            action => Err(Error::NexusDidNotReply {
-                route: format!("{:?}", action.route()),
-            }),
-        }
+        output
     }
 
     fn batch_aborted_reply() -> Reply<meta_contract::MetaOrchestrateReply> {
@@ -567,7 +588,9 @@ struct SchemaFailure {
 impl SchemaFailure {
     fn new() -> Self {
         Self {
-            detail: "orchestrate nexus runner could not produce a committed reply".to_string(),
+            detail: ordinary_schema::ScopeReason::new(
+                "orchestrate nexus runner could not produce a committed reply",
+            ),
         }
     }
 
@@ -612,6 +635,31 @@ impl ProjectInto<String> for ordinary_contract::RoleIdentifier {
     }
 }
 
+impl ProjectInto<ordinary_schema::RoleIdentifier> for ordinary_contract::RoleIdentifier {
+    fn project_into(self) -> Result<ordinary_schema::RoleIdentifier> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::RoleIdentifier::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RoleIdentifier> for ordinary_schema::RoleIdentifier {
+    fn project_into(self) -> Result<ordinary_contract::RoleIdentifier> {
+        self.into_payload().project_into()
+    }
+}
+
+impl ProjectInto<ordinary_schema::RoleName> for ordinary_contract::RoleIdentifier {
+    fn project_into(self) -> Result<ordinary_schema::RoleName> {
+        Ok(ordinary_schema::RoleName::new(self.project_into()?))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RoleIdentifier> for ordinary_schema::RoleName {
+    fn project_into(self) -> Result<ordinary_contract::RoleIdentifier> {
+        self.into_payload().project_into()
+    }
+}
+
 impl ProjectInto<ordinary_contract::RoleIdentifier> for String {
     fn project_into(self) -> Result<ordinary_contract::RoleIdentifier> {
         ordinary_contract::RoleIdentifier::from_wire_token(self).map_err(Error::SignalOrchestrate)
@@ -621,6 +669,19 @@ impl ProjectInto<ordinary_contract::RoleIdentifier> for String {
 impl ProjectInto<String> for ordinary_contract::RoleToken {
     fn project_into(self) -> Result<String> {
         Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::RoleToken> for ordinary_contract::RoleToken {
+    fn project_into(self) -> Result<ordinary_schema::RoleToken> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::RoleToken::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RoleToken> for ordinary_schema::RoleToken {
+    fn project_into(self) -> Result<ordinary_contract::RoleToken> {
+        self.into_payload().project_into()
     }
 }
 
@@ -668,6 +729,19 @@ impl ProjectInto<ordinary_contract::LaneAuthority> for ordinary_schema::LaneAuth
 impl ProjectInto<String> for ordinary_contract::LaneIdentifier {
     fn project_into(self) -> Result<String> {
         Ok(self.as_wire_token().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneIdentifier> for ordinary_contract::LaneIdentifier {
+    fn project_into(self) -> Result<ordinary_schema::LaneIdentifier> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::LaneIdentifier::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneIdentifier> for ordinary_schema::LaneIdentifier {
+    fn project_into(self) -> Result<ordinary_contract::LaneIdentifier> {
+        self.into_payload().project_into()
     }
 }
 
@@ -721,6 +795,19 @@ impl ProjectInto<String> for ordinary_contract::WirePath {
     }
 }
 
+impl ProjectInto<ordinary_schema::WirePath> for ordinary_contract::WirePath {
+    fn project_into(self) -> Result<ordinary_schema::WirePath> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::WirePath::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WirePath> for ordinary_schema::WirePath {
+    fn project_into(self) -> Result<ordinary_contract::WirePath> {
+        self.into_payload().project_into()
+    }
+}
+
 impl ProjectInto<ordinary_contract::WirePath> for String {
     fn project_into(self) -> Result<ordinary_contract::WirePath> {
         ordinary_contract::WirePath::from_absolute_path(self).map_err(Error::SignalOrchestrate)
@@ -733,6 +820,19 @@ impl ProjectInto<String> for ordinary_contract::TaskToken {
     }
 }
 
+impl ProjectInto<ordinary_schema::TaskToken> for ordinary_contract::TaskToken {
+    fn project_into(self) -> Result<ordinary_schema::TaskToken> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::TaskToken::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::TaskToken> for ordinary_schema::TaskToken {
+    fn project_into(self) -> Result<ordinary_contract::TaskToken> {
+        self.into_payload().project_into()
+    }
+}
+
 impl ProjectInto<ordinary_contract::TaskToken> for String {
     fn project_into(self) -> Result<ordinary_contract::TaskToken> {
         ordinary_contract::TaskToken::from_wire_token(self).map_err(Error::SignalOrchestrate)
@@ -742,6 +842,19 @@ impl ProjectInto<ordinary_contract::TaskToken> for String {
 impl ProjectInto<String> for ordinary_contract::ScopeReason {
     fn project_into(self) -> Result<String> {
         Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::ScopeReason> for ordinary_contract::ScopeReason {
+    fn project_into(self) -> Result<ordinary_schema::ScopeReason> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::ScopeReason::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::ScopeReason> for ordinary_schema::ScopeReason {
+    fn project_into(self) -> Result<ordinary_contract::ScopeReason> {
+        self.into_payload().project_into()
     }
 }
 
@@ -786,6 +899,32 @@ impl ProjectInto<u64> for ordinary_contract::TimestampNanos {
 impl ProjectInto<ordinary_contract::TimestampNanos> for u64 {
     fn project_into(self) -> Result<ordinary_contract::TimestampNanos> {
         Ok(ordinary_contract::TimestampNanos::new(self))
+    }
+}
+
+impl ProjectInto<ordinary_schema::TimestampNanos> for ordinary_contract::TimestampNanos {
+    fn project_into(self) -> Result<ordinary_schema::TimestampNanos> {
+        Ok(ordinary_schema::TimestampNanos::new(self.value()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::TimestampNanos> for ordinary_schema::TimestampNanos {
+    fn project_into(self) -> Result<ordinary_contract::TimestampNanos> {
+        Ok(ordinary_contract::TimestampNanos::new(self.into_payload()))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ObservationToken> for ordinary_contract::ObservationToken {
+    fn project_into(self) -> Result<ordinary_schema::ObservationToken> {
+        Ok(ordinary_schema::ObservationToken::new(self.value()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::ObservationToken> for ordinary_schema::ObservationToken {
+    fn project_into(self) -> Result<ordinary_contract::ObservationToken> {
+        Ok(ordinary_contract::ObservationToken::new(
+            self.into_payload(),
+        ))
     }
 }
 
@@ -1013,9 +1152,7 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
                 ordinary_contract::OrchestrateRequest::Watch(payload.project_into()?)
             }
             ordinary_schema::Input::Unwatch(payload) => {
-                ordinary_contract::OrchestrateRequest::Unwatch(
-                    ordinary_contract::ObservationToken::new(payload),
-                )
+                ordinary_contract::OrchestrateRequest::Unwatch(payload.project_into()?)
             }
         })
     }
@@ -1463,28 +1600,32 @@ impl ProjectInto<ordinary_contract::PartialApplied> for ordinary_schema::Partial
 
 impl ProjectInto<ordinary_schema::ObservationOpened> for ordinary_contract::ObservationOpened {
     fn project_into(self) -> Result<ordinary_schema::ObservationOpened> {
-        Ok(ordinary_schema::ObservationOpened::new(self.token.value()))
+        Ok(ordinary_schema::ObservationOpened::new(
+            self.token.project_into()?,
+        ))
     }
 }
 
 impl ProjectInto<ordinary_contract::ObservationOpened> for ordinary_schema::ObservationOpened {
     fn project_into(self) -> Result<ordinary_contract::ObservationOpened> {
         Ok(ordinary_contract::ObservationOpened {
-            token: ordinary_contract::ObservationToken::new(self.into_payload()),
+            token: self.into_payload().project_into()?,
         })
     }
 }
 
 impl ProjectInto<ordinary_schema::ObservationClosed> for ordinary_contract::ObservationClosed {
     fn project_into(self) -> Result<ordinary_schema::ObservationClosed> {
-        Ok(ordinary_schema::ObservationClosed::new(self.token.value()))
+        Ok(ordinary_schema::ObservationClosed::new(
+            self.token.project_into()?,
+        ))
     }
 }
 
 impl ProjectInto<ordinary_contract::ObservationClosed> for ordinary_schema::ObservationClosed {
     fn project_into(self) -> Result<ordinary_contract::ObservationClosed> {
         Ok(ordinary_contract::ObservationClosed {
-            token: ordinary_contract::ObservationToken::new(self.into_payload()),
+            token: self.into_payload().project_into()?,
         })
     }
 }

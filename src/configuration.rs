@@ -61,7 +61,7 @@ impl DaemonConfiguration {
     }
 }
 
-impl triad_runtime::DaemonConfiguration for DaemonConfiguration {
+impl triad_runtime::BindingSurface for DaemonConfiguration {
     fn socket_path(&self) -> &Path {
         Path::new(self.ordinary_socket_path.as_str())
     }

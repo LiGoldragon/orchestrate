@@ -25,15 +25,17 @@ use signal_orchestrate::{
 };
 // The CLI now speaks the schema-emitted `Input`/`Output` wire (matching spirit),
 // so the end-to-end CLI tests build schema requests and decode schema replies.
-// In the schema projection the role/scope newtypes flatten to `String`, so
-// these requests are constructed from plain strings.
+// Schema values stay strongly newtyped at the wire edge; tests construct those
+// generated nouns directly and unwrap them only when checking filesystem paths.
 use meta_signal_orchestrate::schema::lib::{
     CreateRoleOrder as SchemaCreateRoleOrder, HarnessKind as SchemaHarnessKind,
     Input as MetaSchemaInput, Output as MetaSchemaOutput,
 };
 use signal_orchestrate::schema::lib::{
     Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
-    RoleClaim as SchemaRoleClaim, ScopeReference as SchemaScopeReference,
+    RoleClaim as SchemaRoleClaim, RoleIdentifier as SchemaRoleIdentifier,
+    RoleName as SchemaRoleName, ScopeReason as SchemaScopeReason,
+    ScopeReference as SchemaScopeReference, WirePath as SchemaWirePath,
 };
 use signal_version_handover::{
     CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
@@ -327,9 +329,11 @@ fn test_mirror_payload() -> MirrorPayload {
 fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let fixture = DaemonFixture::start("orchestrate-cli-role");
     let role = String::from("primary-orchestrate-daemon-zxq9-never-collide");
+    let schema_role_identifier = SchemaRoleIdentifier::new(role.clone());
+    let schema_role_name = SchemaRoleName::new(schema_role_identifier.clone());
 
     let output = fixture.cli(MetaSchemaInput::Create(SchemaCreateRoleOrder {
-        role: role.clone(),
+        role: schema_role_identifier.clone(),
         harness: SchemaHarnessKind::Codex,
     }));
     assert!(
@@ -341,9 +345,9 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let MetaSchemaOutput::RoleCreated(created) = reply else {
         panic!("expected role created, got {reply:?}");
     };
-    assert_eq!(created.role, role);
-    assert!(Path::new(created.report_repository_path.as_str()).is_dir());
-    assert!(Path::new(created.report_lane_path.as_str()).exists());
+    assert_eq!(created.role, schema_role_identifier);
+    assert!(Path::new(created.report_repository_path.payload().as_str()).is_dir());
+    assert!(Path::new(created.report_lane_path.payload().as_str()).exists());
 
     let output = fixture.cli(SchemaInput::Observe(SchemaObservation::Roles));
     assert!(
@@ -359,15 +363,15 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
         snapshot
             .roles
             .iter()
-            .any(|status| status.role == "primary-orchestrate-daemon-zxq9-never-collide")
+            .any(|status| status.role == schema_role_name)
     );
 
     let output = fixture.cli(SchemaInput::Claim(SchemaRoleClaim {
-        role,
-        scopes: vec![SchemaScopeReference::Path(String::from(
+        role: schema_role_name,
+        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/primary-orchestrate-daemon-zxq9-never-collide",
         ))],
-        reason: String::from("daemon CLI claim projection"),
+        reason: SchemaScopeReason::new("daemon CLI claim projection"),
     }));
     assert!(
         output.status.success(),
@@ -407,12 +411,14 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
     let system_operator = snapshot
         .roles
         .iter()
-        .find(|status| status.role == "system-operator")
+        .find(|status| {
+            status.role == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
+        })
         .expect("system-operator role");
     assert!(system_operator.claims.iter().any(|claim| matches!(
         &claim.scope,
         SchemaScopeReference::Path(path)
-            if path == "/git/github.com/LiGoldragon/orchestrate"
+            if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
     )));
 }
 

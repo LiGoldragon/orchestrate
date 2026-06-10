@@ -65,7 +65,7 @@ pub enum SemaReadOutput {
 #[rustfmt::skip]
 #[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ReadMiss(pub ReadMissReason);
+pub struct ReadMiss(ReadMissReason);
 
 #[rustfmt::skip]
 #[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
@@ -93,10 +93,14 @@ pub enum SemaWriteInput {
 }
 
 #[rustfmt::skip]
-pub type ApplyOrdinary = OrdinaryInput;
+#[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ApplyOrdinary(OrdinaryInput);
 
 #[rustfmt::skip]
-pub type ApplyMeta = MetaInput;
+#[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ApplyMeta(MetaInput);
 
 #[rustfmt::skip]
 #[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
@@ -110,7 +114,7 @@ pub enum SemaWriteOutput {
 #[rustfmt::skip]
 #[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct WriteRejected(pub WriteRejectionReason);
+pub struct WriteRejected(WriteRejectionReason);
 
 #[rustfmt::skip]
 #[cfg_attr(feature = "nota-text", derive(nota_next::NotaDecode, nota_next::NotaEncode))]
@@ -167,6 +171,44 @@ impl From<ReadMissReason> for ReadMiss {
 }
 
 #[rustfmt::skip]
+impl ApplyOrdinary {
+    pub fn new(payload: OrdinaryInput) -> Self {
+        Self(payload)
+    }
+    pub fn payload(&self) -> &OrdinaryInput {
+        &self.0
+    }
+    pub fn into_payload(self) -> OrdinaryInput {
+        self.0
+    }
+}
+#[rustfmt::skip]
+impl From<OrdinaryInput> for ApplyOrdinary {
+    fn from(payload: OrdinaryInput) -> Self {
+        Self::new(payload)
+    }
+}
+
+#[rustfmt::skip]
+impl ApplyMeta {
+    pub fn new(payload: MetaInput) -> Self {
+        Self(payload)
+    }
+    pub fn payload(&self) -> &MetaInput {
+        &self.0
+    }
+    pub fn into_payload(self) -> MetaInput {
+        self.0
+    }
+}
+#[rustfmt::skip]
+impl From<MetaInput> for ApplyMeta {
+    fn from(payload: MetaInput) -> Self {
+        Self::new(payload)
+    }
+}
+
+#[rustfmt::skip]
 impl WriteRejected {
     pub fn new(payload: WriteRejectionReason) -> Self {
         Self(payload)
@@ -216,11 +258,11 @@ impl SemaReadOutput {
 
 #[rustfmt::skip]
 impl SemaWriteInput {
-    pub fn apply_ordinary(payload: ApplyOrdinary) -> Self {
-        Self::ApplyOrdinary(payload)
+    pub fn apply_ordinary(payload: OrdinaryInput) -> Self {
+        Self::ApplyOrdinary(ApplyOrdinary::new(payload))
     }
-    pub fn apply_meta(payload: ApplyMeta) -> Self {
-        Self::ApplyMeta(payload)
+    pub fn apply_meta(payload: MetaInput) -> Self {
+        Self::ApplyMeta(ApplyMeta::new(payload))
     }
 }
 
@@ -303,6 +345,20 @@ impl From<ActivityList> for SemaReadOutput {
 impl From<ReadMiss> for SemaReadOutput {
     fn from(payload: ReadMiss) -> Self {
         Self::ReadMiss(payload)
+    }
+}
+
+#[rustfmt::skip]
+impl From<ApplyOrdinary> for SemaWriteInput {
+    fn from(payload: ApplyOrdinary) -> Self {
+        Self::ApplyOrdinary(payload)
+    }
+}
+
+#[rustfmt::skip]
+impl From<ApplyMeta> for SemaWriteInput {
+    fn from(payload: ApplyMeta) -> Self {
+        Self::ApplyMeta(payload)
     }
 }
 
@@ -435,6 +491,28 @@ impl ReadMissReason {
 #[rustfmt::skip]
 #[cfg(feature = "nota-text")]
 impl SemaWriteInput {
+    pub fn from_nota_block(block: &nota_next::Block) -> Result<Self, NotaDecodeError> {
+        <Self as NotaDecode>::from_nota_block(block)
+    }
+    pub fn to_nota(&self) -> String {
+        <Self as NotaEncode>::to_nota(self)
+    }
+}
+
+#[rustfmt::skip]
+#[cfg(feature = "nota-text")]
+impl ApplyOrdinary {
+    pub fn from_nota_block(block: &nota_next::Block) -> Result<Self, NotaDecodeError> {
+        <Self as NotaDecode>::from_nota_block(block)
+    }
+    pub fn to_nota(&self) -> String {
+        <Self as NotaEncode>::to_nota(self)
+    }
+}
+
+#[rustfmt::skip]
+#[cfg(feature = "nota-text")]
+impl ApplyMeta {
     pub fn from_nota_block(block: &nota_next::Block) -> Result<Self, NotaDecodeError> {
         <Self as NotaDecode>::from_nota_block(block)
     }
@@ -771,7 +849,16 @@ impl TraceEvent {
     PartialEq,
     Eq,
 )]
-pub struct OriginRoute(pub Integer);
+pub struct OriginRoute(Integer);
+#[rustfmt::skip]
+impl OriginRoute {
+    pub fn new(payload: Integer) -> Self {
+        Self(payload)
+    }
+    pub fn payload(&self) -> Integer {
+        self.0
+    }
+}
 #[rustfmt::skip]
 #[cfg(feature = "nota-text")]
 impl OriginRoute {

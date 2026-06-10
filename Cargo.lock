@@ -312,8 +312,8 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 
 [[package]]
 name = "meta-signal-orchestrate"
-version = "0.2.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#9da026c5d15a1408932897a165b2a4a17642a51f"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#49334f7ff5a1addab0e37cc73cc63621c4a81854"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -356,8 +356,8 @@ dependencies = [
 
 [[package]]
 name = "nota-next"
-version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#f0e435a629f8312b173b0f8564c17ee0a4001561"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#af6a2080d52b88ef5c6c89755ecfd3e818ffdea4"
 dependencies = [
  "nota-next-derive",
  "rkyv",
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 name = "nota-next-derive"
 version = "0.2.0"
-source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#f0e435a629f8312b173b0f8564c17ee0a4001561"
+source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#af6a2080d52b88ef5c6c89755ecfd3e818ffdea4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -381,7 +381,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "meta-signal-orchestrate",
  "nota-next",
@@ -544,8 +544,8 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "schema-next"
-version = "0.1.4"
-source = "git+https://github.com/LiGoldragon/schema-next.git?branch=main#77e71a410d03e3cc5c16cebd82202e712439e648"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/schema-next.git?branch=main#9a9b769bacd6f24517dce98d341ee63cbb332cf0"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -553,8 +553,8 @@ dependencies = [
 
 [[package]]
 name = "schema-rust-next"
-version = "0.5.1"
-source = "git+https://github.com/LiGoldragon/schema-rust-next.git?branch=main#7282446ed3f41663d9e9ef1753a9a2b3514cf829"
+version = "0.5.3"
+source = "git+https://github.com/LiGoldragon/schema-rust-next.git?branch=main#b1c36e1ab61756d4f6afc9fafe7b9c9a3ab68611"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -637,8 +637,8 @@ dependencies = [
 
 [[package]]
 name = "signal-frame"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#904bb2fdb0210bbeec9f9f4edc9f8b88341522a3"
+version = "0.2.1"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#166bda84dc63bf8461fff11a41c43d6a1c92a941"
 dependencies = [
  "nota-next",
  "paste",
@@ -649,8 +649,8 @@ dependencies = [
 
 [[package]]
 name = "signal-frame-macros"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#904bb2fdb0210bbeec9f9f4edc9f8b88341522a3"
+version = "0.1.1"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#166bda84dc63bf8461fff11a41c43d6a1c92a941"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -659,8 +659,8 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.2.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#9679f824ad8b5b8e23f4ca97e5d1f720b0de65a6"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#a7b221302b33fcb8526ef5a1e1f7f0f554dcb575"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -832,8 +832,8 @@ dependencies = [
 
 [[package]]
 name = "triad-runtime"
-version = "0.6.0"
-source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#ae2e81755f8f1536329f372bdcc78dbbcd065999"
+version = "0.6.1"
+source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#6ea831627d13793a4c42d7f9b9174b47279a9b2b"
 dependencies = [
  "kameo",
  "rustix",
