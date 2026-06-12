@@ -145,13 +145,20 @@ impl DaemonFixture {
         let _ = self.child.wait();
     }
 
-    fn cli(&self, request: impl NotaEncode) -> std::process::Output {
+    fn ordinary_cli(&self, request: impl NotaEncode) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_orchestrate"))
             .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
+            .arg(encode_nota(&request))
+            .output()
+            .expect("ordinary cli output")
+    }
+
+    fn meta_cli(&self, request: impl NotaEncode) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_meta-orchestrate"))
             .env("PERSONA_ORCHESTRATE_META_SOCKET", &self.meta_socket)
             .arg(encode_nota(&request))
             .output()
-            .expect("cli output")
+            .expect("meta cli output")
     }
 }
 
@@ -332,7 +339,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let schema_role_identifier = SchemaRoleIdentifier::new(role.clone());
     let schema_role_name = SchemaRoleName::new(schema_role_identifier.clone());
 
-    let output = fixture.cli(MetaSchemaInput::Create(SchemaCreateRoleOrder {
+    let output = fixture.meta_cli(MetaSchemaInput::Create(SchemaCreateRoleOrder {
         role: schema_role_identifier.clone(),
         harness: SchemaHarnessKind::Codex,
     }));
@@ -349,7 +356,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     assert!(Path::new(created.report_repository_path.payload().as_str()).is_dir());
     assert!(Path::new(created.report_lane_path.payload().as_str()).exists());
 
-    let output = fixture.cli(SchemaInput::Observe(SchemaObservation::Roles));
+    let output = fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::Roles));
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -366,7 +373,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
             .any(|status| status.role == schema_role_name)
     );
 
-    let output = fixture.cli(SchemaInput::Claim(SchemaRoleClaim {
+    let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
         role: schema_role_name,
         scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/primary-orchestrate-daemon-zxq9-never-collide",
@@ -398,7 +405,7 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
         )],
     );
 
-    let output = fixture.cli(SchemaInput::Observe(SchemaObservation::Roles));
+    let output = fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::Roles));
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -654,4 +661,28 @@ fn cli_rejects_flag_style_argument_shapes() {
         .output()
         .expect("cli output");
     assert!(!output.status.success());
+}
+
+#[test]
+fn component_clis_reject_the_other_contract_tier() {
+    let meta_request = MetaSchemaInput::Create(SchemaCreateRoleOrder {
+        role: SchemaRoleIdentifier::new("wrong-tier-role"),
+        harness: SchemaHarnessKind::Codex,
+    });
+    let ordinary_output = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
+        .arg(encode_nota(&meta_request))
+        .output()
+        .expect("ordinary cli output");
+    assert!(!ordinary_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&ordinary_output.stderr).contains("invalid ordinary orchestrate")
+    );
+
+    let ordinary_request = SchemaInput::Observe(SchemaObservation::Roles);
+    let meta_output = Command::new(env!("CARGO_BIN_EXE_meta-orchestrate"))
+        .arg(encode_nota(&ordinary_request))
+        .output()
+        .expect("meta cli output");
+    assert!(!meta_output.status.success());
+    assert!(String::from_utf8_lossy(&meta_output.stderr).contains("invalid meta orchestrate"));
 }

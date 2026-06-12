@@ -5,9 +5,9 @@ Synthesised from psyche statements; not embellished.*
 
 ## Goals
 
-- `orchestrate` is a real triad component: daemon, thin CLI,
-  ordinary `signal-orchestrate` contract, and meta-signal
-  `meta-signal-orchestrate` contract.
+- `orchestrate` is a real triad component: daemon, ordinary thin CLI
+  named `orchestrate` for `signal-orchestrate`, and meta-policy thin
+  CLI named `meta-orchestrate` for `meta-signal-orchestrate`.
 - `orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.
@@ -16,10 +16,11 @@ Synthesised from psyche statements; not embellished.*
   `orchestrate` daemon when needed, sends typed Signal requests, and
   treats lock files only as daemon projections.
 - The replacement target is **not** legacy argv compatibility. The
-  real component replacement is `orchestrate` as a one-argument NOTA
-  client talking to `orchestrate-daemon`; callers should migrate to
-  NOTA operations rather than preserve `claim/release/status` argv
-  grammar.
+  real component replacement is the two one-argument NOTA clients
+  talking to `orchestrate-daemon`: `orchestrate` for ordinary working
+  operations and `meta-orchestrate` for meta-policy operations. Callers
+  should migrate to NOTA operations rather than preserve
+  `claim/release/status` argv grammar.
 - The immediate MVP should create dynamic roles named by the work they
   own, create report lanes for those roles, and track enough typed
   claim state to replace fixed assistant-lane lock files.

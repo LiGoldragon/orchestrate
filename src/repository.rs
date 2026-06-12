@@ -30,7 +30,7 @@ impl<'tables> RepositoryRegistry<'tables> {
             let path = entry.path();
             let link_path = self.layout.workspace_repository_link_path(&name);
             if !link_path.exists() {
-                create_repository_link(&path, &link_path)?;
+                Self::create_repository_link(&path, &link_path)?;
             }
             repositories.push(StoredRepository::new(name, wire_path(&path)?, refreshed_at));
         }
@@ -43,20 +43,20 @@ impl<'tables> RepositoryRegistry<'tables> {
             },
         ))
     }
-}
 
-#[cfg(unix)]
-fn create_repository_link(
-    repository_path: &std::path::Path,
-    link_path: &std::path::Path,
-) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(repository_path, link_path)
-}
+    #[cfg(unix)]
+    fn create_repository_link(
+        repository_path: &std::path::Path,
+        link_path: &std::path::Path,
+    ) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(repository_path, link_path)
+    }
 
-#[cfg(not(unix))]
-fn create_repository_link(
-    repository_path: &std::path::Path,
-    link_path: &std::path::Path,
-) -> std::io::Result<()> {
-    std::fs::write(link_path, repository_path.display().to_string())
+    #[cfg(not(unix))]
+    fn create_repository_link(
+        repository_path: &std::path::Path,
+        link_path: &std::path::Path,
+    ) -> std::io::Result<()> {
+        std::fs::write(link_path, repository_path.display().to_string())
+    }
 }

@@ -61,7 +61,7 @@ impl OrchestrateService {
 
     pub async fn handle(&mut self, request: OrchestrateRequest) -> Result<OrchestrateReply> {
         let (reply, engine_error) = self.execute_request(request.into_request()).await;
-        first_committed_payload(reply, engine_error)
+        Self::first_committed_payload(reply, engine_error)
     }
 
     pub async fn handle_meta(
@@ -69,7 +69,7 @@ impl OrchestrateService {
         request: MetaOrchestrateRequest,
     ) -> Result<MetaOrchestrateReply> {
         let (reply, engine_error) = self.execute_meta_request(request.into_request()).await;
-        first_committed_payload(reply, engine_error)
+        Self::first_committed_payload(reply, engine_error)
     }
 
     pub async fn handle_request(
@@ -250,11 +250,11 @@ impl OrchestrateService {
                     accepted_marker: current_marker,
                 }))
             }
-            HandoverState::Active => Ok(reject_handover(
+            HandoverState::Active => Ok(Self::reject_handover(
                 report.component,
                 HandoverRejectionReason::CommitSequenceAdvanced,
             )),
-            HandoverState::Ready { .. } | HandoverState::Complete => Ok(reject_handover(
+            HandoverState::Ready { .. } | HandoverState::Complete => Ok(Self::reject_handover(
                 report.component,
                 HandoverRejectionReason::AlreadyInHandover,
             )),
@@ -273,11 +273,11 @@ impl OrchestrateService {
                     finalized_marker: report.accepted_marker,
                 }))
             }
-            HandoverState::Ready { .. } => Ok(reject_handover(
+            HandoverState::Ready { .. } => Ok(Self::reject_handover(
                 report.component,
                 HandoverRejectionReason::CommitSequenceAdvanced,
             )),
-            HandoverState::Active | HandoverState::Complete => Ok(reject_handover(
+            HandoverState::Active | HandoverState::Complete => Ok(Self::reject_handover(
                 report.component,
                 HandoverRejectionReason::NotReady,
             )),
@@ -287,7 +287,7 @@ impl OrchestrateService {
     fn restore_mirror(&mut self, payload: MirrorPayload) -> Result<UpgradeReply> {
         let component = payload.component.clone();
         if matches!(self.handover, HandoverState::Complete) {
-            return Ok(reject_handover(
+            return Ok(Self::reject_handover(
                 component,
                 HandoverRejectionReason::NotReady,
             ));
@@ -303,7 +303,7 @@ impl OrchestrateService {
                 | Error::MirrorKindMismatch { .. }
                 | Error::MirrorTargetVersionMismatch { .. }
                 | Error::MirrorArchiveDecode { .. },
-            ) => Ok(reject_handover(
+            ) => Ok(Self::reject_handover(
                 component,
                 HandoverRejectionReason::SchemaMismatch,
             )),
@@ -321,30 +321,30 @@ impl OrchestrateService {
             HandoverState::Complete => Ok(false),
         }
     }
-}
 
-fn reject_handover(component: ComponentName, reason: HandoverRejectionReason) -> UpgradeReply {
-    UpgradeReply::HandoverRejected(HandoverRejection { component, reason })
-}
+    fn reject_handover(component: ComponentName, reason: HandoverRejectionReason) -> UpgradeReply {
+        UpgradeReply::HandoverRejected(HandoverRejection { component, reason })
+    }
 
-fn first_committed_payload<Payload>(
-    reply: Reply<Payload>,
-    engine_error: Option<Error>,
-) -> Result<Payload> {
-    match reply {
-        Reply::Accepted {
-            outcome: AcceptedOutcome::Committed,
-            per_operation,
-        } => match per_operation.into_head() {
-            SubReply::Ok(payload) => Ok(payload),
-            SubReply::Invalidated | SubReply::Failed { .. } | SubReply::Skipped => {
-                Err(Error::ExecutorReplyNotCommitted)
-            }
-        },
-        Reply::Accepted { .. } => match engine_error {
-            Some(error) => Err(error),
-            None => Err(Error::ExecutorReplyNotCommitted),
-        },
-        Reply::Rejected { reason } => Err(Error::ExecutorReplyRejected { reason }),
+    fn first_committed_payload<Payload>(
+        reply: Reply<Payload>,
+        engine_error: Option<Error>,
+    ) -> Result<Payload> {
+        match reply {
+            Reply::Accepted {
+                outcome: AcceptedOutcome::Committed,
+                per_operation,
+            } => match per_operation.into_head() {
+                SubReply::Ok(payload) => Ok(payload),
+                SubReply::Invalidated | SubReply::Failed { .. } | SubReply::Skipped => {
+                    Err(Error::ExecutorReplyNotCommitted)
+                }
+            },
+            Reply::Accepted { .. } => match engine_error {
+                Some(error) => Err(error),
+                None => Err(Error::ExecutorReplyNotCommitted),
+            },
+            Reply::Rejected { reason } => Err(Error::ExecutorReplyRejected { reason }),
+        }
     }
 }

@@ -45,27 +45,40 @@
           inherit src;
           strictDeps = true;
         };
-        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+        packageArgs = commonArgs // {
+          cargoExtraArgs = "--features nota-text";
+        };
+        cargoArtifacts = craneLib.buildDepsOnly packageArgs;
       in
       {
-        packages.default = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        packages.default = craneLib.buildPackage (
+          packageArgs
+          // {
+            inherit cargoArtifacts;
+            meta.mainProgram = "orchestrate";
+          }
+        );
         checks = {
-          build = craneLib.cargoBuild (commonArgs // { inherit cargoArtifacts; });
+          build = craneLib.cargoBuild (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoExtraArgs = "--features nota-text --all-targets";
+            }
+          );
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
           test-dynamic-role-creation = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs =
-                "--test ledger dynamic_role_creation_creates_report_lane_and_lock_identity";
+              cargoTestExtraArgs = "--test ledger dynamic_role_creation_creates_report_lane_and_lock_identity";
             }
           );
           test-repository-refresh = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs =
-                "--test ledger repository_refresh_indexes_local_checkouts_and_workspace_links";
+              cargoTestExtraArgs = "--test ledger repository_refresh_indexes_local_checkouts_and_workspace_links";
             }
           );
           test-cli-boundary = craneLib.cargoTest (
@@ -101,13 +114,21 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+              cargoClippyExtraArgs = "--features nota-text --all-targets -- -D warnings";
             }
           );
         };
         apps.default = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
+          name = "orchestrate";
+        };
+        apps.daemon = flake-utils.lib.mkApp {
+          drv = self.packages.${system}.default;
           name = "orchestrate-daemon";
+        };
+        apps.meta = flake-utils.lib.mkApp {
+          drv = self.packages.${system}.default;
+          name = "meta-orchestrate";
         };
         devShells.default = pkgs.mkShell {
           name = "orchestrate";

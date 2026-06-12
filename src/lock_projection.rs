@@ -22,7 +22,7 @@ impl<'tables> LockProjection<'tables> {
             let body = claims
                 .iter()
                 .filter(|claim| claim.role == role.role)
-                .map(lock_line)
+                .map(Self::lock_line)
                 .collect::<Vec<_>>()
                 .join("\n");
             let body = if body.is_empty() {
@@ -34,15 +34,19 @@ impl<'tables> LockProjection<'tables> {
         }
         Ok(())
     }
-}
 
-fn lock_line(claim: &StoredClaim) -> String {
-    format!("{} # {}", scope_text(&claim.scope), claim.reason.as_str())
-}
+    fn lock_line(claim: &StoredClaim) -> String {
+        format!(
+            "{} # {}",
+            Self::scope_text(&claim.scope),
+            claim.reason.as_str()
+        )
+    }
 
-fn scope_text(scope: &ScopeReference) -> String {
-    match scope {
-        ScopeReference::Path(path) => path.as_str().to_string(),
-        ScopeReference::Task(task) => format!("[{}]", task.as_str()),
+    fn scope_text(scope: &ScopeReference) -> String {
+        match scope {
+            ScopeReference::Path(path) => path.as_str().to_string(),
+            ScopeReference::Task(task) => format!("[{}]", task.as_str()),
+        }
     }
 }

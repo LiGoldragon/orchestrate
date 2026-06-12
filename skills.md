@@ -9,6 +9,10 @@ Rules for work here:
   remains the transitional task substrate.
 - Keep runtime message delivery in `persona-router`.
 - Keep harness lifecycle in `persona-harness`.
+- Keep the ordinary and meta policy clients separate: `orchestrate`
+  accepts `signal-orchestrate` NOTA and `meta-orchestrate` accepts
+  `meta-signal-orchestrate` NOTA. Do not add tier auto-routing back to
+  either client.
 - This component owns **its own** `sema-engine` database file
   (`orchestrate.sema`). `OrchestrateService` serializes today's
   request handling; the orchestration state actor becomes the long-lived

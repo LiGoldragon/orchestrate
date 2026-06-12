@@ -87,7 +87,7 @@ impl<'tables> LaneRegistry<'tables> {
         let role_part = role
             .tokens()
             .iter()
-            .map(|token| pascal_to_kebab(token.as_str()))
+            .map(|token| Self::pascal_to_kebab(token.as_str()))
             .collect::<Vec<_>>()
             .join("-");
         let with_authority = match authority {
@@ -97,34 +97,34 @@ impl<'tables> LaneRegistry<'tables> {
         let lane = if prior_count == 0 {
             with_authority
         } else {
-            format!("{}-{with_authority}", ordinal_word(prior_count + 1)?)
+            format!("{}-{with_authority}", Self::ordinal_word(prior_count + 1)?)
         };
         Ok(LaneIdentifier::from_wire_token(lane)?)
     }
-}
 
-fn pascal_to_kebab(value: &str) -> String {
-    let mut rendered = String::new();
-    for (index, character) in value.chars().enumerate() {
-        if index > 0 && character.is_ascii_uppercase() {
-            rendered.push('-');
+    fn pascal_to_kebab(value: &str) -> String {
+        let mut rendered = String::new();
+        for (index, character) in value.chars().enumerate() {
+            if index > 0 && character.is_ascii_uppercase() {
+                rendered.push('-');
+            }
+            rendered.push(character.to_ascii_lowercase());
         }
-        rendered.push(character.to_ascii_lowercase());
+        rendered
     }
-    rendered
-}
 
-fn ordinal_word(ordinal: usize) -> Result<&'static str> {
-    match ordinal {
-        2 => Ok("second"),
-        3 => Ok("third"),
-        4 => Ok("fourth"),
-        5 => Ok("fifth"),
-        6 => Ok("sixth"),
-        7 => Ok("seventh"),
-        8 => Ok("eighth"),
-        9 => Ok("ninth"),
-        10 => Ok("tenth"),
-        _ => Err(Error::UnsupportedLaneOrdinal { ordinal }),
+    fn ordinal_word(ordinal: usize) -> Result<&'static str> {
+        match ordinal {
+            2 => Ok("second"),
+            3 => Ok("third"),
+            4 => Ok("fourth"),
+            5 => Ok("fifth"),
+            6 => Ok("sixth"),
+            7 => Ok("seventh"),
+            8 => Ok("eighth"),
+            9 => Ok("ninth"),
+            10 => Ok("tenth"),
+            _ => Err(Error::UnsupportedLaneOrdinal { ordinal }),
+        }
     }
 }

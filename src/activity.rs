@@ -72,7 +72,9 @@ impl<'filter> ActivityFilterMatch<'filter> {
         match self.filter {
             ActivityFilter::RoleFilter(role) => &activity.role == role,
             ActivityFilter::PathPrefix(prefix) => match &activity.scope {
-                ScopeReference::Path(path) => path_matches_prefix(path.as_str(), prefix.as_str()),
+                ScopeReference::Path(path) => {
+                    Self::path_matches_prefix(path.as_str(), prefix.as_str())
+                }
                 ScopeReference::Task(_) => false,
             },
             ActivityFilter::TaskToken(token) => match &activity.scope {
@@ -81,12 +83,12 @@ impl<'filter> ActivityFilterMatch<'filter> {
             },
         }
     }
-}
 
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    prefix == "/"
-        || path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|tail| tail.starts_with('/'))
+    fn path_matches_prefix(path: &str, prefix: &str) -> bool {
+        prefix == "/"
+            || path == prefix
+            || path
+                .strip_prefix(prefix)
+                .is_some_and(|tail| tail.starts_with('/'))
+    }
 }

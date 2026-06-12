@@ -7,8 +7,8 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > Status: the repo, ordinary contract, meta-signal contract, sema-backed
 > claim/activity store, dynamic role registry, raw role-creation path,
 > local repository-index refresh, triad-runtime multi-listener socket
-> runtime, bounded request workers, and thin CLI client exist. The CLI
-> has no direct-store path. Lock-file projection from daemon state
+> runtime, bounded request workers, and ordinary/meta thin CLI clients
+> exist. The CLIs have no direct-store path. Lock-file projection from daemon state
 > exists. Ordinary and meta daemon sockets validate the Signal
 > `ShortHeader` against the decoded request root before dispatch. The
 > runtime can now encode, validate, decode, and restore an orchestrate
@@ -23,8 +23,8 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > socket, and renders daemon-projected lock state. A managed user
 > service is still missing; the helper currently performs lazy daemon
 > startup. This helper is transitional only. The intended replacement
-> surface is the real component CLI with one NOTA argument, not an
-> argv-compatible clone of `tools/orchestrate`.
+> surface is the real component CLI pair with one NOTA argument each,
+> not an argv-compatible clone of `tools/orchestrate`.
 
 ## 0 - TL;DR
 
@@ -39,8 +39,9 @@ The current implemented slice is the usable triad skeleton: ordinary
 `signal-orchestrate` request/reply surface, meta-signal
 `meta-signal-orchestrate`, a daemon that owns the
 `orchestrate.sema` sema store, and a thin
-`orchestrate` CLI that sends Signal frames to the daemon
-sockets. The workspace `tools/orchestrate` wrapper is a compatibility
+`orchestrate` CLI for ordinary working operations plus a thin
+`meta-orchestrate` CLI for meta-policy operations. Both send Signal
+frames to the daemon sockets. The workspace `tools/orchestrate` wrapper is a compatibility
 client for agents, not a second state owner and not the destination
 syntax.
 
@@ -70,14 +71,15 @@ been removed from the runtime dependency graph. `OperationLowering`
 remains only as an observation-classification helper for the current
 tests and compatibility vocabulary.
 
-The daemon/CLI boundary did not change: the CLI remains a thin
-NOTA-to-Signal adapter and the daemon remains the only process that
-opens `orchestrate.sema`.
+The daemon/CLI boundary did not change: each CLI remains a thin
+NOTA-to-Signal adapter for one contract tier, and the daemon remains
+the only process that opens `orchestrate.sema`.
 
 ```mermaid
 flowchart TB
     mind["mind<br/>state + policy truth"]
-    cli["orchestrate CLI<br/>one NOTA request"]
+    cli["orchestrate CLI<br/>ordinary NOTA request"]
+    metacli["meta-orchestrate CLI<br/>meta NOTA request"]
     daemon["orchestrate daemon"]
     ordinary["signal-orchestrate<br/>ordinary peer surface"]
     meta["meta-signal-orchestrate<br/>meta-signal surface"]
@@ -86,7 +88,8 @@ flowchart TB
     harness["harness"]
     locks["orchestrate/*.lock<br/>temporary projection"]
 
-    cli -- "ordinary/meta Signal frames" --> daemon
+    cli -- "ordinary Signal frames" --> daemon
+    metacli -- "meta Signal frames" --> daemon
     daemon -- "ordinary surface" --> ordinary
     mind --> meta
     meta --> daemon
@@ -118,9 +121,12 @@ This runtime repo contains:
   `triad-runtime::MultiListenerDaemon`, handles requests on bounded
   workers, decodes Signal frames, dispatches to the service, validates
   frame short headers before dispatch, and writes Signal replies;
-- a thin CLI client that accepts one NOTA request argument, encodes it
-  as a Signal frame, and connects only to the `orchestrate`
-  daemon sockets.
+- an ordinary thin CLI client, `orchestrate`, that accepts one
+  `signal-orchestrate` NOTA request argument, encodes it as a Signal
+  frame, and connects only to the ordinary daemon socket;
+- a meta-policy thin CLI client, `meta-orchestrate`, that accepts one
+  `meta-signal-orchestrate` NOTA request argument, encodes it as a
+  Signal frame, and connects only to the meta daemon socket.
 - a Mirror snapshot layer for version handover: `src/handover.rs`
   captures active claims and lane registrations, archives them as the
   payload bytes in `signal-version-handover::MirrorPayload`, validates
@@ -139,6 +145,8 @@ The full component surface is:
 orchestrate/
   src/lib.rs
   src/main.rs
+  src/bin/orchestrate.rs
+  src/bin/meta_orchestrate.rs
   bootstrap-policy.nota
 signal-orchestrate/
 meta-signal-orchestrate/
