@@ -370,7 +370,7 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#9e0aff9c7603861eae7c830dd7612c513acb590b"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#45036020b6f971141a6466bc885c60b224f6b2a7"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -612,7 +612,7 @@ dependencies = [
 [[package]]
 name = "schema-rust-next"
 version = "0.5.3"
-source = "git+https://github.com/LiGoldragon/schema-rust-next.git?branch=main#7c15bc3fa3d07f4710acca16f14eef1aa68b02dd"
+source = "git+https://github.com/LiGoldragon/schema-rust-next.git?branch=main#00763d676d63395d45b5f8a81dbf9a2287574ca9"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -635,7 +635,7 @@ dependencies = [
 [[package]]
 name = "sema-engine"
 version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/sema-engine.git#dbe29427d9a2c6c194909385485ad42b008048b8"
+source = "git+https://github.com/LiGoldragon/sema-engine.git#909eaa0b9f3c902662fb6081c050ae3337e578c9"
 dependencies = [
  "blake3",
  "rkyv",
@@ -725,7 +725,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#e17c5cd717975ffb05e59d98a7b3caba031dc2da"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#3211d981a23449788043422cf11b39ce48ae05d0"
 dependencies = [
  "nota-next",
  "rkyv",
