@@ -27,6 +27,9 @@ pub struct MirrorSnapshot {
 pub enum HandoverState {
     #[default]
     Active,
+    Mirrored {
+        restored_marker: HandoverMarker,
+    },
     Ready {
         accepted_marker: HandoverMarker,
     },

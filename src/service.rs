@@ -250,7 +250,21 @@ impl OrchestrateService {
                     accepted_marker: current_marker,
                 }))
             }
+            HandoverState::Mirrored { restored_marker }
+                if current_marker.commit_sequence == restored_marker.commit_sequence =>
+            {
+                self.handover = HandoverState::Ready {
+                    accepted_marker: current_marker.clone(),
+                };
+                Ok(UpgradeReply::HandoverAccepted(HandoverAcceptance {
+                    accepted_marker: current_marker,
+                }))
+            }
             HandoverState::Active => Ok(Self::reject_handover(
+                report.component,
+                HandoverRejectionReason::CommitSequenceAdvanced,
+            )),
+            HandoverState::Mirrored { .. } => Ok(Self::reject_handover(
                 report.component,
                 HandoverRejectionReason::CommitSequenceAdvanced,
             )),
@@ -277,16 +291,18 @@ impl OrchestrateService {
                 report.component,
                 HandoverRejectionReason::CommitSequenceAdvanced,
             )),
-            HandoverState::Active | HandoverState::Complete => Ok(Self::reject_handover(
-                report.component,
-                HandoverRejectionReason::NotReady,
-            )),
+            HandoverState::Active | HandoverState::Mirrored { .. } | HandoverState::Complete => Ok(
+                Self::reject_handover(report.component, HandoverRejectionReason::NotReady),
+            ),
         }
     }
 
     fn restore_mirror(&mut self, payload: MirrorPayload) -> Result<UpgradeReply> {
         let component = payload.component.clone();
-        if matches!(self.handover, HandoverState::Complete) {
+        if matches!(
+            self.handover,
+            HandoverState::Ready { .. } | HandoverState::Complete
+        ) {
             return Ok(Self::reject_handover(
                 component,
                 HandoverRejectionReason::NotReady,
@@ -294,10 +310,16 @@ impl OrchestrateService {
         }
 
         match self.restore_mirror_payload(&payload) {
-            Ok(_) => Ok(UpgradeReply::MirrorAcknowledged(MirrorAcknowledgement {
-                component,
-                write_counter: self.tables.current_commit_sequence()?,
-            })),
+            Ok(_) => {
+                let restored_marker = self.handover_marker(component.clone())?;
+                self.handover = HandoverState::Mirrored {
+                    restored_marker: restored_marker.clone(),
+                };
+                Ok(UpgradeReply::MirrorAcknowledged(MirrorAcknowledgement {
+                    component,
+                    write_counter: restored_marker.write_counter,
+                }))
+            }
             Err(
                 Error::MirrorComponentMismatch { .. }
                 | Error::MirrorKindMismatch { .. }
@@ -314,7 +336,7 @@ impl OrchestrateService {
     fn recover_handover(&mut self) -> Result<bool> {
         match &self.handover {
             HandoverState::Active => Ok(true),
-            HandoverState::Ready { .. } => {
+            HandoverState::Mirrored { .. } | HandoverState::Ready { .. } => {
                 self.handover = HandoverState::Active;
                 Ok(true)
             }

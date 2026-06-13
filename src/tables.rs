@@ -1,6 +1,16 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sema_engine::{Engine, EngineOpen, SchemaVersion, StorageKernelTable as Table};
+use rkyv::api::high::HighDeserializer;
+use rkyv::bytecheck::CheckBytes;
+use rkyv::rancor::{self, Strategy};
+use rkyv::validation::Validator;
+use rkyv::validation::archive::ArchiveValidator;
+use rkyv::validation::shared::SharedValidator;
+use sema_engine::{
+    Engine, EngineOpen, FamilyName, KeyedAssertion, KeyedMutation, QueryPlan, RecordKey,
+    Retraction, SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
+    VersionedStoreName, VersioningPolicy,
+};
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, HarnessKind, LaneIdentifier,
     LaneRegistration, PartialApplied, RoleName, ScopeReason, ScopeReference, TimestampNanos,
@@ -9,21 +19,48 @@ use signal_orchestrate::{
 
 use crate::{Result, StoreLocation};
 
+trait OrchestrateStoredValue: sema_engine::EngineStoredValue
+where
+    Self::Archived: rkyv::Deserialize<Self, HighDeserializer<rancor::Error>>
+        + for<'validation> CheckBytes<
+            Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+        >,
+{
+}
+
+impl<RecordValue> OrchestrateStoredValue for RecordValue
+where
+    RecordValue: sema_engine::EngineStoredValue,
+    RecordValue::Archived: rkyv::Deserialize<RecordValue, HighDeserializer<rancor::Error>>
+        + for<'validation> CheckBytes<
+            Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+        >,
+{
+}
+
 const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(2);
 
-const CLAIMS: Table<&'static str, StoredClaim> = Table::new("claims");
-const ROLES: Table<&'static str, StoredRole> = Table::new("roles");
-const LANE_REGISTRY: Table<&'static str, LaneRegistration> = Table::new("lane_registry");
-const REPOSITORIES: Table<&'static str, StoredRepository> = Table::new("repositories");
-const ACTIVITIES: Table<u64, StoredActivity> = Table::new("activities");
-const ACTIVITY_NEXT_SLOT: Table<&'static str, u64> = Table::new("activity_next_slot");
+const CLAIMS: TableName = TableName::new("claims");
+const ROLES: TableName = TableName::new("roles");
+const LANE_REGISTRY: TableName = TableName::new("lane_registry");
+const REPOSITORIES: TableName = TableName::new("repositories");
+const ACTIVITIES: TableName = TableName::new("activities");
+const ACTIVITY_NEXT_SLOT: TableName = TableName::new("activity_next_slot");
 const ACTIVITY_NEXT_SLOT_KEY: &str = "next";
-const DIVERGENCES: Table<u64, StoredDivergence> = Table::new("divergences");
-const DIVERGENCE_NEXT_SLOT: Table<&'static str, u64> = Table::new("divergence_next_slot");
+const DIVERGENCES: TableName = TableName::new("divergences");
+const DIVERGENCE_NEXT_SLOT: TableName = TableName::new("divergence_next_slot");
 const DIVERGENCE_NEXT_SLOT_KEY: &str = "next";
 
 pub struct OrchestrateTables {
     engine: Engine,
+    claims: TableReference<StoredClaim>,
+    roles: TableReference<StoredRole>,
+    lane_registry: TableReference<LaneRegistration>,
+    repositories: TableReference<StoredRepository>,
+    activities: TableReference<StoredActivity>,
+    activity_next_slot: TableReference<u64>,
+    divergences: TableReference<StoredDivergence>,
+    divergence_next_slot: TableReference<u64>,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -68,53 +105,72 @@ pub struct StoredDivergence {
 
 impl OrchestrateTables {
     pub fn open(store: &StoreLocation) -> Result<Self> {
-        let engine = Engine::open(EngineOpen::new(store.as_path(), ORCHESTRATE_SCHEMA_VERSION))?;
-        engine.storage_kernel().write(|transaction| {
-            CLAIMS.ensure(transaction)?;
-            ROLES.ensure(transaction)?;
-            LANE_REGISTRY.ensure(transaction)?;
-            REPOSITORIES.ensure(transaction)?;
-            ACTIVITIES.ensure(transaction)?;
-            ACTIVITY_NEXT_SLOT.ensure(transaction)?;
-            DIVERGENCES.ensure(transaction)?;
-            DIVERGENCE_NEXT_SLOT.ensure(transaction)?;
-            Ok(())
-        })?;
-        Ok(Self { engine })
+        let mut engine = Engine::open(Self::engine_open(store))?;
+        let claims = engine.register_table(Self::family_descriptor(CLAIMS, "claim"))?;
+        let roles = engine.register_table(Self::family_descriptor(ROLES, "role"))?;
+        let lane_registry =
+            engine.register_table(Self::family_descriptor(LANE_REGISTRY, "lane-registry"))?;
+        let repositories =
+            engine.register_table(Self::family_descriptor(REPOSITORIES, "repository"))?;
+        let activities = engine.register_table(Self::family_descriptor(ACTIVITIES, "activity"))?;
+        let activity_next_slot =
+            engine.register_table(Self::family_descriptor(ACTIVITY_NEXT_SLOT, "activity-slot"))?;
+        let divergences =
+            engine.register_table(Self::family_descriptor(DIVERGENCES, "divergence"))?;
+        let divergence_next_slot = engine.register_table(Self::family_descriptor(
+            DIVERGENCE_NEXT_SLOT,
+            "divergence-slot",
+        ))?;
+        Ok(Self {
+            engine,
+            claims,
+            roles,
+            lane_registry,
+            repositories,
+            activities,
+            activity_next_slot,
+            divergences,
+            divergence_next_slot,
+        })
+    }
+
+    fn engine_open(store: &StoreLocation) -> EngineOpen {
+        EngineOpen::new(store.as_path(), ORCHESTRATE_SCHEMA_VERSION)
+            .with_versioning(Self::versioning_policy())
+    }
+
+    fn versioning_policy() -> VersioningPolicy {
+        VersioningPolicy::new(VersionedStoreName::new("orchestrate"))
+    }
+
+    fn family_descriptor<RecordValue>(
+        table: TableName,
+        family: &str,
+    ) -> TableDescriptor<RecordValue> {
+        TableDescriptor::new(
+            table,
+            FamilyName::new(family),
+            SchemaHash::for_label(format!(
+                "orchestrate-{family}-v{}",
+                ORCHESTRATE_SCHEMA_VERSION.value()
+            )),
+        )
     }
 
     pub fn claim_records(&self) -> Result<Vec<StoredClaim>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(CLAIMS
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_key, claim)| claim)
-                .collect())
-        })?)
+        self.records(self.claims)
     }
 
     pub fn role_records(&self) -> Result<Vec<StoredRole>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(ROLES
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_key, role)| role)
-                .collect())
-        })?)
+        self.records(self.roles)
     }
 
     pub fn role_record(&self, role: &RoleName) -> Result<Option<StoredRole>> {
-        Ok(self
-            .engine
-            .storage_kernel()
-            .read(|transaction| ROLES.get(transaction, role.as_wire_token()))?)
+        self.record(self.roles, role.as_wire_token())
     }
 
     pub fn insert_role(&self, role: &StoredRole) -> Result<()> {
-        self.engine.storage_kernel().write(|transaction| {
-            ROLES.insert(transaction, role.role.as_wire_token(), role)?;
-            Ok(())
-        })?;
+        self.upsert(self.roles, role.role.as_wire_token(), role)?;
         Ok(())
     }
 
@@ -126,35 +182,24 @@ impl OrchestrateTables {
     }
 
     pub fn remove_role(&self, role: &RoleName) -> Result<()> {
-        self.engine.storage_kernel().write(|transaction| {
-            ROLES.remove(transaction, role.as_wire_token())?;
-            Ok(())
-        })?;
+        self.remove_if_present(self.roles, role.as_wire_token())?;
         Ok(())
     }
 
     pub fn lane_records(&self) -> Result<Vec<LaneRegistration>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(LANE_REGISTRY
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_key, registration)| registration)
-                .collect())
-        })?)
+        self.records(self.lane_registry)
     }
 
     pub fn lane_record(&self, lane: &LaneIdentifier) -> Result<Option<LaneRegistration>> {
-        Ok(self
-            .engine
-            .storage_kernel()
-            .read(|transaction| LANE_REGISTRY.get(transaction, lane.as_wire_token()))?)
+        self.record(self.lane_registry, lane.as_wire_token())
     }
 
     pub fn insert_lane(&self, registration: &LaneRegistration) -> Result<()> {
-        self.engine.storage_kernel().write(|transaction| {
-            LANE_REGISTRY.insert(transaction, registration.lane.as_wire_token(), registration)?;
-            Ok(())
-        })?;
+        self.upsert(
+            self.lane_registry,
+            registration.lane.as_wire_token(),
+            registration,
+        )?;
         Ok(())
     }
 
@@ -164,38 +209,22 @@ impl OrchestrateTables {
             .into_iter()
             .map(|registration| registration.lane)
             .collect::<Vec<_>>();
-        self.engine.storage_kernel().write(|transaction| {
-            for lane in existing {
-                LANE_REGISTRY.remove(transaction, lane.as_wire_token())?;
-            }
-            for registration in lanes {
-                LANE_REGISTRY.insert(
-                    transaction,
-                    registration.lane.as_wire_token(),
-                    registration,
-                )?;
-            }
-            Ok(())
-        })?;
+        for lane in existing {
+            self.remove_if_present(self.lane_registry, lane.as_wire_token())?;
+        }
+        for registration in lanes {
+            self.insert_lane(registration)?;
+        }
         Ok(())
     }
 
     pub fn remove_lane(&self, lane: &LaneIdentifier) -> Result<()> {
-        self.engine.storage_kernel().write(|transaction| {
-            LANE_REGISTRY.remove(transaction, lane.as_wire_token())?;
-            Ok(())
-        })?;
+        self.remove_if_present(self.lane_registry, lane.as_wire_token())?;
         Ok(())
     }
 
     pub fn repository_records(&self) -> Result<Vec<StoredRepository>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(REPOSITORIES
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_key, repository)| repository)
-                .collect())
-        })?)
+        self.records(self.repositories)
     }
 
     pub fn replace_repositories(&self, repositories: &[StoredRepository]) -> Result<()> {
@@ -204,15 +233,12 @@ impl OrchestrateTables {
             .into_iter()
             .map(|repository| repository.name)
             .collect::<Vec<_>>();
-        self.engine.storage_kernel().write(|transaction| {
-            for name in existing {
-                REPOSITORIES.remove(transaction, name.as_str())?;
-            }
-            for repository in repositories {
-                REPOSITORIES.insert(transaction, repository.name.as_str(), repository)?;
-            }
-            Ok(())
-        })?;
+        for name in existing {
+            self.remove_if_present(self.repositories, name.as_str())?;
+        }
+        for repository in repositories {
+            self.upsert(self.repositories, repository.name.as_str(), repository)?;
+        }
         Ok(())
     }
 
@@ -221,16 +247,13 @@ impl OrchestrateTables {
         remove_keys: &[String],
         insert_claims: &[StoredClaim],
     ) -> Result<()> {
-        self.engine.storage_kernel().write(|transaction| {
-            for key in remove_keys {
-                CLAIMS.remove(transaction, key.as_str())?;
-            }
-            for claim in insert_claims {
-                let key = claim.key();
-                CLAIMS.insert(transaction, key.as_str(), claim)?;
-            }
-            Ok(())
-        })?;
+        for key in remove_keys {
+            self.remove_if_present(self.claims, key.as_str())?;
+        }
+        for claim in insert_claims {
+            let key = claim.key();
+            self.upsert(self.claims, key.as_str(), claim)?;
+        }
         Ok(())
     }
 
@@ -252,46 +275,34 @@ impl OrchestrateTables {
         let slot = self.next_activity_slot()?;
         let stamped_at = StoreClock::system().timestamp()?;
         let activity = StoredActivity::new(slot.value(), role, scope, reason, stamped_at);
-        Ok(self.engine.storage_kernel().write(|transaction| {
-            ACTIVITIES.insert(transaction, slot.value(), &activity)?;
-            ACTIVITY_NEXT_SLOT.insert(transaction, ACTIVITY_NEXT_SLOT_KEY, &slot.next_value())?;
-            Ok(activity)
-        })?)
+        self.upsert(self.activities, &slot.key(), &activity)?;
+        self.upsert(
+            self.activity_next_slot,
+            ACTIVITY_NEXT_SLOT_KEY,
+            &slot.next_value(),
+        )?;
+        Ok(activity)
     }
 
     pub fn activity_records(&self) -> Result<Vec<StoredActivity>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(ACTIVITIES
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_slot, activity)| activity)
-                .collect())
-        })?)
+        self.records(self.activities)
     }
 
     pub fn append_divergence(&self, partial: PartialApplied) -> Result<StoredDivergence> {
         let slot = self.next_divergence_slot()?;
         let stamped_at = self.current_timestamp()?;
         let divergence = StoredDivergence::new(slot.value(), partial, stamped_at);
-        Ok(self.engine.storage_kernel().write(|transaction| {
-            DIVERGENCES.insert(transaction, slot.value(), &divergence)?;
-            DIVERGENCE_NEXT_SLOT.insert(
-                transaction,
-                DIVERGENCE_NEXT_SLOT_KEY,
-                &slot.next_value(),
-            )?;
-            Ok(divergence)
-        })?)
+        self.upsert(self.divergences, &slot.key(), &divergence)?;
+        self.upsert(
+            self.divergence_next_slot,
+            DIVERGENCE_NEXT_SLOT_KEY,
+            &slot.next_value(),
+        )?;
+        Ok(divergence)
     }
 
     pub fn divergence_records(&self) -> Result<Vec<StoredDivergence>> {
-        Ok(self.engine.storage_kernel().read(|transaction| {
-            Ok(DIVERGENCES
-                .iter(transaction)?
-                .into_iter()
-                .map(|(_slot, divergence)| divergence)
-                .collect())
-        })?)
+        self.records(self.divergences)
     }
 
     pub fn current_timestamp(&self) -> Result<TimestampNanos> {
@@ -303,10 +314,7 @@ impl OrchestrateTables {
     }
 
     fn next_activity_slot(&self) -> Result<ActivitySlot> {
-        let stored = self
-            .engine
-            .storage_kernel()
-            .read(|transaction| ACTIVITY_NEXT_SLOT.get(transaction, ACTIVITY_NEXT_SLOT_KEY))?;
+        let stored = self.record(self.activity_next_slot, ACTIVITY_NEXT_SLOT_KEY)?;
         match stored {
             Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
             None => Ok(ActivitySlot::after_activity_records(
@@ -316,16 +324,91 @@ impl OrchestrateTables {
     }
 
     fn next_divergence_slot(&self) -> Result<ActivitySlot> {
-        let stored = self
-            .engine
-            .storage_kernel()
-            .read(|transaction| DIVERGENCE_NEXT_SLOT.get(transaction, DIVERGENCE_NEXT_SLOT_KEY))?;
+        let stored = self.record(self.divergence_next_slot, DIVERGENCE_NEXT_SLOT_KEY)?;
         match stored {
             Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
             None => Ok(ActivitySlot::after_divergence_records(
                 &self.divergence_records()?,
             )),
         }
+    }
+
+    fn records<RecordValue>(&self, table: TableReference<RecordValue>) -> Result<Vec<RecordValue>>
+    where
+        RecordValue: OrchestrateStoredValue,
+        <RecordValue as rkyv::Archive>::Archived: rkyv::Deserialize<RecordValue, HighDeserializer<rancor::Error>>
+            + for<'validation> CheckBytes<
+                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+            >,
+    {
+        Ok(self
+            .engine
+            .match_records(QueryPlan::all(table))?
+            .records()
+            .to_vec())
+    }
+
+    fn record<RecordValue>(
+        &self,
+        table: TableReference<RecordValue>,
+        key: &str,
+    ) -> Result<Option<RecordValue>>
+    where
+        RecordValue: OrchestrateStoredValue,
+        <RecordValue as rkyv::Archive>::Archived: rkyv::Deserialize<RecordValue, HighDeserializer<rancor::Error>>
+            + for<'validation> CheckBytes<
+                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+            >,
+    {
+        Ok(self
+            .engine
+            .match_records(QueryPlan::key(table, RecordKey::new(key)))?
+            .records()
+            .first()
+            .cloned())
+    }
+
+    fn upsert<RecordValue>(
+        &self,
+        table: TableReference<RecordValue>,
+        key: &str,
+        record: &RecordValue,
+    ) -> Result<()>
+    where
+        RecordValue: OrchestrateStoredValue + Send + Sync + 'static,
+        <RecordValue as rkyv::Archive>::Archived: rkyv::Deserialize<RecordValue, HighDeserializer<rancor::Error>>
+            + for<'validation> CheckBytes<
+                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+            >,
+    {
+        let key = RecordKey::new(key);
+        if self.record(table, key.as_str())?.is_some() {
+            self.engine
+                .mutate_keyed(KeyedMutation::new(table, key, record.clone()))?;
+        } else {
+            self.engine
+                .assert_keyed(KeyedAssertion::new(table, key, record.clone()))?;
+        }
+        Ok(())
+    }
+
+    fn remove_if_present<RecordValue>(
+        &self,
+        table: TableReference<RecordValue>,
+        key: &str,
+    ) -> Result<()>
+    where
+        RecordValue: OrchestrateStoredValue + Send + Sync + 'static,
+        <RecordValue as rkyv::Archive>::Archived: rkyv::Deserialize<RecordValue, HighDeserializer<rancor::Error>>
+            + for<'validation> CheckBytes<
+                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+            >,
+    {
+        if self.record(table, key)?.is_some() {
+            self.engine
+                .retract(Retraction::new(table, RecordKey::new(key)))?;
+        }
+        Ok(())
     }
 }
 
@@ -448,6 +531,10 @@ impl ActivitySlot {
 
     fn next_value(&self) -> u64 {
         self.value + 1
+    }
+
+    fn key(&self) -> String {
+        self.value.to_string()
     }
 }
 
