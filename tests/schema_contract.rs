@@ -1,4 +1,6 @@
-use schema_next::{ImportResolver, SchemaEngine, SchemaIdentity, SchemaSourceArtifact};
+use schema_next::{
+    EnumDeclaration, ImportResolver, Root, SchemaEngine, SchemaIdentity, SchemaSourceArtifact,
+};
 use std::path::PathBuf;
 
 fn schema_file(name: &str) -> PathBuf {
@@ -56,15 +58,19 @@ fn lower_schema(name: &str, module: &str) -> schema_next::Schema {
         .expect("schema lowers")
 }
 
+fn root_enum(root: &Root) -> &EnumDeclaration {
+    root.as_enum().expect("root is the enum-body form")
+}
+
 #[test]
 fn orchestrate_runtime_schemas_import_current_signal_contracts() {
     let sema = lower_schema("sema.schema", "sema");
     let nexus = lower_schema("nexus.schema", "nexus");
 
-    assert_eq!(sema.input().variants.len(), 2);
-    assert_eq!(sema.output().variants.len(), 2);
-    assert_eq!(nexus.input().variants.len(), 1);
-    assert_eq!(nexus.output().variants.len(), 1);
+    assert_eq!(root_enum(sema.input()).variants.len(), 2);
+    assert_eq!(root_enum(sema.output()).variants.len(), 2);
+    assert_eq!(root_enum(nexus.input()).variants.len(), 1);
+    assert_eq!(root_enum(nexus.output()).variants.len(), 1);
     assert!(nexus.resolved_imports().iter().any(|import| {
         import
             .use_item()
