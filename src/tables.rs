@@ -381,13 +381,13 @@ impl OrchestrateTables {
                 Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
             >,
     {
-        let key = RecordKey::new(key);
-        if self.record(table, key.as_str())?.is_some() {
+        let record_key = RecordKey::new(key);
+        if self.record(table, key)?.is_some() {
             self.engine
-                .mutate_keyed(KeyedMutation::new(table, key, record.clone()))?;
+                .mutate_keyed(KeyedMutation::new(table, record_key, record.clone()))?;
         } else {
             self.engine
-                .assert_keyed(KeyedAssertion::new(table, key, record.clone()))?;
+                .assert_keyed(KeyedAssertion::new(table, record_key, record.clone()))?;
         }
         Ok(())
     }
