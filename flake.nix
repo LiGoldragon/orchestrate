@@ -4,11 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    fenix = {
-      url = "github:nix-community/fenix";
+    rust-build = {
+      url = "github:LiGoldragon/rust-build";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
@@ -16,30 +15,27 @@
       self,
       nixpkgs,
       flake-utils,
-      fenix,
-      crane,
+      rust-build,
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs { inherit system; };
-        toolchain = fenix.packages.${system}.fromToolchainFile {
+        rust = rust-build.lib.${system}.fromToolchainFile pkgs {
           file = ./rust-toolchain.toml;
           sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
         };
-        craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
-        src = pkgs.lib.cleanSourceWith {
-          src = ./.;
-          filter =
-            path: type:
-            let
-              pathString = toString path;
-              schemaRoot = "${toString ./.}/schema";
-            in
-            craneLib.filterCargoSources path type
-            || pathString == schemaRoot
-            || pkgs.lib.hasPrefix "${schemaRoot}/" pathString;
-          name = "source";
+        inherit (rust) craneLib toolchain;
+        schemaFilter =
+          path: _type:
+          let
+            pathString = toString path;
+            schemaRoot = "${toString ./.}/schema";
+          in
+          pathString == schemaRoot || pkgs.lib.hasPrefix "${schemaRoot}/" pathString;
+        src = rust.cleanSource {
+          root = ./.;
+          extraFilters = [ schemaFilter ];
         };
         commonArgs = {
           inherit src;
