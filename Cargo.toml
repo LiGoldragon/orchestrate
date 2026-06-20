@@ -70,18 +70,3 @@ dead_code = "warn"
 
 [patch.crates-io]
 kameo = { git = "https://github.com/LiGoldragon/kameo.git", branch = "main" }
-
-# eh5a PROTOTYPE SCAFFOLD — remove once operator lands the two contract
-# branches on their respective mains. Redirects both orchestrate contract git
-# sources to local worktree-registry worktrees so the daemon consumes the
-# not-yet-merged Worktree contract (signal-orchestrate-worktree-registry tip
-# e04d0d28, meta-signal-orchestrate-worktree-registry tip 19a39709). The
-# signal-orchestrate redirect MUST cover the whole graph — meta-signal-orchestrate
-# also depends on signal-orchestrate — so both resolve to the single path source
-# and no two-versions type mismatch arises. Verified one source each via
-# `cargo tree -i signal-orchestrate` / `-i meta-signal-orchestrate`.
-[patch."https://github.com/LiGoldragon/signal-orchestrate.git"]
-signal-orchestrate = { path = "/home/li/wt/github.com/LiGoldragon/signal-orchestrate/worktree-registry" }
-
-[patch."https://github.com/LiGoldragon/meta-signal-orchestrate.git"]
-meta-signal-orchestrate = { path = "/home/li/wt/github.com/LiGoldragon/meta-signal-orchestrate/worktree-registry" }

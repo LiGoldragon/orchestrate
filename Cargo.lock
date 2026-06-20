@@ -368,6 +368,7 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#135c2e7a8c13471dc14788217fddc1565b6408d4"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -715,7 +716,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "signal-frame"
 version = "0.2.1"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#e2eae5c28dac47eea6c4c641b60c4fd27bb547d8"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#c75053210b1b1e0d22833f0cfc461363213cf860"
 dependencies = [
  "nota-next",
  "paste",
@@ -727,7 +728,7 @@ dependencies = [
 [[package]]
 name = "signal-frame-macros"
 version = "0.1.1"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#e2eae5c28dac47eea6c4c641b60c4fd27bb547d8"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#c75053210b1b1e0d22833f0cfc461363213cf860"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -737,6 +738,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#a785cc77d45c56ab5b5f2803e14f0f17c448bada"
 dependencies = [
  "nota-next",
  "rkyv",
