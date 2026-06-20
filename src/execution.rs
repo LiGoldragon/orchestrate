@@ -9,7 +9,7 @@ use signal_orchestrate::schema::lib as ordinary_schema;
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
     ActivityLedger, ClaimLedger, Error, LaneRegistry, OrchestrateService, RepositoryRegistry,
-    Result, RoleRegistry,
+    Result, RoleRegistry, WorktreeRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,6 +380,11 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Lanes,
             ) => LaneRegistry::new(self.service.tables()).observe()?,
+            ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Worktrees,
+            ) => {
+                WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?
+            }
             ordinary_contract::OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(self.service.tables()).submit(submission)?
             }
@@ -432,6 +437,18 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
             meta_contract::MetaOrchestrateRequest::SetAuthority(change) => {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
+            }
+            meta_contract::MetaOrchestrateRequest::RegisterWorktree(order) => {
+                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .register(order)?;
+                self.service.project_worktrees()?;
+                reply
+            }
+            meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(_order) => {
+                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .refresh()?;
+                self.service.project_worktrees()?;
+                reply
             }
         };
         Ok(reply)
@@ -596,12 +613,13 @@ impl SchemaFailure {
 
     fn partial_applied(self) -> ordinary_schema::PartialApplied {
         ordinary_schema::PartialApplied {
-            succeeded: Vec::new(),
+            succeeded: Vec::new().into(),
             failed: vec![ordinary_schema::ApplicationFailure {
                 component: ordinary_schema::DownstreamComponent::System,
                 reason: ordinary_schema::ApplicationFailureReason::Unknown,
                 detail: self.detail,
-            }],
+            }]
+            .into(),
         }
     }
 }
@@ -628,6 +646,85 @@ where
         self.into_iter().map(Source::project_into).collect()
     }
 }
+
+/// Bridge a schema-emitted `Vector` wrapper newtype (e.g. `RoleTokens`,
+/// `ScopeReferences`) against the contract's bare `Vec<Inner>`. The newest
+/// `schema-rust-next` emits each `(Vector T)` as a distinct newtype with
+/// `new` / `into_payload` / `From<Vec<T>>`; the contract keeps a plain
+/// `Vec`. Each invocation wires both directions through the element
+/// `ProjectInto` and the existing `Vec` blanket above.
+macro_rules! vector_wrapper_projection {
+    ($wrapper:ty, $contract_inner:ty, $schema_inner:ty) => {
+        impl ProjectInto<$wrapper> for Vec<$contract_inner> {
+            fn project_into(self) -> Result<$wrapper> {
+                let elements: Vec<$schema_inner> = self.project_into()?;
+                Ok(<$wrapper>::new(elements))
+            }
+        }
+
+        impl ProjectInto<Vec<$contract_inner>> for $wrapper {
+            fn project_into(self) -> Result<Vec<$contract_inner>> {
+                self.into_payload().project_into()
+            }
+        }
+    };
+}
+
+vector_wrapper_projection!(
+    ordinary_schema::RoleTokens,
+    ordinary_contract::RoleToken,
+    ordinary_schema::RoleToken
+);
+vector_wrapper_projection!(
+    ordinary_schema::ScopeReferences,
+    ordinary_contract::ScopeReference,
+    ordinary_schema::ScopeReference
+);
+vector_wrapper_projection!(
+    ordinary_schema::ActivityFilters,
+    ordinary_contract::ActivityFilter,
+    ordinary_schema::ActivityFilter
+);
+vector_wrapper_projection!(
+    ordinary_schema::ScopeConflicts,
+    ordinary_contract::ScopeConflict,
+    ordinary_schema::ScopeConflict
+);
+vector_wrapper_projection!(
+    ordinary_schema::LaneRegistrations,
+    ordinary_contract::LaneRegistration,
+    ordinary_schema::LaneRegistration
+);
+vector_wrapper_projection!(
+    ordinary_schema::RoleStatuses,
+    ordinary_contract::RoleStatus,
+    ordinary_schema::RoleStatus
+);
+vector_wrapper_projection!(
+    ordinary_schema::Activities,
+    ordinary_contract::Activity,
+    ordinary_schema::Activity
+);
+vector_wrapper_projection!(
+    ordinary_schema::ClaimEntries,
+    ordinary_contract::ClaimEntry,
+    ordinary_schema::ClaimEntry
+);
+vector_wrapper_projection!(
+    ordinary_schema::ApplicationSuccesses,
+    ordinary_contract::ApplicationSuccess,
+    ordinary_schema::ApplicationSuccess
+);
+vector_wrapper_projection!(
+    ordinary_schema::ApplicationFailures,
+    ordinary_contract::ApplicationFailure,
+    ordinary_schema::ApplicationFailure
+);
+vector_wrapper_projection!(
+    ordinary_schema::Worktrees,
+    ordinary_contract::Worktree,
+    ordinary_schema::Worktree
+);
 
 impl ProjectInto<String> for ordinary_contract::RoleIdentifier {
     fn project_into(self) -> Result<String> {
@@ -989,6 +1086,7 @@ impl ProjectInto<ordinary_schema::Observation> for ordinary_contract::Observatio
         Ok(match self {
             ordinary_contract::Observation::Roles => ordinary_schema::Observation::Roles,
             ordinary_contract::Observation::Lanes => ordinary_schema::Observation::Lanes,
+            ordinary_contract::Observation::Worktrees => ordinary_schema::Observation::Worktrees,
         })
     }
 }
@@ -998,6 +1096,180 @@ impl ProjectInto<ordinary_contract::Observation> for ordinary_schema::Observatio
         Ok(match self {
             ordinary_schema::Observation::Roles => ordinary_contract::Observation::Roles,
             ordinary_schema::Observation::Lanes => ordinary_contract::Observation::Lanes,
+            ordinary_schema::Observation::Worktrees => ordinary_contract::Observation::Worktrees,
+        })
+    }
+}
+
+// ─── Worktree newtypes / enums / record (Spirit eh5a) ─────
+
+impl ProjectInto<String> for ordinary_contract::RepositoryName {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryName> for ordinary_contract::RepositoryName {
+    fn project_into(self) -> Result<ordinary_schema::RepositoryName> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::RepositoryName::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryName> for ordinary_schema::RepositoryName {
+    fn project_into(self) -> Result<ordinary_contract::RepositoryName> {
+        ordinary_contract::RepositoryName::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<String> for ordinary_contract::BranchName {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::BranchName> for ordinary_contract::BranchName {
+    fn project_into(self) -> Result<ordinary_schema::BranchName> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::BranchName::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::BranchName> for ordinary_schema::BranchName {
+    fn project_into(self) -> Result<ordinary_contract::BranchName> {
+        ordinary_contract::BranchName::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<String> for ordinary_contract::LaneName {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneName> for ordinary_contract::LaneName {
+    fn project_into(self) -> Result<ordinary_schema::LaneName> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::LaneName::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneName> for ordinary_schema::LaneName {
+    fn project_into(self) -> Result<ordinary_contract::LaneName> {
+        ordinary_contract::LaneName::from_text(self.into_payload()).map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<String> for ordinary_contract::PurposeText {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::PurposeText> for ordinary_contract::PurposeText {
+    fn project_into(self) -> Result<ordinary_schema::PurposeText> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::PurposeText::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::PurposeText> for ordinary_schema::PurposeText {
+    fn project_into(self) -> Result<ordinary_contract::PurposeText> {
+        ordinary_contract::PurposeText::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeStatus> for ordinary_contract::WorktreeStatus {
+    fn project_into(self) -> Result<ordinary_schema::WorktreeStatus> {
+        Ok(match self {
+            ordinary_contract::WorktreeStatus::Active => ordinary_schema::WorktreeStatus::Active,
+            ordinary_contract::WorktreeStatus::Merged => ordinary_schema::WorktreeStatus::Merged,
+            ordinary_contract::WorktreeStatus::Archived => ordinary_schema::WorktreeStatus::Archived,
+            ordinary_contract::WorktreeStatus::Recycled => ordinary_schema::WorktreeStatus::Recycled,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreeStatus> for ordinary_schema::WorktreeStatus {
+    fn project_into(self) -> Result<ordinary_contract::WorktreeStatus> {
+        Ok(match self {
+            ordinary_schema::WorktreeStatus::Active => ordinary_contract::WorktreeStatus::Active,
+            ordinary_schema::WorktreeStatus::Merged => ordinary_contract::WorktreeStatus::Merged,
+            ordinary_schema::WorktreeStatus::Archived => ordinary_contract::WorktreeStatus::Archived,
+            ordinary_schema::WorktreeStatus::Recycled => ordinary_contract::WorktreeStatus::Recycled,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::PushedState> for ordinary_contract::PushedState {
+    fn project_into(self) -> Result<ordinary_schema::PushedState> {
+        Ok(match self {
+            ordinary_contract::PushedState::Unpushed => ordinary_schema::PushedState::Unpushed,
+            ordinary_contract::PushedState::Pushed => ordinary_schema::PushedState::Pushed,
+            ordinary_contract::PushedState::AncestorOfMain => {
+                ordinary_schema::PushedState::AncestorOfMain
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::PushedState> for ordinary_schema::PushedState {
+    fn project_into(self) -> Result<ordinary_contract::PushedState> {
+        Ok(match self {
+            ordinary_schema::PushedState::Unpushed => ordinary_contract::PushedState::Unpushed,
+            ordinary_schema::PushedState::Pushed => ordinary_contract::PushedState::Pushed,
+            ordinary_schema::PushedState::AncestorOfMain => {
+                ordinary_contract::PushedState::AncestorOfMain
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::Worktree> for ordinary_contract::Worktree {
+    fn project_into(self) -> Result<ordinary_schema::Worktree> {
+        Ok(ordinary_schema::Worktree {
+            repository: self.repository.project_into()?,
+            branch: self.branch.project_into()?,
+            path: self.path.project_into()?,
+            owning_lane: self.owning_lane.project_into()?,
+            worktree_status: self.status.project_into()?,
+            purpose: self.purpose.project_into()?,
+            last_activity: self.last_activity.project_into()?,
+            pushed_state: self.pushed_state.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::Worktree> for ordinary_schema::Worktree {
+    fn project_into(self) -> Result<ordinary_contract::Worktree> {
+        Ok(ordinary_contract::Worktree {
+            repository: self.repository.project_into()?,
+            branch: self.branch.project_into()?,
+            path: self.path.project_into()?,
+            owning_lane: self.owning_lane.project_into()?,
+            status: self.worktree_status.project_into()?,
+            purpose: self.purpose.project_into()?,
+            last_activity: self.last_activity.project_into()?,
+            pushed_state: self.pushed_state.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreesObserved> for ordinary_contract::WorktreesObserved {
+    fn project_into(self) -> Result<ordinary_schema::WorktreesObserved> {
+        Ok(ordinary_schema::WorktreesObserved::new(
+            self.worktrees.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreesObserved> for ordinary_schema::WorktreesObserved {
+    fn project_into(self) -> Result<ordinary_contract::WorktreesObserved> {
+        Ok(ordinary_contract::WorktreesObserved {
+            worktrees: self.into_payload().project_into()?,
         })
     }
 }
@@ -1654,6 +1926,9 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::LanesObserved(payload) => {
                 ordinary_schema::Output::LanesObserved(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::WorktreesObserved(payload) => {
+                ordinary_schema::Output::WorktreesObserved(payload.project_into()?)
+            }
             ordinary_contract::OrchestrateReply::ActivityAcknowledgment(payload) => {
                 ordinary_schema::Output::ActivityAcknowledgment(payload.project_into()?)
             }
@@ -1696,6 +1971,9 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             }
             ordinary_schema::Output::LanesObserved(payload) => {
                 ordinary_contract::OrchestrateReply::LanesObserved(payload.project_into()?)
+            }
+            ordinary_schema::Output::WorktreesObserved(payload) => {
+                ordinary_contract::OrchestrateReply::WorktreesObserved(payload.project_into()?)
             }
             ordinary_schema::Output::ActivityAcknowledgment(payload) => {
                 ordinary_contract::OrchestrateReply::ActivityAcknowledgment(payload.project_into()?)
@@ -1790,6 +2068,72 @@ impl ProjectInto<meta_contract::RefreshRepositoryIndexOrder>
     }
 }
 
+impl ProjectInto<meta_schema::RegisterWorktree> for meta_contract::RegisterWorktree {
+    fn project_into(self) -> Result<meta_schema::RegisterWorktree> {
+        Ok(meta_schema::RegisterWorktree::new(
+            self.worktree.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<meta_contract::RegisterWorktree> for meta_schema::RegisterWorktree {
+    fn project_into(self) -> Result<meta_contract::RegisterWorktree> {
+        Ok(meta_contract::RegisterWorktree {
+            worktree: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::RefreshWorktreeIndexOrder>
+    for meta_contract::RefreshWorktreeIndexOrder
+{
+    fn project_into(self) -> Result<meta_schema::RefreshWorktreeIndexOrder> {
+        Ok(meta_schema::RefreshWorktreeIndexOrder {})
+    }
+}
+
+impl ProjectInto<meta_contract::RefreshWorktreeIndexOrder>
+    for meta_schema::RefreshWorktreeIndexOrder
+{
+    fn project_into(self) -> Result<meta_contract::RefreshWorktreeIndexOrder> {
+        Ok(meta_contract::RefreshWorktreeIndexOrder {})
+    }
+}
+
+impl ProjectInto<meta_schema::WorktreeRegistered> for meta_contract::WorktreeRegistered {
+    fn project_into(self) -> Result<meta_schema::WorktreeRegistered> {
+        Ok(meta_schema::WorktreeRegistered::new(
+            self.worktree.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<meta_contract::WorktreeRegistered> for meta_schema::WorktreeRegistered {
+    fn project_into(self) -> Result<meta_contract::WorktreeRegistered> {
+        Ok(meta_contract::WorktreeRegistered {
+            worktree: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::WorktreeIndexRefreshed> for meta_contract::WorktreeIndexRefreshed {
+    fn project_into(self) -> Result<meta_schema::WorktreeIndexRefreshed> {
+        Ok(meta_schema::WorktreeIndexRefreshed::new(u64::from(
+            self.worktrees,
+        )))
+    }
+}
+
+impl ProjectInto<meta_contract::WorktreeIndexRefreshed> for meta_schema::WorktreeIndexRefreshed {
+    fn project_into(self) -> Result<meta_contract::WorktreeIndexRefreshed> {
+        Ok(meta_contract::WorktreeIndexRefreshed {
+            worktrees: u32::try_from(self.into_payload()).map_err(|error| Error::SchemaBridge {
+                message: format!("worktree count does not fit u32: {error}"),
+            })?,
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_schema::LaneRegistrationRequest> {
         Ok(meta_schema::LaneRegistrationRequest {
@@ -1844,6 +2188,12 @@ impl ProjectInto<meta_schema::Input> for meta_contract::MetaOrchestrateRequest {
             meta_contract::MetaOrchestrateRequest::SetAuthority(payload) => {
                 meta_schema::Input::set_authority(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateRequest::RegisterWorktree(payload) => {
+                meta_schema::Input::register_worktree(payload.worktree.project_into()?)
+            }
+            meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(payload) => {
+                meta_schema::Input::refresh_worktree_index(payload.project_into()?)
+            }
         })
     }
 }
@@ -1865,6 +2215,12 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequest> for meta_schema::Input {
             }
             meta_schema::Input::SetAuthority(payload) => {
                 meta_contract::MetaOrchestrateRequest::SetAuthority(payload.project_into()?)
+            }
+            meta_schema::Input::RegisterWorktree(payload) => {
+                meta_contract::MetaOrchestrateRequest::RegisterWorktree(payload.project_into()?)
+            }
+            meta_schema::Input::RefreshWorktreeIndex(payload) => {
+                meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(payload.project_into()?)
             }
         })
     }
@@ -2042,6 +2398,12 @@ impl ProjectInto<meta_schema::MetaOperationKind> for meta_contract::MetaOperatio
             meta_contract::MetaOperationKind::SetAuthority => {
                 meta_schema::MetaOperationKind::SetAuthority
             }
+            meta_contract::MetaOperationKind::RegisterWorktree => {
+                meta_schema::MetaOperationKind::RegisterWorktree
+            }
+            meta_contract::MetaOperationKind::RefreshWorktreeIndex => {
+                meta_schema::MetaOperationKind::RefreshWorktreeIndex
+            }
         })
     }
 }
@@ -2055,6 +2417,12 @@ impl ProjectInto<meta_contract::MetaOperationKind> for meta_schema::MetaOperatio
             meta_schema::MetaOperationKind::Register => meta_contract::MetaOperationKind::Register,
             meta_schema::MetaOperationKind::SetAuthority => {
                 meta_contract::MetaOperationKind::SetAuthority
+            }
+            meta_schema::MetaOperationKind::RegisterWorktree => {
+                meta_contract::MetaOperationKind::RegisterWorktree
+            }
+            meta_schema::MetaOperationKind::RefreshWorktreeIndex => {
+                meta_contract::MetaOperationKind::RefreshWorktreeIndex
             }
         })
     }
@@ -2136,6 +2504,12 @@ impl ProjectInto<meta_schema::Output> for meta_contract::MetaOrchestrateReply {
             meta_contract::MetaOrchestrateReply::LaneAuthoritySet(payload) => {
                 meta_schema::Output::lane_authority_set(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateReply::WorktreeRegistered(payload) => {
+                meta_schema::Output::worktree_registered(payload.worktree.project_into()?)
+            }
+            meta_contract::MetaOrchestrateReply::WorktreeIndexRefreshed(payload) => {
+                meta_schema::Output::worktree_index_refreshed(u64::from(payload.worktrees))
+            }
             meta_contract::MetaOrchestrateReply::PartialApplied(payload) => {
                 meta_schema::Output::partial_applied(payload.project_into()?)
             }
@@ -2171,6 +2545,12 @@ impl ProjectInto<meta_contract::MetaOrchestrateReply> for meta_schema::Output {
             }
             meta_schema::Output::LaneAuthoritySet(payload) => {
                 meta_contract::MetaOrchestrateReply::LaneAuthoritySet(payload.project_into()?)
+            }
+            meta_schema::Output::WorktreeRegistered(payload) => {
+                meta_contract::MetaOrchestrateReply::WorktreeRegistered(payload.project_into()?)
+            }
+            meta_schema::Output::WorktreeIndexRefreshed(payload) => {
+                meta_contract::MetaOrchestrateReply::WorktreeIndexRefreshed(payload.project_into()?)
             }
             meta_schema::Output::PartialApplied(payload) => {
                 meta_contract::MetaOrchestrateReply::PartialApplied(payload.project_into()?)

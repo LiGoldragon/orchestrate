@@ -148,6 +148,10 @@ impl OrchestrateService {
         self.tables.repository_records()
     }
 
+    pub fn worktrees(&self) -> Result<Vec<crate::StoredWorktree>> {
+        self.tables.worktree_records()
+    }
+
     pub fn record_partial_application(&self, partial: PartialApplied) -> Result<OrchestrateReply> {
         crate::DivergenceLedger::new(&self.tables).record_partial_application(partial)
     }
@@ -197,6 +201,10 @@ impl OrchestrateService {
 
     pub(crate) fn project_locks(&self) -> Result<()> {
         LockProjection::new(&self.tables, &self.layout).project()
+    }
+
+    pub(crate) fn project_worktrees(&self) -> Result<()> {
+        crate::WorktreeProjection::new(&self.tables, &self.layout).project()
     }
 
     pub(crate) fn next_observation_token(&mut self) -> Result<ObservationToken> {

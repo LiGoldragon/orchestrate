@@ -8,13 +8,18 @@ use crate::{Error, Result};
 pub struct OrchestrateLayout {
     workspace_root: PathBuf,
     git_index_root: PathBuf,
+    worktree_index_root: PathBuf,
 }
 
 impl OrchestrateLayout {
+    const DEFAULT_WORKTREE_INDEX_ROOT: &'static str =
+        "/home/li/wt/github.com/LiGoldragon";
+
     pub fn primary_workspace() -> Self {
         Self {
             workspace_root: PathBuf::from("/home/li/primary"),
             git_index_root: PathBuf::from("/git/github.com/LiGoldragon"),
+            worktree_index_root: PathBuf::from(Self::DEFAULT_WORKTREE_INDEX_ROOT),
         }
     }
 
@@ -22,7 +27,13 @@ impl OrchestrateLayout {
         Self {
             workspace_root,
             git_index_root,
+            worktree_index_root: PathBuf::from(Self::DEFAULT_WORKTREE_INDEX_ROOT),
         }
+    }
+
+    pub fn with_worktree_index_root(mut self, worktree_index_root: PathBuf) -> Self {
+        self.worktree_index_root = worktree_index_root;
+        self
     }
 
     pub fn workspace_root(&self) -> &Path {
@@ -31,6 +42,16 @@ impl OrchestrateLayout {
 
     pub fn git_index_root(&self) -> &Path {
         &self.git_index_root
+    }
+
+    pub fn worktree_index_root(&self) -> &Path {
+        &self.worktree_index_root
+    }
+
+    pub fn worktrees_projection_path(&self) -> PathBuf {
+        self.workspace_root
+            .join("orchestrate")
+            .join("worktrees.nota")
     }
 
     pub fn report_lane_path(&self, role: &RoleName) -> PathBuf {

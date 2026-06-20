@@ -89,6 +89,9 @@ pub enum Error {
     #[error("lane is not registered: {lane}")]
     LaneNotRegistered { lane: String },
 
+    #[error("worktree scan failed for {path}: {message}")]
+    WorktreeScan { path: String, message: String },
+
     #[error(
         "atomic batch has {operation_count} operations; orchestrate supports one operation per execution batch today"
     )]

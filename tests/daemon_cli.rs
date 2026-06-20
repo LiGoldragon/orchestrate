@@ -369,6 +369,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     assert!(
         snapshot
             .roles
+            .payload()
             .iter()
             .any(|status| status.role == schema_role_name)
     );
@@ -377,7 +378,8 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
         role: schema_role_name,
         scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/primary-orchestrate-daemon-zxq9-never-collide",
-        ))],
+        ))]
+        .into(),
         reason: SchemaScopeReason::new("daemon CLI claim projection"),
     }));
     assert!(
@@ -417,12 +419,13 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
     };
     let system_operator = snapshot
         .roles
+        .payload()
         .iter()
         .find(|status| {
             status.role == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
         })
         .expect("system-operator role");
-    assert!(system_operator.claims.iter().any(|claim| matches!(
+    assert!(system_operator.claims.payload().iter().any(|claim| matches!(
         &claim.scope,
         SchemaScopeReference::Path(path)
             if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"

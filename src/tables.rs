@@ -12,9 +12,9 @@ use sema_engine::{
     VersionedStoreName, VersioningPolicy,
 };
 use signal_orchestrate::{
-    Activity, ApplicationFailure, ApplicationSuccess, HarnessKind, LaneIdentifier,
-    LaneRegistration, PartialApplied, RoleName, ScopeReason, ScopeReference, TimestampNanos,
-    WirePath,
+    Activity, ApplicationFailure, ApplicationSuccess, BranchName, HarnessKind, LaneIdentifier,
+    LaneName, LaneRegistration, PartialApplied, PurposeText, PushedState, RepositoryName, RoleName,
+    ScopeReason, ScopeReference, TimestampNanos, WirePath, Worktree, WorktreeStatus,
 };
 
 use crate::{Result, StoreLocation};
@@ -38,12 +38,16 @@ where
 {
 }
 
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(2);
+// Bumped 2 -> 3 for the worktrees table (Spirit eh5a). The live store needs a
+// sema-upgrade migration on integration; see worktree.rs / the report's
+// migration flag — do NOT migrate the live store from a prototype branch.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(3);
 
 const CLAIMS: TableName = TableName::new("claims");
 const ROLES: TableName = TableName::new("roles");
 const LANE_REGISTRY: TableName = TableName::new("lane_registry");
 const REPOSITORIES: TableName = TableName::new("repositories");
+const WORKTREES: TableName = TableName::new("worktrees");
 const ACTIVITIES: TableName = TableName::new("activities");
 const ACTIVITY_NEXT_SLOT: TableName = TableName::new("activity_next_slot");
 const ACTIVITY_NEXT_SLOT_KEY: &str = "next";
@@ -57,6 +61,7 @@ pub struct OrchestrateTables {
     roles: TableReference<StoredRole>,
     lane_registry: TableReference<LaneRegistration>,
     repositories: TableReference<StoredRepository>,
+    worktrees: TableReference<StoredWorktree>,
     activities: TableReference<StoredActivity>,
     activity_next_slot: TableReference<u64>,
     divergences: TableReference<StoredDivergence>,
@@ -86,6 +91,20 @@ pub struct StoredRepository {
     pub refreshed_at: TimestampNanos,
 }
 
+/// One worktree row, the durable form of a [`Worktree`] (Spirit eh5a). Keyed
+/// `repository|branch` by [`WorktreeKey`], beside [`StoredRepository`].
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredWorktree {
+    pub repository: RepositoryName,
+    pub branch: BranchName,
+    pub path: WirePath,
+    pub owning_lane: LaneName,
+    pub status: WorktreeStatus,
+    pub purpose: PurposeText,
+    pub last_activity: TimestampNanos,
+    pub pushed_state: PushedState,
+}
+
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredActivity {
     pub slot: u64,
@@ -112,6 +131,7 @@ impl OrchestrateTables {
             engine.register_table(Self::family_descriptor(LANE_REGISTRY, "lane-registry"))?;
         let repositories =
             engine.register_table(Self::family_descriptor(REPOSITORIES, "repository"))?;
+        let worktrees = engine.register_table(Self::family_descriptor(WORKTREES, "worktree"))?;
         let activities = engine.register_table(Self::family_descriptor(ACTIVITIES, "activity"))?;
         let activity_next_slot =
             engine.register_table(Self::family_descriptor(ACTIVITY_NEXT_SLOT, "activity-slot"))?;
@@ -127,6 +147,7 @@ impl OrchestrateTables {
             roles,
             lane_registry,
             repositories,
+            worktrees,
             activities,
             activity_next_slot,
             divergences,
@@ -238,6 +259,42 @@ impl OrchestrateTables {
         }
         for repository in repositories {
             self.upsert(self.repositories, repository.name.as_str(), repository)?;
+        }
+        Ok(())
+    }
+
+    pub fn worktree_records(&self) -> Result<Vec<StoredWorktree>> {
+        self.records(self.worktrees)
+    }
+
+    pub fn worktree_record(
+        &self,
+        repository: &RepositoryName,
+        branch: &BranchName,
+    ) -> Result<Option<StoredWorktree>> {
+        self.record(
+            self.worktrees,
+            WorktreeKey::new(repository, branch).into_string().as_str(),
+        )
+    }
+
+    pub fn insert_worktree(&self, worktree: &StoredWorktree) -> Result<()> {
+        let key = WorktreeKey::new(&worktree.repository, &worktree.branch).into_string();
+        self.upsert(self.worktrees, key.as_str(), worktree)?;
+        Ok(())
+    }
+
+    pub fn replace_worktrees(&self, worktrees: &[StoredWorktree]) -> Result<()> {
+        let existing = self
+            .worktree_records()?
+            .iter()
+            .map(StoredWorktree::key)
+            .collect::<Vec<_>>();
+        for key in existing {
+            self.remove_if_present(self.worktrees, key.as_str())?;
+        }
+        for worktree in worktrees {
+            self.insert_worktree(worktree)?;
         }
         Ok(())
     }
@@ -436,6 +493,62 @@ impl StoredRepository {
             active: true,
             refreshed_at,
         }
+    }
+}
+
+impl StoredWorktree {
+    pub fn key(&self) -> String {
+        WorktreeKey::new(&self.repository, &self.branch).into_string()
+    }
+}
+
+impl From<Worktree> for StoredWorktree {
+    fn from(worktree: Worktree) -> Self {
+        Self {
+            repository: worktree.repository,
+            branch: worktree.branch,
+            path: worktree.path,
+            owning_lane: worktree.owning_lane,
+            status: worktree.status,
+            purpose: worktree.purpose,
+            last_activity: worktree.last_activity,
+            pushed_state: worktree.pushed_state,
+        }
+    }
+}
+
+impl From<StoredWorktree> for Worktree {
+    fn from(worktree: StoredWorktree) -> Self {
+        Self {
+            repository: worktree.repository,
+            branch: worktree.branch,
+            path: worktree.path,
+            owning_lane: worktree.owning_lane,
+            status: worktree.status,
+            purpose: worktree.purpose,
+            last_activity: worktree.last_activity,
+            pushed_state: worktree.pushed_state,
+        }
+    }
+}
+
+/// Composite redb key `repository|branch` for the worktrees table — the
+/// `(repository, branch)` identity of a [`StoredWorktree`].
+struct WorktreeKey {
+    repository: String,
+    branch: String,
+}
+
+impl WorktreeKey {
+    fn new(repository: &RepositoryName, branch: &BranchName) -> Self {
+        Self {
+            repository: repository.as_str().to_string(),
+            branch: branch.as_str().to_string(),
+        }
+    }
+
+    fn into_string(self) -> String {
+        format!("{}|{}", self.repository, self.branch)
     }
 }
 

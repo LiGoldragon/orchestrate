@@ -20,6 +20,8 @@ pub mod signal_transport;
 pub mod socket_retirement;
 pub mod tables;
 pub mod upgrade_frame;
+pub mod worktree;
+pub mod worktree_projection;
 
 pub use activity::ActivityLedger;
 pub use claim::{ClaimLedger, ClaimState};
@@ -40,19 +42,21 @@ pub use lock_projection::LockProjection;
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAuthorityChange, LaneAuthoritySet, LaneRegistered,
     LaneRegistrationRequest, LaneRetired, MetaOrchestrateReply, MetaOrchestrateRequest,
-    RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement,
+    RefreshRepositoryIndexOrder, RefreshWorktreeIndexOrder, RegisterWorktree, RetireRoleOrder,
+    Retirement, WorktreeIndexRefreshed, WorktreeRegistered,
 };
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
-    ApplicationFailureReason, ApplicationSuccess, DownstreamComponent, HarnessKind, LaneAuthority,
-    LaneIdentifier, LaneRegistration, LanesObserved, Observation, ObservationClosed,
-    ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
-    OrchestrateReply, OrchestrateRequest, PartialApplied, Role, RoleClaim, RoleHandoff,
-    RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
-    TaskToken, TimestampNanos, WirePath,
+    ApplicationFailureReason, ApplicationSuccess, BranchName, DownstreamComponent, HarnessKind,
+    LaneAuthority, LaneIdentifier, LaneName, LaneRegistration, LanesObserved, Observation,
+    ObservationClosed, ObservationEvent, ObservationOpened, ObservationSubscription,
+    ObservationToken, OperationKind, OrchestrateReply, OrchestrateRequest, PartialApplied,
+    PurposeText, PushedState, RepositoryName, Role, RoleClaim, RoleHandoff, RoleIdentifier,
+    RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, TaskToken,
+    TimestampNanos, WirePath, Worktree, WorktreeStatus, WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
@@ -60,5 +64,8 @@ pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
     OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredRepository, StoredRole,
+    StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
+pub use worktree::WorktreeRegistry;
+pub use worktree_projection::WorktreeProjection;
