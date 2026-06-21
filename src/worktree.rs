@@ -20,7 +20,9 @@ use signal_orchestrate::{
     TimestampNanos, WirePath, Worktree, WorktreeStatus, WorktreesObserved,
 };
 
-use crate::{Error, OrchestrateLayout, OrchestrateTables, Result, StoredWorktree, layout::wire_path};
+use crate::{
+    Error, OrchestrateLayout, OrchestrateTables, Result, StoredWorktree, layout::wire_path,
+};
 
 pub struct WorktreeRegistry<'tables> {
     tables: &'tables OrchestrateTables,
@@ -104,9 +106,7 @@ impl<'tables> WorktreeRegistry<'tables> {
         });
         self.tables.replace_worktrees(&worktrees)?;
         Ok(MetaOrchestrateReply::WorktreeIndexRefreshed(
-            WorktreeIndexRefreshed {
-                worktrees: worktrees.len().min(u32::MAX as usize) as u32,
-            },
+            WorktreeIndexRefreshed::new(worktrees.len().min(u32::MAX as usize) as u32),
         ))
     }
 

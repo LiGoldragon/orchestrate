@@ -368,7 +368,7 @@ checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#135c2e7a8c13471dc14788217fddc1565b6408d4"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#f7102e5bc2b8aab92a1811d38038fd742f3a1df4"
 dependencies = [
  "nota-next",
  "rkyv",
@@ -411,8 +411,8 @@ dependencies = [
 
 [[package]]
 name = "nota-next"
-version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#c43d04a159e90314a0094b61ace66053371cc247"
+version = "0.5.1"
+source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#f94b5462a4456b3651a93c40dc7c19a287426213"
 dependencies = [
  "nota-next-derive",
  "rkyv",
@@ -421,7 +421,7 @@ dependencies = [
 [[package]]
 name = "nota-next-derive"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#c43d04a159e90314a0094b61ace66053371cc247"
+source = "git+https://github.com/LiGoldragon/nota-next.git?branch=main#f94b5462a4456b3651a93c40dc7c19a287426213"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -738,7 +738,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#a785cc77d45c56ab5b5f2803e14f0f17c448bada"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#878601cfeb58a06e3d3f7fcd335a07ade43908d1"
 dependencies = [
  "nota-next",
  "rkyv",

@@ -425,11 +425,17 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
             status.role == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
         })
         .expect("system-operator role");
-    assert!(system_operator.claims.payload().iter().any(|claim| matches!(
-        &claim.scope,
-        SchemaScopeReference::Path(path)
-            if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
-    )));
+    assert!(
+        system_operator
+            .claims
+            .payload()
+            .iter()
+            .any(|claim| matches!(
+                &claim.scope,
+                SchemaScopeReference::Path(path)
+                    if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
+            ))
+    );
 }
 
 // The version-handover upgrade socket is the daemon's third listener tier. The

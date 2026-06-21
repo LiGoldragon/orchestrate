@@ -12,8 +12,7 @@ pub struct OrchestrateLayout {
 }
 
 impl OrchestrateLayout {
-    const DEFAULT_WORKTREE_INDEX_ROOT: &'static str =
-        "/home/li/wt/github.com/LiGoldragon";
+    const DEFAULT_WORKTREE_INDEX_ROOT: &'static str = "/home/li/wt/github.com/LiGoldragon";
 
     pub fn primary_workspace() -> Self {
         Self {

@@ -559,7 +559,7 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
     let MetaOrchestrateReply::RepositoryIndexRefreshed(refreshed) = reply else {
         panic!("expected repository index refresh");
     };
-    assert_eq!(refreshed.repositories, 1);
+    assert_eq!(refreshed.repositories(), 1);
 
     let repositories = fixture.service.repositories().expect("repositories");
     assert_eq!(repositories.len(), 1);

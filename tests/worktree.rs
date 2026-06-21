@@ -171,10 +171,7 @@ fn register_worktree_observe_and_project_manifest() {
     assert_eq!(snapshot.worktrees.len(), 1);
     assert_eq!(snapshot.worktrees[0].branch.as_str(), "worktree-registry");
 
-    let manifest = fixture
-        .workspace
-        .join("orchestrate")
-        .join("worktrees.nota");
+    let manifest = fixture.workspace.join("orchestrate").join("worktrees.nota");
     let body = std::fs::read_to_string(&manifest).expect("worktrees.nota written");
     assert!(
         body.contains("orchestrate") && body.contains("worktree-registry"),
@@ -188,7 +185,10 @@ fn register_worktree_observe_and_project_manifest() {
         body.contains("[prototype the worktree registry]"),
         "purpose must be bracketed: {body}"
     );
-    assert!(body.contains("Active") && body.contains("Unpushed"), "manifest body: {body}");
+    assert!(
+        body.contains("Active") && body.contains("Unpushed"),
+        "manifest body: {body}"
+    );
     assert!(!body.contains('"'), "manifest must be quote-free: {body}");
 }
 
@@ -206,7 +206,7 @@ fn refresh_scans_worktree_index_into_manifest() {
     let MetaOrchestrateReply::WorktreeIndexRefreshed(refreshed) = reply else {
         panic!("expected WorktreeIndexRefreshed, got {reply:?}");
     };
-    assert_eq!(refreshed.worktrees, 2);
+    assert_eq!(refreshed.worktrees(), 2);
 
     let observed = fixture
         .handle(OrchestrateRequest::Observe(Observation::Worktrees))

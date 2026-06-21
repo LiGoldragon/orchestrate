@@ -382,9 +382,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ) => LaneRegistry::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Worktrees,
-            ) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?
-            }
+            ) => WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?,
             ordinary_contract::OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(self.service.tables()).submit(submission)?
             }
@@ -1158,7 +1156,8 @@ impl ProjectInto<ordinary_schema::LaneName> for ordinary_contract::LaneName {
 
 impl ProjectInto<ordinary_contract::LaneName> for ordinary_schema::LaneName {
     fn project_into(self) -> Result<ordinary_contract::LaneName> {
-        ordinary_contract::LaneName::from_text(self.into_payload()).map_err(Error::SignalOrchestrate)
+        ordinary_contract::LaneName::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
     }
 }
 
@@ -1187,8 +1186,12 @@ impl ProjectInto<ordinary_schema::WorktreeStatus> for ordinary_contract::Worktre
         Ok(match self {
             ordinary_contract::WorktreeStatus::Active => ordinary_schema::WorktreeStatus::Active,
             ordinary_contract::WorktreeStatus::Merged => ordinary_schema::WorktreeStatus::Merged,
-            ordinary_contract::WorktreeStatus::Archived => ordinary_schema::WorktreeStatus::Archived,
-            ordinary_contract::WorktreeStatus::Recycled => ordinary_schema::WorktreeStatus::Recycled,
+            ordinary_contract::WorktreeStatus::Archived => {
+                ordinary_schema::WorktreeStatus::Archived
+            }
+            ordinary_contract::WorktreeStatus::Recycled => {
+                ordinary_schema::WorktreeStatus::Recycled
+            }
         })
     }
 }
@@ -1198,8 +1201,12 @@ impl ProjectInto<ordinary_contract::WorktreeStatus> for ordinary_schema::Worktre
         Ok(match self {
             ordinary_schema::WorktreeStatus::Active => ordinary_contract::WorktreeStatus::Active,
             ordinary_schema::WorktreeStatus::Merged => ordinary_contract::WorktreeStatus::Merged,
-            ordinary_schema::WorktreeStatus::Archived => ordinary_contract::WorktreeStatus::Archived,
-            ordinary_schema::WorktreeStatus::Recycled => ordinary_contract::WorktreeStatus::Recycled,
+            ordinary_schema::WorktreeStatus::Archived => {
+                ordinary_contract::WorktreeStatus::Archived
+            }
+            ordinary_schema::WorktreeStatus::Recycled => {
+                ordinary_contract::WorktreeStatus::Recycled
+            }
         })
     }
 }
@@ -1235,7 +1242,7 @@ impl ProjectInto<ordinary_schema::Worktree> for ordinary_contract::Worktree {
             branch: self.branch.project_into()?,
             path: self.path.project_into()?,
             owning_lane: self.owning_lane.project_into()?,
-            worktree_status: self.status.project_into()?,
+            status: self.status.project_into()?,
             purpose: self.purpose.project_into()?,
             last_activity: self.last_activity.project_into()?,
             pushed_state: self.pushed_state.project_into()?,
@@ -1250,7 +1257,7 @@ impl ProjectInto<ordinary_contract::Worktree> for ordinary_schema::Worktree {
             branch: self.branch.project_into()?,
             path: self.path.project_into()?,
             owning_lane: self.owning_lane.project_into()?,
-            status: self.worktree_status.project_into()?,
+            status: self.status.project_into()?,
             purpose: self.purpose.project_into()?,
             last_activity: self.last_activity.project_into()?,
             pushed_state: self.pushed_state.project_into()?,
@@ -2119,18 +2126,18 @@ impl ProjectInto<meta_contract::WorktreeRegistered> for meta_schema::WorktreeReg
 impl ProjectInto<meta_schema::WorktreeIndexRefreshed> for meta_contract::WorktreeIndexRefreshed {
     fn project_into(self) -> Result<meta_schema::WorktreeIndexRefreshed> {
         Ok(meta_schema::WorktreeIndexRefreshed::new(u64::from(
-            self.worktrees,
+            self.worktrees(),
         )))
     }
 }
 
 impl ProjectInto<meta_contract::WorktreeIndexRefreshed> for meta_schema::WorktreeIndexRefreshed {
     fn project_into(self) -> Result<meta_contract::WorktreeIndexRefreshed> {
-        Ok(meta_contract::WorktreeIndexRefreshed {
-            worktrees: u32::try_from(self.into_payload()).map_err(|error| Error::SchemaBridge {
+        Ok(meta_contract::WorktreeIndexRefreshed::new(
+            u32::try_from(self.into_payload()).map_err(|error| Error::SchemaBridge {
                 message: format!("worktree count does not fit u32: {error}"),
             })?,
-        })
+        ))
     }
 }
 
@@ -2321,7 +2328,7 @@ impl ProjectInto<meta_schema::RepositoryIndexRefreshed>
 {
     fn project_into(self) -> Result<meta_schema::RepositoryIndexRefreshed> {
         Ok(meta_schema::RepositoryIndexRefreshed::new(u64::from(
-            self.repositories,
+            self.repositories(),
         )))
     }
 }
@@ -2330,13 +2337,11 @@ impl ProjectInto<meta_contract::RepositoryIndexRefreshed>
     for meta_schema::RepositoryIndexRefreshed
 {
     fn project_into(self) -> Result<meta_contract::RepositoryIndexRefreshed> {
-        Ok(meta_contract::RepositoryIndexRefreshed {
-            repositories: u32::try_from(self.into_payload()).map_err(|error| {
-                Error::SchemaBridge {
-                    message: format!("repository count does not fit u32: {error}"),
-                }
+        Ok(meta_contract::RepositoryIndexRefreshed::new(
+            u32::try_from(self.into_payload()).map_err(|error| Error::SchemaBridge {
+                message: format!("repository count does not fit u32: {error}"),
             })?,
-        })
+        ))
     }
 }
 
@@ -2508,7 +2513,7 @@ impl ProjectInto<meta_schema::Output> for meta_contract::MetaOrchestrateReply {
                 meta_schema::Output::worktree_registered(payload.worktree.project_into()?)
             }
             meta_contract::MetaOrchestrateReply::WorktreeIndexRefreshed(payload) => {
-                meta_schema::Output::worktree_index_refreshed(u64::from(payload.worktrees))
+                meta_schema::Output::worktree_index_refreshed(u64::from(payload.worktrees()))
             }
             meta_contract::MetaOrchestrateReply::PartialApplied(payload) => {
                 meta_schema::Output::partial_applied(payload.project_into()?)

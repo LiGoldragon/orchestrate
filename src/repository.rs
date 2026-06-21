@@ -38,9 +38,7 @@ impl<'tables> RepositoryRegistry<'tables> {
         repositories.sort_by(|left, right| left.name.cmp(&right.name));
         self.tables.replace_repositories(&repositories)?;
         Ok(MetaOrchestrateReply::RepositoryIndexRefreshed(
-            RepositoryIndexRefreshed {
-                repositories: repositories.len().min(u32::MAX as usize) as u32,
-            },
+            RepositoryIndexRefreshed::new(repositories.len().min(u32::MAX as usize) as u32),
         ))
     }
 
