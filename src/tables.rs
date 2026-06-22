@@ -323,6 +323,39 @@ impl OrchestrateTables {
         self.replace_claims(&remove_keys, claims)
     }
 
+    pub fn remove_claims_for_role(&self, role: &RoleName) -> Result<Vec<StoredClaim>> {
+        let removed_claims = self
+            .claim_records()?
+            .into_iter()
+            .filter(|claim| claim.role == *role)
+            .collect::<Vec<_>>();
+        let remove_keys = removed_claims
+            .iter()
+            .map(StoredClaim::key)
+            .collect::<Vec<_>>();
+        self.replace_claims(&remove_keys, &[])?;
+        Ok(removed_claims)
+    }
+
+    pub fn remove_claims_without_roles(&self) -> Result<Vec<StoredClaim>> {
+        let roles = self
+            .role_records()?
+            .into_iter()
+            .map(|role| role.role)
+            .collect::<std::collections::BTreeSet<_>>();
+        let removed_claims = self
+            .claim_records()?
+            .into_iter()
+            .filter(|claim| !roles.contains(&claim.role))
+            .collect::<Vec<_>>();
+        let remove_keys = removed_claims
+            .iter()
+            .map(StoredClaim::key)
+            .collect::<Vec<_>>();
+        self.replace_claims(&remove_keys, &[])?;
+        Ok(removed_claims)
+    }
+
     pub fn append_activity(
         &self,
         role: RoleName,

@@ -3,9 +3,10 @@ use orchestrate::{
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
     HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry,
     MetaOrchestrateReply, MetaOrchestrateRequest, Observation, ObservationSubscription,
-    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, PartialApplied,
-    RefreshRepositoryIndexOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease,
-    RoleToken, ScopeReason, ScopeReference, StoreLocation, TaskToken, WirePath,
+    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, OrchestrateTables,
+    PartialApplied, RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim,
+    RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, StoreLocation,
+    StoredClaim, StoredRole, TaskToken, WirePath,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -453,6 +454,161 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
         std::fs::read_to_string(lock_path).expect("lock file"),
         "/tmp/primary-orchestrate-mvp-zxq9-never-collide # dynamic role owns its work\n"
     );
+}
+
+#[test]
+fn role_retirement_removes_claims_and_lock_projection() {
+    let mut fixture = LayoutFixture::new("orchestrate-retired-role-claims");
+    let retired_role = role("primary-orchestrate-retirement-zxq9-never-collide");
+    let survivor_role = role("primary-orchestrate-survivor-zxq9-never-collide");
+    let scope = path("/tmp/primary-orchestrate-retired-role-claim");
+
+    let created = fixture
+        .handle_meta(MetaOrchestrateRequest::Create(CreateRoleOrder {
+            role: retired_role.clone(),
+            harness: HarnessKind::Codex,
+        }))
+        .expect("create retired role");
+    assert!(matches!(created, MetaOrchestrateReply::RoleCreated(_)));
+
+    let survivor = fixture
+        .handle_meta(MetaOrchestrateRequest::Create(CreateRoleOrder {
+            role: survivor_role.clone(),
+            harness: HarnessKind::Codex,
+        }))
+        .expect("create survivor role");
+    assert!(matches!(survivor, MetaOrchestrateReply::RoleCreated(_)));
+
+    let accepted = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: retired_role.clone(),
+            scopes: vec![scope.clone()],
+            reason: reason("retired role claim must not become hidden state"),
+        }))
+        .expect("claim before retirement");
+    assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
+
+    let lock_path = fixture
+        .workspace
+        .join("orchestrate")
+        .join("primary-orchestrate-retirement-zxq9-never-collide.lock");
+    assert!(lock_path.exists());
+
+    let retired = fixture
+        .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Role(
+            RetireRoleOrder {
+                role: retired_role.clone(),
+            },
+        )))
+        .expect("retire role");
+    assert!(matches!(retired, MetaOrchestrateReply::RoleRetired(_)));
+    assert!(!lock_path.exists());
+
+    let survivor_claim = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: survivor_role.clone(),
+            scopes: vec![scope.clone()],
+            reason: reason("survivor can claim the released scope"),
+        }))
+        .expect("claim after retirement");
+    assert!(matches!(
+        survivor_claim,
+        OrchestrateReply::ClaimAcceptance(_)
+    ));
+
+    let snapshot = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Roles))
+        .expect("observe roles");
+    let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
+        panic!("expected role snapshot");
+    };
+    assert!(
+        snapshot
+            .roles
+            .iter()
+            .all(|status| status.role != retired_role)
+    );
+    let survivor_status = snapshot
+        .roles
+        .iter()
+        .find(|status| status.role == survivor_role)
+        .expect("survivor role status");
+    assert_eq!(survivor_status.claims[0].scope, scope);
+}
+
+#[test]
+fn path_overlap_uses_component_boundaries_not_substrings() {
+    let mut fixture = Fixture::new("orchestrate-path-boundaries");
+    let schema_help = path("/home/li/wt/github.com/LiGoldragon/schema-next/schema-help");
+    let help_design = path("/home/li/wt/github.com/LiGoldragon/schema-next/schema-help-design");
+
+    let first = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: role("schema-operator"),
+            scopes: vec![schema_help],
+            reason: reason("schema help implementation"),
+        }))
+        .expect("schema-help claim");
+    assert!(matches!(first, OrchestrateReply::ClaimAcceptance(_)));
+
+    let second = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: role("schema-designer"),
+            scopes: vec![help_design],
+            reason: reason("schema help design"),
+        }))
+        .expect("schema-help-design claim");
+    assert!(matches!(second, OrchestrateReply::ClaimAcceptance(_)));
+}
+
+#[test]
+fn claim_cleanup_removes_rows_for_missing_roles() {
+    let temporary = tempfile::Builder::new()
+        .prefix("orchestrate-orphan-claims")
+        .tempdir()
+        .expect("temporary directory");
+    let store = StoreLocation::new(
+        temporary
+            .path()
+            .join("orchestrate.sema")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let tables = OrchestrateTables::open(&store).expect("tables open");
+    tables
+        .insert_role(&StoredRole::new(
+            operator(),
+            HarnessKind::Codex,
+            WirePath::from_absolute_path("/tmp/operator-reports").expect("report repository"),
+            WirePath::from_absolute_path("/tmp/operator-reports/operator").expect("report lane"),
+        ))
+        .expect("insert role");
+    tables
+        .replace_all_claims(&[
+            StoredClaim::new(
+                operator(),
+                path("/tmp/visible-claim"),
+                reason("visible claim"),
+            ),
+            StoredClaim::new(
+                role("retired-role-never-visible"),
+                path("/tmp/orphan-claim"),
+                reason("orphan claim"),
+            ),
+        ])
+        .expect("insert claims");
+
+    let removed = tables
+        .remove_claims_without_roles()
+        .expect("remove orphan claims");
+    assert_eq!(removed.len(), 1);
+    assert_eq!(
+        removed[0].role.as_wire_token(),
+        "retired-role-never-visible"
+    );
+    let remaining = tables.claim_records().expect("remaining claims");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].role, operator());
 }
 
 #[test]

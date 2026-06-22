@@ -105,10 +105,32 @@ impl<'tables> RoleRegistry<'tables> {
     }
 
     pub fn retire_role(&self, order: RetireRoleOrder) -> Result<MetaOrchestrateReply> {
+        self.tables.remove_claims_for_role(&order.role)?;
         self.tables.remove_role(&order.role)?;
+        RetiredRoleLockFile::new(self.layout, &order.role).remove()?;
         Ok(MetaOrchestrateReply::RoleRetired(RoleRetired {
             role: order.role,
         }))
+    }
+}
+
+struct RetiredRoleLockFile<'role> {
+    layout: &'role OrchestrateLayout,
+    role: &'role RoleName,
+}
+
+impl<'role> RetiredRoleLockFile<'role> {
+    fn new(layout: &'role OrchestrateLayout, role: &'role RoleName) -> Self {
+        Self { layout, role }
+    }
+
+    fn remove(&self) -> Result<()> {
+        let path = self.layout.role_lock_path(self.role);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 }
 

@@ -40,6 +40,7 @@ impl OrchestrateService {
         let tables = OrchestrateTables::open(store)?;
         RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
         LegacyLockImport::new(&tables, &layout).import_if_store_has_no_claims()?;
+        tables.remove_claims_without_roles()?;
         Ok(Self {
             tables,
             layout,
