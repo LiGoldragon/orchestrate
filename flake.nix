@@ -40,6 +40,7 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
+          nativeCheckInputs = [ pkgs.jujutsu ];
         };
         packageArgs = commonArgs // {
           cargoExtraArgs = "--features nota-text";

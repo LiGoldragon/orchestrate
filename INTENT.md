@@ -11,16 +11,16 @@ Synthesised from psyche statements; not embellished.*
 - `orchestrate` should move forward now so the workspace can
   replace the old shell-script orchestration helper with the real
   component.
-- `tools/orchestrate` is the production compatibility surface for
-  agents today: it keeps the old ergonomic argv shape, starts the
-  `orchestrate` daemon when needed, sends typed Signal requests, and
-  treats lock files only as daemon projections.
-- The replacement target is **not** legacy argv compatibility. The
-  real component replacement is the two one-argument NOTA clients
-  talking to `orchestrate-daemon`: `orchestrate` for ordinary working
+- The `orchestrate` component CLI is the production surface for agents:
+  it takes one NOTA request, sends typed Signal requests to
+  `orchestrate-daemon`, and prints one NOTA reply. Lock files are only
+  daemon projections.
+- The replacement target is **not** legacy argv compatibility. The two
+  one-argument NOTA clients talking to `orchestrate-daemon` are the
+  complete production surface: `orchestrate` for ordinary working
   operations and `meta-orchestrate` for meta-policy operations. Callers
-  should migrate to NOTA operations rather than preserve
-  `claim/release/status` argv grammar.
+  migrate to NOTA operations instead of preserving `claim/release/status`
+  argv grammar, and the old compatibility helper is retired.
 - The immediate MVP should create dynamic roles named by the work they
   own, create report lanes for those roles, and track enough typed
   claim state to replace fixed assistant-lane lock files.

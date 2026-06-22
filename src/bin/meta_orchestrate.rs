@@ -13,7 +13,6 @@ use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
 const META_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_META_SOCKET";
-const DEFAULT_META_SOCKET: &str = "/tmp/orchestrate-meta.sock";
 
 fn main() -> ExitCode {
     match MetaOrchestrateCli::from_environment().run() {
@@ -38,11 +37,26 @@ impl MetaOrchestrateCli {
 
     fn run(&self) -> Result<(), MetaOrchestrateCliError> {
         let input = MetaRequestText::new(self.argument_text()?).parse()?;
-        let socket =
-            env::var(META_SOCKET_VARIABLE).unwrap_or_else(|_| String::from(DEFAULT_META_SOCKET));
-        let (_route, output) = MetaSignalTransport::connect(socket)?.exchange(&input)?;
+        let (_route, output) =
+            MetaSignalTransport::connect(self.socket_path()?)?.exchange(&input)?;
         println!("{output}");
         Ok(())
+    }
+
+    fn socket_path(&self) -> Result<String, MetaOrchestrateCliError> {
+        match env::var(META_SOCKET_VARIABLE) {
+            Ok(socket) => Ok(socket),
+            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
+        }
+    }
+
+    fn primary_workspace_socket() -> Result<PathBuf, MetaOrchestrateCliError> {
+        let home =
+            env::var("HOME").map_err(|source| MetaOrchestrateCliError::HomeDirectory { source })?;
+        Ok(PathBuf::from(home)
+            .join("primary")
+            .join("orchestrate")
+            .join("orchestrate-owner.sock"))
     }
 
     fn argument_text(&self) -> Result<String, MetaOrchestrateCliError> {
@@ -90,6 +104,12 @@ enum MetaOrchestrateCliError {
 
     #[error("invalid meta orchestrate request NOTA: {0}")]
     NotaDecode(NotaDecodeError),
+
+    #[error("HOME environment variable is unavailable: {source}")]
+    HomeDirectory {
+        #[source]
+        source: env::VarError,
+    },
 
     #[error("transport error: {0}")]
     Transport(#[from] TransportError),
