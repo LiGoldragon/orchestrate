@@ -6,7 +6,14 @@ use orchestrate::{
     OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, OrchestrateTables,
     PartialApplied, RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim,
     RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, StoreLocation,
-    StoredClaim, StoredRole, TaskToken, WirePath,
+    StoredClaim, StoredRole, TaskToken, WirePath, WorkflowRunRequest,
+};
+use signal_criome::{
+    AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
+    ComponentKind, Contract, EscalationTarget, EvaluationDecision, Evidence, Identity,
+    OperationDigest, RequiredSignatureThreshold, Rule, SignatureEnvelope, SignatureScheme,
+    TimeSignature, TimeWindow, TimestampNanos as CriomeTimestampNanos, WorkflowDigest,
+    WorkflowGuard,
 };
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -174,6 +181,45 @@ fn current_workspace_roles() -> Vec<RoleName> {
     roles
 }
 
+fn signed_time_evidence(operation: OperationDigest) -> (Evidence, criome::language::KeyRegistry) {
+    let timekeeper = criome::master_key::MasterKey::generate().expect("timekeeper key");
+    let timekeeper_identity = Identity::host("timekeeper".to_string());
+    let proposition = AttestedMomentProposition::new(
+        TimeWindow {
+            opens_at: CriomeTimestampNanos::new(1),
+            closes_at: CriomeTimestampNanos::new(2),
+        },
+        RequiredSignatureThreshold::new(1),
+        vec![timekeeper_identity.clone()],
+    );
+    let statement = criome::language::AttestedMomentStatement::new(&proposition)
+        .to_signing_bytes()
+        .expect("time statement");
+    let stamp = AttestedMoment::new(
+        proposition,
+        vec![TimeSignature {
+            signer: timekeeper_identity.clone(),
+            envelope: SignatureEnvelope {
+                scheme: SignatureScheme::Bls12_381MinPk,
+                public_key: timekeeper.public_key(),
+                signature: timekeeper.sign(&statement),
+            },
+        }],
+    );
+    let mut registry = criome::language::KeyRegistry::new();
+    registry.admit(timekeeper_identity, timekeeper.public_key());
+    (
+        Evidence::new(
+            ComponentKind::Spirit,
+            operation,
+            stamp,
+            Vec::new(),
+            Vec::new(),
+        ),
+        registry,
+    )
+}
+
 #[test]
 fn lane_identifier_derivation_follows_role_vector_authority_and_ordinal() {
     let cases = [
@@ -208,6 +254,54 @@ fn lane_identifier_derivation_follows_role_vector_authority_and_ordinal() {
             .expect("derive identifier");
         assert_eq!(lane.as_wire_token(), expected);
     }
+}
+
+#[test]
+fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
+    let workflow = WorkflowDigest::from_bytes(b"fixture workflow");
+    let operation = OperationDigest::from_bytes(b"spirit guarded head");
+    let contract = Contract::new(Rule::workflow(WorkflowGuard {
+        workflow: workflow.clone(),
+        executor: Identity::host("orchestrate".to_string()),
+    }));
+    let mut contracts = criome::language::ContractStore::new();
+    let contract_digest = contracts.admit(contract).expect("admit workflow contract");
+    let object = AuthorizedObjectReference {
+        component: ComponentKind::Spirit,
+        digest: operation.object_digest().clone(),
+        kind: AuthorizedObjectKind::Head,
+    };
+    let (evidence, registry) = signed_time_evidence(operation.clone());
+
+    assert_eq!(
+        contracts
+            .evaluate(&contract_digest, &evidence, &registry)
+            .expect("evaluate without receipt"),
+        EvaluationDecision::Escalate(EscalationTarget::Workflow(workflow.clone()))
+    );
+
+    let mut fixture = Fixture::new("orchestrate-workflow-fixture");
+    let reply = fixture
+        .handle(OrchestrateRequest::RunWorkflow(WorkflowRunRequest {
+            workflow: workflow.clone(),
+            operation: object,
+            contract: contract_digest.clone(),
+        }))
+        .expect("run workflow");
+    let OrchestrateReply::WorkflowReceiptProduced(produced) = reply else {
+        panic!("expected workflow receipt, got {reply:?}");
+    };
+    assert_eq!(produced.receipt.workflow, workflow);
+    assert_eq!(produced.receipt.operation, operation);
+    assert_eq!(produced.receipt.outcome, EvaluationDecision::Authorized);
+
+    let authorized_evidence = evidence.with_workflow_receipts(vec![produced.receipt]);
+    assert_eq!(
+        contracts
+            .evaluate(&contract_digest, &authorized_evidence, &registry)
+            .expect("evaluate with receipt"),
+        EvaluationDecision::Authorized
+    );
 }
 
 #[test]

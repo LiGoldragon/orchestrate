@@ -20,6 +20,7 @@ pub mod signal_transport;
 pub mod socket_retirement;
 pub mod tables;
 pub mod upgrade_frame;
+pub mod workflow;
 pub mod worktree;
 pub mod worktree_projection;
 
@@ -56,7 +57,10 @@ pub use signal_orchestrate::{
     ObservationToken, OperationKind, OrchestrateReply, OrchestrateRequest, PartialApplied,
     PurposeText, PushedState, RepositoryName, Role, RoleClaim, RoleHandoff, RoleIdentifier,
     RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, TaskToken,
-    TimestampNanos, WirePath, Worktree, WorktreeStatus, WorktreesObserved,
+    TimestampNanos, WirePath, WorkflowReceiptProduced, WorkflowRunDigest, WorkflowRunHandle,
+    WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation, WorkflowRunObservationClosed,
+    WorkflowRunObservationOpened, WorkflowRunObservationToken, WorkflowRunRequest,
+    WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
@@ -67,5 +71,6 @@ pub use tables::{
     StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
+pub use workflow::WorkflowRunner;
 pub use worktree::WorktreeRegistry;
 pub use worktree_projection::WorktreeProjection;

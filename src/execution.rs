@@ -9,7 +9,7 @@ use signal_orchestrate::schema::lib as ordinary_schema;
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
     ActivityLedger, ClaimLedger, Error, LaneRegistry, OrchestrateService, RepositoryRegistry,
-    Result, RoleRegistry, WorktreeRegistry,
+    Result, RoleRegistry, WorkflowRunner, WorktreeRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -389,6 +389,15 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ordinary_contract::OrchestrateRequest::Query(query) => {
                 ActivityLedger::new(self.service.tables()).query(query)?
             }
+            ordinary_contract::OrchestrateRequest::RunWorkflow(request) => {
+                WorkflowRunner::fixture()?.run(request)?
+            }
+            ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(observation) => {
+                WorkflowRunner::fixture()?.open_observation(observation)?
+            }
+            ordinary_contract::OrchestrateRequest::WorkflowRunObservationRetraction(token) => {
+                WorkflowRunner::fixture()?.close_observation(token)
+            }
             ordinary_contract::OrchestrateRequest::Watch(_subscription) => {
                 ordinary_contract::OrchestrateReply::ObservationOpened(
                     ordinary_contract::ObservationOpened {
@@ -723,6 +732,675 @@ vector_wrapper_projection!(
     ordinary_contract::Worktree,
     ordinary_schema::Worktree
 );
+impl ProjectInto<ordinary_schema::WorkflowRunDigest> for ordinary_contract::WorkflowRunDigest {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunDigest> {
+        Ok(ordinary_schema::WorkflowRunDigest::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunDigest> for ordinary_schema::WorkflowRunDigest {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunDigest> {
+        ordinary_contract::WorkflowRunDigest::from_wire_token(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowStepName> for ordinary_contract::WorkflowStepName {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowStepName> {
+        Ok(ordinary_schema::WorkflowStepName::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowStepName> for ordinary_schema::WorkflowStepName {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowStepName> {
+        ordinary_contract::WorkflowStepName::from_wire_token(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::ProviderName> for ordinary_contract::ProviderName {
+    fn project_into(self) -> Result<ordinary_schema::ProviderName> {
+        Ok(ordinary_schema::ProviderName::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::ProviderName> for ordinary_schema::ProviderName {
+    fn project_into(self) -> Result<ordinary_contract::ProviderName> {
+        ordinary_contract::ProviderName::from_wire_token(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelName> for ordinary_contract::ModelName {
+    fn project_into(self) -> Result<ordinary_schema::ModelName> {
+        Ok(ordinary_schema::ModelName::new(self.as_str().to_string()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::ModelName> for ordinary_schema::ModelName {
+    fn project_into(self) -> Result<ordinary_contract::ModelName> {
+        ordinary_contract::ModelName::from_wire_token(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::HostName> for ordinary_contract::HostName {
+    fn project_into(self) -> Result<ordinary_schema::HostName> {
+        Ok(ordinary_schema::HostName::new(self.as_str().to_string()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::HostName> for ordinary_schema::HostName {
+    fn project_into(self) -> Result<ordinary_contract::HostName> {
+        ordinary_contract::HostName::from_wire_token(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::ObjectDigest> for signal_criome::ObjectDigest {
+    fn project_into(self) -> Result<ordinary_schema::ObjectDigest> {
+        Ok(ordinary_schema::ObjectDigest::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<signal_criome::ObjectDigest> for ordinary_schema::ObjectDigest {
+    fn project_into(self) -> Result<signal_criome::ObjectDigest> {
+        Ok(signal_criome::ObjectDigest::new(self.into_payload()))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ContractDigest> for signal_criome::ContractDigest {
+    fn project_into(self) -> Result<ordinary_schema::ContractDigest> {
+        Ok(ordinary_schema::ContractDigest::new(
+            self.object_digest().clone().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<signal_criome::ContractDigest> for ordinary_schema::ContractDigest {
+    fn project_into(self) -> Result<signal_criome::ContractDigest> {
+        Ok(signal_criome::ContractDigest::new(
+            self.into_payload().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::OperationDigest> for signal_criome::OperationDigest {
+    fn project_into(self) -> Result<ordinary_schema::OperationDigest> {
+        Ok(ordinary_schema::OperationDigest::new(
+            self.object_digest().clone().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<signal_criome::OperationDigest> for ordinary_schema::OperationDigest {
+    fn project_into(self) -> Result<signal_criome::OperationDigest> {
+        Ok(signal_criome::OperationDigest::new(
+            self.into_payload().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowDigest> for signal_criome::WorkflowDigest {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowDigest> {
+        Ok(ordinary_schema::WorkflowDigest::new(
+            self.object_digest().clone().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<signal_criome::WorkflowDigest> for ordinary_schema::WorkflowDigest {
+    fn project_into(self) -> Result<signal_criome::WorkflowDigest> {
+        Ok(signal_criome::WorkflowDigest::new(
+            self.into_payload().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowProvenanceDigest>
+    for signal_criome::WorkflowProvenanceDigest
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowProvenanceDigest> {
+        Ok(ordinary_schema::WorkflowProvenanceDigest::new(
+            self.object_digest().clone().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<signal_criome::WorkflowProvenanceDigest>
+    for ordinary_schema::WorkflowProvenanceDigest
+{
+    fn project_into(self) -> Result<signal_criome::WorkflowProvenanceDigest> {
+        Ok(signal_criome::WorkflowProvenanceDigest::new(
+            self.into_payload().project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ComponentKind> for signal_criome::ComponentKind {
+    fn project_into(self) -> Result<ordinary_schema::ComponentKind> {
+        Ok(match self {
+            signal_criome::ComponentKind::Spirit => ordinary_schema::ComponentKind::Spirit,
+            signal_criome::ComponentKind::Criome => ordinary_schema::ComponentKind::Criome,
+            signal_criome::ComponentKind::Router => ordinary_schema::ComponentKind::Router,
+            signal_criome::ComponentKind::Mirror => ordinary_schema::ComponentKind::Mirror,
+            signal_criome::ComponentKind::Lojix => ordinary_schema::ComponentKind::Lojix,
+            signal_criome::ComponentKind::Persona => ordinary_schema::ComponentKind::Persona,
+            signal_criome::ComponentKind::Agent => ordinary_schema::ComponentKind::Agent,
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::ComponentKind> for ordinary_schema::ComponentKind {
+    fn project_into(self) -> Result<signal_criome::ComponentKind> {
+        Ok(match self {
+            ordinary_schema::ComponentKind::Spirit => signal_criome::ComponentKind::Spirit,
+            ordinary_schema::ComponentKind::Criome => signal_criome::ComponentKind::Criome,
+            ordinary_schema::ComponentKind::Router => signal_criome::ComponentKind::Router,
+            ordinary_schema::ComponentKind::Mirror => signal_criome::ComponentKind::Mirror,
+            ordinary_schema::ComponentKind::Lojix => signal_criome::ComponentKind::Lojix,
+            ordinary_schema::ComponentKind::Persona => signal_criome::ComponentKind::Persona,
+            ordinary_schema::ComponentKind::Agent => signal_criome::ComponentKind::Agent,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AuthorizedObjectKind> for signal_criome::AuthorizedObjectKind {
+    fn project_into(self) -> Result<ordinary_schema::AuthorizedObjectKind> {
+        Ok(match self {
+            signal_criome::AuthorizedObjectKind::Operation => {
+                ordinary_schema::AuthorizedObjectKind::Operation
+            }
+            signal_criome::AuthorizedObjectKind::Contract => {
+                ordinary_schema::AuthorizedObjectKind::Contract
+            }
+            signal_criome::AuthorizedObjectKind::Agreement => {
+                ordinary_schema::AuthorizedObjectKind::Agreement
+            }
+            signal_criome::AuthorizedObjectKind::Time => {
+                ordinary_schema::AuthorizedObjectKind::Time
+            }
+            signal_criome::AuthorizedObjectKind::Head => {
+                ordinary_schema::AuthorizedObjectKind::Head
+            }
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::AuthorizedObjectKind> for ordinary_schema::AuthorizedObjectKind {
+    fn project_into(self) -> Result<signal_criome::AuthorizedObjectKind> {
+        Ok(match self {
+            ordinary_schema::AuthorizedObjectKind::Operation => {
+                signal_criome::AuthorizedObjectKind::Operation
+            }
+            ordinary_schema::AuthorizedObjectKind::Contract => {
+                signal_criome::AuthorizedObjectKind::Contract
+            }
+            ordinary_schema::AuthorizedObjectKind::Agreement => {
+                signal_criome::AuthorizedObjectKind::Agreement
+            }
+            ordinary_schema::AuthorizedObjectKind::Time => {
+                signal_criome::AuthorizedObjectKind::Time
+            }
+            ordinary_schema::AuthorizedObjectKind::Head => {
+                signal_criome::AuthorizedObjectKind::Head
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AuthorizedObjectReference>
+    for signal_criome::AuthorizedObjectReference
+{
+    fn project_into(self) -> Result<ordinary_schema::AuthorizedObjectReference> {
+        Ok(ordinary_schema::AuthorizedObjectReference {
+            component: self.component.project_into()?,
+            digest: self.digest.project_into()?,
+            kind: self.kind.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::AuthorizedObjectReference>
+    for ordinary_schema::AuthorizedObjectReference
+{
+    fn project_into(self) -> Result<signal_criome::AuthorizedObjectReference> {
+        Ok(signal_criome::AuthorizedObjectReference {
+            component: self.component.project_into()?,
+            digest: self.digest.project_into()?,
+            kind: self.kind.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::EvaluationRejectionReason>
+    for signal_criome::EvaluationRejectionReason
+{
+    fn project_into(self) -> Result<ordinary_schema::EvaluationRejectionReason> {
+        Ok(match self {
+            signal_criome::EvaluationRejectionReason::OutsideTimeWindow => {
+                ordinary_schema::EvaluationRejectionReason::OutsideTimeWindow
+            }
+            signal_criome::EvaluationRejectionReason::TimeNotProven => {
+                ordinary_schema::EvaluationRejectionReason::TimeNotProven
+            }
+            signal_criome::EvaluationRejectionReason::AgreementMissing => {
+                ordinary_schema::EvaluationRejectionReason::AgreementMissing
+            }
+            signal_criome::EvaluationRejectionReason::SignatureMissing(_)
+            | signal_criome::EvaluationRejectionReason::QuorumShort(_) => {
+                return Err(Error::SchemaBridge {
+                    message:
+                        "signal-orchestrate schema mirror cannot carry detailed criome rejection"
+                            .to_string(),
+                });
+            }
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::EvaluationRejectionReason>
+    for ordinary_schema::EvaluationRejectionReason
+{
+    fn project_into(self) -> Result<signal_criome::EvaluationRejectionReason> {
+        Ok(match self {
+            ordinary_schema::EvaluationRejectionReason::OutsideTimeWindow => {
+                signal_criome::EvaluationRejectionReason::OutsideTimeWindow
+            }
+            ordinary_schema::EvaluationRejectionReason::TimeNotProven => {
+                signal_criome::EvaluationRejectionReason::TimeNotProven
+            }
+            ordinary_schema::EvaluationRejectionReason::AgreementMissing => {
+                signal_criome::EvaluationRejectionReason::AgreementMissing
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::EscalationTarget> for signal_criome::EscalationTarget {
+    fn project_into(self) -> Result<ordinary_schema::EscalationTarget> {
+        Ok(match self {
+            signal_criome::EscalationTarget::Psyche => ordinary_schema::EscalationTarget::Psyche,
+            signal_criome::EscalationTarget::Workflow(workflow) => {
+                ordinary_schema::EscalationTarget::Workflow(workflow.project_into()?)
+            }
+            signal_criome::EscalationTarget::SmarterAgent(_) => {
+                return Err(Error::SchemaBridge {
+                    message:
+                        "signal-orchestrate schema mirror cannot carry smarter-agent escalation"
+                            .to_string(),
+                });
+            }
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::EscalationTarget> for ordinary_schema::EscalationTarget {
+    fn project_into(self) -> Result<signal_criome::EscalationTarget> {
+        Ok(match self {
+            ordinary_schema::EscalationTarget::Psyche => signal_criome::EscalationTarget::Psyche,
+            ordinary_schema::EscalationTarget::Workflow(workflow) => {
+                signal_criome::EscalationTarget::Workflow(workflow.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::EvaluationDecision> for signal_criome::EvaluationDecision {
+    fn project_into(self) -> Result<ordinary_schema::EvaluationDecision> {
+        Ok(match self {
+            signal_criome::EvaluationDecision::Authorized => {
+                ordinary_schema::EvaluationDecision::Authorized
+            }
+            signal_criome::EvaluationDecision::Deferred => {
+                ordinary_schema::EvaluationDecision::Deferred
+            }
+            signal_criome::EvaluationDecision::NonJudgement => {
+                ordinary_schema::EvaluationDecision::NonJudgement
+            }
+            signal_criome::EvaluationDecision::Escalate(target) => {
+                ordinary_schema::EvaluationDecision::Escalate(target.project_into()?)
+            }
+            signal_criome::EvaluationDecision::Rejected(reason) => {
+                ordinary_schema::EvaluationDecision::Rejected(reason.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::EvaluationDecision> for ordinary_schema::EvaluationDecision {
+    fn project_into(self) -> Result<signal_criome::EvaluationDecision> {
+        Ok(match self {
+            ordinary_schema::EvaluationDecision::Authorized => {
+                signal_criome::EvaluationDecision::Authorized
+            }
+            ordinary_schema::EvaluationDecision::Deferred => {
+                signal_criome::EvaluationDecision::Deferred
+            }
+            ordinary_schema::EvaluationDecision::NonJudgement => {
+                signal_criome::EvaluationDecision::NonJudgement
+            }
+            ordinary_schema::EvaluationDecision::Escalate(target) => {
+                signal_criome::EvaluationDecision::Escalate(target.project_into()?)
+            }
+            ordinary_schema::EvaluationDecision::Rejected(reason) => {
+                signal_criome::EvaluationDecision::Rejected(reason.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowReceipt> for signal_criome::WorkflowReceipt {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowReceipt> {
+        Ok(ordinary_schema::WorkflowReceipt {
+            workflow: self.workflow.project_into()?,
+            operation: self.operation.project_into()?,
+            outcome: self.outcome.project_into()?,
+            provenance: self.provenance.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<signal_criome::WorkflowReceipt> for ordinary_schema::WorkflowReceipt {
+    fn project_into(self) -> Result<signal_criome::WorkflowReceipt> {
+        Ok(signal_criome::WorkflowReceipt {
+            workflow: self.workflow.project_into()?,
+            operation: self.operation.project_into()?,
+            outcome: self.outcome.project_into()?,
+            provenance: self.provenance.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunRequest> for ordinary_contract::WorkflowRunRequest {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunRequest> {
+        Ok(ordinary_schema::WorkflowRunRequest {
+            workflow: self.workflow.project_into()?,
+            operation: self.operation.project_into()?,
+            contract: self.contract.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunRequest> for ordinary_schema::WorkflowRunRequest {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunRequest> {
+        Ok(ordinary_contract::WorkflowRunRequest {
+            workflow: self.workflow.project_into()?,
+            operation: self.operation.project_into()?,
+            contract: self.contract.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunObservation>
+    for ordinary_contract::WorkflowRunObservation
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunObservation> {
+        Ok(ordinary_schema::WorkflowRunObservation::new(
+            self.run.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunObservation>
+    for ordinary_schema::WorkflowRunObservation
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunObservation> {
+        Ok(ordinary_contract::WorkflowRunObservation {
+            run: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunObservationToken>
+    for ordinary_contract::WorkflowRunObservationToken
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunObservationToken> {
+        Ok(ordinary_schema::WorkflowRunObservationToken::new(
+            self.run.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunObservationToken>
+    for ordinary_schema::WorkflowRunObservationToken
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunObservationToken> {
+        Ok(ordinary_contract::WorkflowRunObservationToken {
+            run: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunHandle> for ordinary_contract::WorkflowRunHandle {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunHandle> {
+        Ok(ordinary_schema::WorkflowRunHandle::new(
+            self.run.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunHandle> for ordinary_schema::WorkflowRunHandle {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunHandle> {
+        Ok(ordinary_contract::WorkflowRunHandle {
+            run: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunAccepted> for ordinary_contract::WorkflowRunAccepted {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunAccepted> {
+        Ok(ordinary_schema::WorkflowRunAccepted::new(
+            self.handle.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunAccepted> for ordinary_schema::WorkflowRunAccepted {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunAccepted> {
+        Ok(ordinary_contract::WorkflowRunAccepted {
+            handle: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowReceiptProduced>
+    for ordinary_contract::WorkflowReceiptProduced
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowReceiptProduced> {
+        Ok(ordinary_schema::WorkflowReceiptProduced {
+            handle: self.handle.project_into()?,
+            receipt: self.receipt.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowReceiptProduced>
+    for ordinary_schema::WorkflowReceiptProduced
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowReceiptProduced> {
+        Ok(ordinary_contract::WorkflowReceiptProduced {
+            handle: self.handle.project_into()?,
+            receipt: self.receipt.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunLogReported>
+    for ordinary_contract::WorkflowRunLogReported
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunLogReported> {
+        Ok(ordinary_schema::WorkflowRunLogReported::new(
+            self.log.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunLogReported>
+    for ordinary_schema::WorkflowRunLogReported
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunLogReported> {
+        Ok(ordinary_contract::WorkflowRunLogReported {
+            log: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunLog> for ordinary_contract::WorkflowRunLog {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunLog> {
+        Ok(ordinary_schema::WorkflowRunLog {
+            run: self.run.project_into()?,
+            step_logs: self.step_logs.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunLog> for ordinary_schema::WorkflowRunLog {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunLog> {
+        Ok(ordinary_contract::WorkflowRunLog {
+            run: self.run.project_into()?,
+            step_logs: self.step_logs.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::StepLog> for ordinary_contract::StepLog {
+    fn project_into(self) -> Result<ordinary_schema::StepLog> {
+        Ok(ordinary_schema::StepLog {
+            step: self.step.project_into()?,
+            attestation: self.attestation.project_into()?,
+            outcome: self.outcome.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::StepLog> for ordinary_schema::StepLog {
+    fn project_into(self) -> Result<ordinary_contract::StepLog> {
+        Ok(ordinary_contract::StepLog {
+            step: self.step.project_into()?,
+            attestation: self.attestation.project_into()?,
+            outcome: self.outcome.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelAttestation> for ordinary_contract::ModelAttestation {
+    fn project_into(self) -> Result<ordinary_schema::ModelAttestation> {
+        Ok(ordinary_schema::ModelAttestation {
+            provider: self.provider.project_into()?,
+            model: self.model.project_into()?,
+            host: self.host.project_into()?,
+            call: self.call.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::ModelAttestation> for ordinary_schema::ModelAttestation {
+    fn project_into(self) -> Result<ordinary_contract::ModelAttestation> {
+        Ok(ordinary_contract::ModelAttestation {
+            provider: self.provider.project_into()?,
+            model: self.model.project_into()?,
+            host: self.host.project_into()?,
+            call: self.call.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::StepOutcome> for ordinary_contract::StepOutcome {
+    fn project_into(self) -> Result<ordinary_schema::StepOutcome> {
+        Ok(match self {
+            ordinary_contract::StepOutcome::Produced(decision) => {
+                ordinary_schema::StepOutcome::Produced(decision.project_into()?)
+            }
+            ordinary_contract::StepOutcome::Failed(reason) => {
+                ordinary_schema::StepOutcome::Failed(reason.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::StepOutcome> for ordinary_schema::StepOutcome {
+    fn project_into(self) -> Result<ordinary_contract::StepOutcome> {
+        Ok(match self {
+            ordinary_schema::StepOutcome::Produced(decision) => {
+                ordinary_contract::StepOutcome::Produced(decision.project_into()?)
+            }
+            ordinary_schema::StepOutcome::Failed(reason) => {
+                ordinary_contract::StepOutcome::Failed(reason.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunSnapshot> for ordinary_contract::WorkflowRunSnapshot {
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunSnapshot> {
+        Ok(ordinary_schema::WorkflowRunSnapshot {
+            handle: self.handle.project_into()?,
+            latest_log: self.latest_log.map(ProjectInto::project_into).transpose()?,
+            receipt: self.receipt.map(ProjectInto::project_into).transpose()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunSnapshot> for ordinary_schema::WorkflowRunSnapshot {
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunSnapshot> {
+        Ok(ordinary_contract::WorkflowRunSnapshot {
+            handle: self.handle.project_into()?,
+            latest_log: self.latest_log.map(ProjectInto::project_into).transpose()?,
+            receipt: self.receipt.map(ProjectInto::project_into).transpose()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunObservationOpened>
+    for ordinary_contract::WorkflowRunObservationOpened
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunObservationOpened> {
+        Ok(ordinary_schema::WorkflowRunObservationOpened {
+            token: self.token.project_into()?,
+            snapshot: self.snapshot.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunObservationOpened>
+    for ordinary_schema::WorkflowRunObservationOpened
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunObservationOpened> {
+        Ok(ordinary_contract::WorkflowRunObservationOpened {
+            token: self.token.project_into()?,
+            snapshot: self.snapshot.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunObservationClosed>
+    for ordinary_contract::WorkflowRunObservationClosed
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunObservationClosed> {
+        Ok(ordinary_schema::WorkflowRunObservationClosed::new(
+            self.token.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunObservationClosed>
+    for ordinary_schema::WorkflowRunObservationClosed
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunObservationClosed> {
+        Ok(ordinary_contract::WorkflowRunObservationClosed {
+            token: self.into_payload().project_into()?,
+        })
+    }
+}
 
 impl ProjectInto<String> for ordinary_contract::RoleIdentifier {
     fn project_into(self) -> Result<String> {
@@ -1396,6 +2074,17 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::Query(payload) => {
                 ordinary_schema::Input::query(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::RunWorkflow(payload) => {
+                ordinary_schema::Input::run_workflow(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(payload) => {
+                ordinary_schema::Input::observe_workflow_run(payload.run.project_into()?)
+            }
+            ordinary_contract::OrchestrateRequest::WorkflowRunObservationRetraction(payload) => {
+                ordinary_schema::Input::workflow_run_observation_retraction(
+                    payload.run.project_into()?,
+                )
+            }
             ordinary_contract::OrchestrateRequest::Watch(payload) => {
                 ordinary_schema::Input::watch(payload.project_into()?)
             }
@@ -1426,6 +2115,17 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             }
             ordinary_schema::Input::Query(payload) => {
                 ordinary_contract::OrchestrateRequest::Query(payload.project_into()?)
+            }
+            ordinary_schema::Input::RunWorkflow(payload) => {
+                ordinary_contract::OrchestrateRequest::RunWorkflow(payload.project_into()?)
+            }
+            ordinary_schema::Input::ObserveWorkflowRun(payload) => {
+                ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(payload.project_into()?)
+            }
+            ordinary_schema::Input::WorkflowRunObservationRetraction(payload) => {
+                ordinary_contract::OrchestrateRequest::WorkflowRunObservationRetraction(
+                    payload.project_into()?,
+                )
             }
             ordinary_schema::Input::Watch(payload) => {
                 ordinary_contract::OrchestrateRequest::Watch(payload.project_into()?)
@@ -1942,6 +2642,23 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::ActivityList(payload) => {
                 ordinary_schema::Output::ActivityList(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::WorkflowRunAccepted(payload) => {
+                ordinary_schema::Output::workflow_run_accepted(payload.handle.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowReceiptProduced(payload) => {
+                ordinary_schema::Output::workflow_receipt_produced(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowRunLogReported(payload) => {
+                ordinary_schema::Output::workflow_run_log_reported(payload.log.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowRunObservationOpened(payload) => {
+                ordinary_schema::Output::workflow_run_observation_opened(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowRunObservationClosed(payload) => {
+                ordinary_schema::Output::workflow_run_observation_closed(
+                    payload.token.project_into()?,
+                )
+            }
             ordinary_contract::OrchestrateReply::PartialApplied(payload) => {
                 ordinary_schema::Output::partial_applied(payload.project_into()?)
             }
@@ -1987,6 +2704,27 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             }
             ordinary_schema::Output::ActivityList(payload) => {
                 ordinary_contract::OrchestrateReply::ActivityList(payload.project_into()?)
+            }
+            ordinary_schema::Output::WorkflowRunAccepted(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowRunAccepted(payload.project_into()?)
+            }
+            ordinary_schema::Output::WorkflowReceiptProduced(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowReceiptProduced(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::WorkflowRunLogReported(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowRunLogReported(payload.project_into()?)
+            }
+            ordinary_schema::Output::WorkflowRunObservationOpened(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowRunObservationOpened(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::WorkflowRunObservationClosed(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowRunObservationClosed(
+                    payload.project_into()?,
+                )
             }
             ordinary_schema::Output::PartialApplied(payload) => {
                 ordinary_contract::OrchestrateReply::PartialApplied(payload.project_into()?)
