@@ -121,4 +121,19 @@ pub enum Error {
 
     #[error("nexus did not produce a signal reply; action route: {route}")]
     NexusDidNotReply { route: String },
+
+    #[error("the state-only nexus engine emitted or received a cross-component effect")]
+    NexusEmittedUnexpectedEffect,
+
+    #[error("the workflow definition carried {step_count} steps; the thin slice runs exactly one")]
+    SingleStepWorkflowRequired { step_count: usize },
+
+    #[error("the agent step {step} did not complete: {detail}")]
+    AgentStepRejected { step: String, detail: String },
+
+    #[error("the agent step {step} completion did not decode into a step outcome: {detail}")]
+    StepOutcomeUndecodable { step: String, detail: String },
+
+    #[error("the workflow run produced no decisive outcome for the combination rule")]
+    CombinationIndecisive,
 }

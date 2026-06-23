@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "agent"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/agent.git?branch=main#a69b00dba1ce23bc909e08d364f5078c19987175"
+dependencies = [
+ "meta-signal-agent",
+ "nota-next",
+ "rkyv",
+ "schema-rust-next",
+ "signal-agent",
+ "signal-frame",
+ "thiserror",
+ "tokio",
+ "triad-runtime",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -358,6 +374,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
+name = "meta-signal-agent"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-agent.git?branch=main#65ec99f3a2035d5410c411e26e7b65325b6235e1"
+dependencies = [
+ "nota-next",
+ "rkyv",
+ "schema-rust-next",
+ "signal-frame",
+ "thiserror",
+]
+
+[[package]]
 name = "meta-signal-criome"
 version = "0.2.0"
 source = "git+https://github.com/LiGoldragon/meta-signal-criome.git?branch=main#47a27e84cc3f4ac08569ac476ac40d97054280f8"
@@ -452,6 +480,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "orchestrate"
 version = "0.4.1"
 dependencies = [
+ "agent",
  "criome",
  "meta-signal-orchestrate",
  "nota-next",
@@ -459,6 +488,7 @@ dependencies = [
  "schema-next",
  "schema-rust-next",
  "sema-engine",
+ "signal-agent",
  "signal-criome",
  "signal-frame",
  "signal-orchestrate",
@@ -711,6 +741,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signal-agent"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/signal-agent.git?branch=main#8b395f3c9fb30e892bb6ba21ae67383ce5f80a51"
+dependencies = [
+ "nota-next",
+ "rkyv",
+ "schema-rust-next",
+ "signal-frame",
+ "thiserror",
+]
+
+[[package]]
 name = "signal-criome"
 version = "0.3.0"
 source = "git+https://github.com/LiGoldragon/signal-criome.git?branch=main#7b3d5b2fc733ab1a02fc0b18018946d292d4314f"
@@ -744,6 +786,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
 ]
 
 [[package]]
@@ -880,6 +932,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "tracing",

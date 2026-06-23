@@ -39,6 +39,11 @@ fn resolver() -> ImportResolver {
             ),
             "0.3.0",
         )
+        .with_dependency(
+            "signal-agent",
+            dependency_schema_directory("ORCHESTRATE_TEST_SIGNAL_AGENT_SCHEMA_DIR", "signal-agent"),
+            "0.2.0",
+        )
         .with_package(schema_next::SchemaPackage::new(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             "orchestrate",

@@ -21,6 +21,7 @@ pub mod socket_retirement;
 pub mod tables;
 pub mod upgrade_frame;
 pub mod workflow;
+pub mod workflow_engine;
 pub mod worktree;
 pub mod worktree_projection;
 
@@ -72,5 +73,6 @@ pub use tables::{
 };
 pub use upgrade_frame::UpgradeRequestFrame;
 pub use workflow::WorkflowRunner;
+pub use workflow_engine::WorkflowEngine;
 pub use worktree::WorktreeRegistry;
 pub use worktree_projection::WorktreeProjection;

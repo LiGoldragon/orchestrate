@@ -7,6 +7,9 @@
   SemaReadOutput orchestrate:sema:SemaReadOutput
   SemaWriteInput orchestrate:sema:SemaWriteInput
   SemaWriteOutput orchestrate:sema:SemaWriteOutput
+  Prompt signal-agent:lib:Prompt
+  Completion signal-agent:lib:Completion
+  WorkflowStepName signal-orchestrate:lib:WorkflowStepName
 }
 [NexusWork]
 [NexusAction]
@@ -14,14 +17,31 @@
   SignalArrived SignalInput
   SemaReadCompleted SemaReadOutput
   SemaWriteCompleted SemaWriteOutput
+  EffectCompleted EffectOutput
 
   CommandSemaRead SemaReadInput
   CommandSemaWrite SemaWriteInput
+  CommandEffect EffectInput
   ReplyToSignal SignalOutput
   Continue NexusWork
 
   SignalInput [(OrdinaryInput OrdinaryInput) (MetaInput MetaInput)]
   SignalOutput [(OrdinaryOutput OrdinaryOutput) (MetaOutput MetaOutput)]
-  NexusWork [(SignalArrived SignalArrived) (SemaReadCompleted SemaReadCompleted) (SemaWriteCompleted SemaWriteCompleted)]
-  NexusAction [(CommandSemaRead CommandSemaRead) (CommandSemaWrite CommandSemaWrite) (ReplyToSignal ReplyToSignal) (Continue Continue)]
+
+  ;; The cross-component effect plane: orchestrate calls OUT to the agent
+  ;; component (its FixtureProvider in the thin slice) to run one workflow step,
+  ;; mirroring agent's own CallProvider effect. The agent HTTPS call stays inside
+  ;; agent; orchestrate's effect is the agent Signal call, awaited off the engine
+  ;; mailbox (never blocking a handler).
+  ;; The call carries the step name and the agent Prompt; the completed effect
+  ;; carries the step name and the agent's raw Completion. orchestrate parses the
+  ;; NOTA completion into its own typed StepOutcome + ModelAttestation off the
+  ;; wire mirror, in the engine (the contract runtime nouns).
+  EffectInput [(CallAgent AgentStepCall)]
+  EffectOutput [(AgentStepCompleted AgentStepResult)]
+  AgentStepCall { step.WorkflowStepName Prompt }
+  AgentStepResult { step.WorkflowStepName Completion }
+
+  NexusWork [(SignalArrived SignalArrived) (SemaReadCompleted SemaReadCompleted) (SemaWriteCompleted SemaWriteCompleted) (EffectCompleted EffectCompleted)]
+  NexusAction [(CommandSemaRead CommandSemaRead) (CommandSemaWrite CommandSemaWrite) (CommandEffect CommandEffect) (ReplyToSignal ReplyToSignal) (Continue Continue)]
 }

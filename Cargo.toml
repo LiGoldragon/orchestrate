@@ -35,18 +35,30 @@ name = "daemon_cli"
 path = "tests/daemon_cli.rs"
 required-features = ["nota-text"]
 
+# The thin end-to-end workflow-engine proof drives the offline fixture agent and
+# decodes the NOTA completion into a signal-criome EvaluationDecision, so it needs
+# the NOTA text codec active.
+[[test]]
+name = "workflow_engine_thin_slice"
+path = "tests/workflow_engine_thin_slice.rs"
+required-features = ["nota-text"]
+
 [features]
 default   = []
 nota-text = [
     "signal-orchestrate/nota-text",
     "meta-signal-orchestrate/nota-text",
+    "signal-agent/nota-text",
+    "signal-criome/nota-text",
 ]
 
 [dependencies]
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "main" }
-signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
+signal-criome               = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
+signal-agent                = { git = "https://github.com/LiGoldragon/signal-agent.git", branch = "main" }
+agent                       = { git = "https://github.com/LiGoldragon/agent.git", branch = "main", default-features = false }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
@@ -61,8 +73,8 @@ tokio                       = { version = "1", features = ["rt-multi-thread", "i
 schema-rust-next = { git = "https://github.com/LiGoldragon/schema-rust-next.git", branch = "main" }
 
 [dev-dependencies]
-criome = { git = "https://github.com/LiGoldragon/criome.git", branch = "main" }
 schema-next = { git = "https://github.com/LiGoldragon/schema-next.git", branch = "main" }
+criome = { git = "https://github.com/LiGoldragon/criome.git", branch = "main" }
 tempfile = "3"
 
 [lints.rust]

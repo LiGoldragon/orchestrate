@@ -112,6 +112,12 @@ impl<'service> OrchestrateNexusEngine<'service> {
                     work = nexus_schema::NexusWork::sema_read_completed(output)
                         .with_origin_route(origin_route);
                 }
+                nexus_schema::NexusAction::CommandEffect(_) => {
+                    // The state-only nexus engine never emits a cross-component
+                    // effect; the effect plane belongs to `WorkflowEngine`, which
+                    // runs its own runner. Reaching here is a logic error.
+                    return Err(Error::NexusEmittedUnexpectedEffect);
+                }
                 nexus_schema::NexusAction::Continue(next) => {
                     work = next.into_payload().with_origin_route(origin_route);
                 }
@@ -273,6 +279,13 @@ impl nexus_schema::NexusEngine for OrchestrateNexusEngine<'_> {
             }
             nexus_schema::NexusWork::SemaWriteCompleted(output) => {
                 self.project_sema_write_completed(output.into_payload())
+            }
+            nexus_schema::NexusWork::EffectCompleted(_) => {
+                // The state-only engine never dispatches an effect, so it can
+                // never receive a completion. Surface it as a logic error and
+                // fall back to the rejection reply.
+                self.last_error = Some(Error::NexusEmittedUnexpectedEffect);
+                nexus_schema::NexusAction::reply_to_signal(self.rejection_output())
             }
         };
         action.with_origin_route(origin_route)
