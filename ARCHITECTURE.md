@@ -46,6 +46,28 @@ GitHub/ghq remote creation after the raw shape is useful. A component
 may ship in raw form before full cross-component wiring; the raw form
 still follows the triad.
 
+Per archived intent `5d5o`, `orchestrate` is kept on the current triad,
+signal, sema, and runtime crate set: the path forward is updating the
+component dependency surface, not compatibility-helper lockfile work.
+
+Per archived intent `potn`, dynamic topic-named lanes are the target lane
+model. A lane is a unique work-session identity for lock ownership and agent
+flow — such as `design-psyche-alignment` — and discipline or role becomes
+metadata for skill and authority loading rather than the whole lane name. The
+current fixed role-shaped lanes remain a compatibility shim until orchestrate
+supports dynamic lane registration. (`udgu`'s decision — lane and claim
+management runs through the orchestrate daemon's one-argument ordinary/meta
+NOTA CLIs as the complete production surface, with the older `tools/orchestrate`
+helper retired rather than maintained — is already stated in **Status**, the
+**TL;DR**, and **§8 Invariants**.)
+
+Per archived intent `irmw`, roles in the lane registry are NOTA vectors of
+identifier tokens (e.g. `[PersonaSignal Designer]`). The last token is the
+base discipline (authority chain plus skill loading); preceding tokens are
+specializations. The filesystem form is the hyphen-joined lowercase rendering
+(`[Note Designer]` → `note-designer`). Tokens are open identifiers; ordinal
+prefixes (`second-`, `third-`) only disambiguate same-role lanes.
+
 ## 0 - TL;DR
 
 `orchestrate` owns orchestration machinery. `mind`
