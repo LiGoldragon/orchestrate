@@ -25,6 +25,27 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > started by deployment/session setup rather than by keeping a
 > compatibility grammar alive.
 
+## Direction
+
+The psyche wants `orchestrate` to move forward now so the workspace can
+replace the old shell-script orchestration helper with the real
+component. The replacement target is not legacy argv compatibility: the
+two one-argument NOTA clients talking to `orchestrate-daemon` are the
+complete production surface, and callers migrate to NOTA operations
+instead of preserving the `claim/release/status` argv grammar.
+
+The immediate MVP creates dynamic roles named by the work they own,
+creates report lanes for those roles, and tracks enough typed claim
+state to replace the fixed assistant-lane lock files. Harness assignment
+is a typed role field — `Codex` or `Claude` in the MVP — never hidden
+inside the role string.
+
+Repository management starts from local checkouts: refresh local
+repository state and link checkouts into the workspace first, then add
+GitHub/ghq remote creation after the raw shape is useful. A component
+may ship in raw form before full cross-component wiring; the raw form
+still follows the triad.
+
 ## 0 - TL;DR
 
 `orchestrate` owns orchestration machinery. `mind`
