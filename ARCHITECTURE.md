@@ -358,6 +358,14 @@ Task scopes render in bracketed human form:
   orchestrate. Completion retires the ordinary and meta socket paths;
   the upgrade socket remains available for private recovery protocol.
 - BEADS is never an owned claim scope.
+- Worktree lifecycle transitions flow through meta-signal:
+  `RegisterWorktree` upserts a record; `RefreshWorktreeIndex` re-scans
+  the filesystem as a discovery floor; `ArchiveWorktree` moves a named
+  path to `WorktreeStatus::Archived` and reprojects `worktrees.nota`.
+  `WorktreeProjection::gc_candidates` reads that file back and returns
+  entries in `Archived` or `Recycled` status; the daemon or an external
+  agent acts on them. Infrastructure-minted fields (`last_activity`,
+  `pushed_state`) are derived from `jj` by the daemon, never agent-supplied.
 
 ## 8 - Invariants
 
@@ -394,6 +402,13 @@ src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
 src/role.rs       meta role creation and retirement handlers
 src/repository.rs local repository-index refresh handler
+src/worktree.rs   worktree registry: register, refresh-index, and archive
+                  lifecycle handlers; `WorktreePathProbe` derives
+                  `PushedState` and `last_activity` from `jj`
+src/worktree_projection.rs
+                  `worktrees.nota` GC manifest writer (`project`) and
+                  reader (`gc_candidates`) — returns entries in
+                  `Archived` or `Recycled` status for external GC
 src/service.rs    ordinary, meta, and upgrade request dispatch
 src/main.rs       daemon binary, one NOTA config argument
 src/bin/orchestrate.rs

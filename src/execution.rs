@@ -457,6 +457,12 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.service.project_worktrees()?;
                 reply
             }
+            meta_contract::MetaOrchestrateRequest::ArchiveWorktree(order) => {
+                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .archive(order)?;
+                self.service.project_worktrees()?;
+                reply
+            }
         };
         Ok(reply)
     }
@@ -2879,6 +2885,34 @@ impl ProjectInto<meta_contract::WorktreeIndexRefreshed> for meta_schema::Worktre
     }
 }
 
+impl ProjectInto<meta_schema::ArchiveWorktreeOrder> for meta_contract::ArchiveWorktreeOrder {
+    fn project_into(self) -> Result<meta_schema::ArchiveWorktreeOrder> {
+        Ok(meta_schema::ArchiveWorktreeOrder::new(self.path.project_into()?))
+    }
+}
+
+impl ProjectInto<meta_contract::ArchiveWorktreeOrder> for meta_schema::ArchiveWorktreeOrder {
+    fn project_into(self) -> Result<meta_contract::ArchiveWorktreeOrder> {
+        Ok(meta_contract::ArchiveWorktreeOrder {
+            path: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::WorktreeArchived> for meta_contract::WorktreeArchived {
+    fn project_into(self) -> Result<meta_schema::WorktreeArchived> {
+        Ok(meta_schema::WorktreeArchived::new(self.worktree.project_into()?))
+    }
+}
+
+impl ProjectInto<meta_contract::WorktreeArchived> for meta_schema::WorktreeArchived {
+    fn project_into(self) -> Result<meta_contract::WorktreeArchived> {
+        Ok(meta_contract::WorktreeArchived {
+            worktree: self.into_payload().project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_schema::LaneRegistrationRequest> {
         Ok(meta_schema::LaneRegistrationRequest {
@@ -2939,6 +2973,9 @@ impl ProjectInto<meta_schema::Input> for meta_contract::MetaOrchestrateRequest {
             meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(payload) => {
                 meta_schema::Input::refresh_worktree_index(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateRequest::ArchiveWorktree(payload) => {
+                meta_schema::Input::archive_worktree(payload.path.project_into()?)
+            }
         })
     }
 }
@@ -2966,6 +3003,9 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequest> for meta_schema::Input {
             }
             meta_schema::Input::RefreshWorktreeIndex(payload) => {
                 meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(payload.project_into()?)
+            }
+            meta_schema::Input::ArchiveWorktree(payload) => {
+                meta_contract::MetaOrchestrateRequest::ArchiveWorktree(payload.project_into()?)
             }
         })
     }
@@ -3147,6 +3187,9 @@ impl ProjectInto<meta_schema::MetaOperationKind> for meta_contract::MetaOperatio
             meta_contract::MetaOperationKind::RefreshWorktreeIndex => {
                 meta_schema::MetaOperationKind::RefreshWorktreeIndex
             }
+            meta_contract::MetaOperationKind::ArchiveWorktree => {
+                meta_schema::MetaOperationKind::ArchiveWorktree
+            }
         })
     }
 }
@@ -3166,6 +3209,9 @@ impl ProjectInto<meta_contract::MetaOperationKind> for meta_schema::MetaOperatio
             }
             meta_schema::MetaOperationKind::RefreshWorktreeIndex => {
                 meta_contract::MetaOperationKind::RefreshWorktreeIndex
+            }
+            meta_schema::MetaOperationKind::ArchiveWorktree => {
+                meta_contract::MetaOperationKind::ArchiveWorktree
             }
         })
     }
@@ -3253,6 +3299,9 @@ impl ProjectInto<meta_schema::Output> for meta_contract::MetaOrchestrateReply {
             meta_contract::MetaOrchestrateReply::WorktreeIndexRefreshed(payload) => {
                 meta_schema::Output::worktree_index_refreshed(u64::from(payload.worktrees()))
             }
+            meta_contract::MetaOrchestrateReply::WorktreeArchived(payload) => {
+                meta_schema::Output::worktree_archived(payload.worktree.project_into()?)
+            }
             meta_contract::MetaOrchestrateReply::PartialApplied(payload) => {
                 meta_schema::Output::partial_applied(payload.project_into()?)
             }
@@ -3294,6 +3343,9 @@ impl ProjectInto<meta_contract::MetaOrchestrateReply> for meta_schema::Output {
             }
             meta_schema::Output::WorktreeIndexRefreshed(payload) => {
                 meta_contract::MetaOrchestrateReply::WorktreeIndexRefreshed(payload.project_into()?)
+            }
+            meta_schema::Output::WorktreeArchived(payload) => {
+                meta_contract::MetaOrchestrateReply::WorktreeArchived(payload.project_into()?)
             }
             meta_schema::Output::PartialApplied(payload) => {
                 meta_contract::MetaOrchestrateReply::PartialApplied(payload.project_into()?)

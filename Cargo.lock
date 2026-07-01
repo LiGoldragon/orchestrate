@@ -372,7 +372,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#77009da7a856acae66694f95f4fb42080142dda5"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#2fa05874517b9284b7144d66b48dcdbb6895126d"
 dependencies = [
  "nota-next",
  "rkyv",

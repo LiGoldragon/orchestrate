@@ -121,4 +121,7 @@ pub enum Error {
 
     #[error("nexus did not produce a signal reply; action route: {route}")]
     NexusDidNotReply { route: String },
+
+    #[error("worktree not found for archive transition: {path}")]
+    WorktreeNotFound { path: String },
 }

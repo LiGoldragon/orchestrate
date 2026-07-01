@@ -13,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use meta_signal_orchestrate::{
-    MetaOrchestrateReply, RegisterWorktree, WorktreeIndexRefreshed, WorktreeRegistered,
+    ArchiveWorktreeOrder, MetaOrchestrateReply, RegisterWorktree, WorktreeArchived,
+    WorktreeIndexRefreshed, WorktreeRegistered,
 };
 use signal_orchestrate::{
     BranchName, LaneName, OrchestrateReply, PurposeText, PushedState, RepositoryName,
@@ -108,6 +109,27 @@ impl<'tables> WorktreeRegistry<'tables> {
         Ok(MetaOrchestrateReply::WorktreeIndexRefreshed(
             WorktreeIndexRefreshed::new(worktrees.len().min(u32::MAX as usize) as u32),
         ))
+    }
+
+    /// Transition a single registered worktree to [`WorktreeStatus::Archived`].
+    ///
+    /// Scans all table rows for the first entry whose path matches
+    /// `order.path`, updates its status to `Archived`, re-inserts it, and
+    /// returns the updated [`Worktree`] as the ack. Returns
+    /// [`Error::WorktreeNotFound`] when no registered worktree carries that path.
+    pub fn archive(&self, order: ArchiveWorktreeOrder) -> Result<MetaOrchestrateReply> {
+        let records = self.tables.worktree_records()?;
+        let mut stored = records
+            .into_iter()
+            .find(|r| r.path.as_str() == order.path.as_str())
+            .ok_or_else(|| Error::WorktreeNotFound {
+                path: order.path.as_str().to_owned(),
+            })?;
+        stored.status = WorktreeStatus::Archived;
+        self.tables.insert_worktree(&stored)?;
+        Ok(MetaOrchestrateReply::WorktreeArchived(WorktreeArchived {
+            worktree: Worktree::from(stored),
+        }))
     }
 
     /// Read the worktree table, ordered by `(repository, branch)`.
