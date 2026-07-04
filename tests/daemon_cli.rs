@@ -366,13 +366,11 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let SchemaOutput::RoleSnapshot(snapshot) = reply else {
         panic!("expected role snapshot, got {reply:?}");
     };
-    assert!(
-        snapshot
-            .roles
-            .payload()
-            .iter()
-            .any(|status| status.role == schema_role_name)
-    );
+    assert!(snapshot
+        .roles
+        .payload()
+        .iter()
+        .any(|status| status.role == schema_role_name));
 
     let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
         role: schema_role_name,
@@ -425,17 +423,15 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
             status.role == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
         })
         .expect("system-operator role");
-    assert!(
-        system_operator
-            .claims
-            .payload()
-            .iter()
-            .any(|claim| matches!(
-                &claim.scope,
-                SchemaScopeReference::Path(path)
-                    if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
-            ))
-    );
+    assert!(system_operator
+        .claims
+        .payload()
+        .iter()
+        .any(|claim| matches!(
+            &claim.scope,
+            SchemaScopeReference::Path(path)
+                if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
+        )));
 }
 
 // The version-handover upgrade socket is the daemon's third listener tier. The
@@ -534,12 +530,10 @@ fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lane snapshot");
     };
-    assert!(
-        lanes
-            .lanes
-            .iter()
-            .any(|lane| lane.lane.as_wire_token() == "schema-designer-assistant")
-    );
+    assert!(lanes
+        .lanes
+        .iter()
+        .any(|lane| lane.lane.as_wire_token() == "schema-designer-assistant"));
 }
 
 #[test]
@@ -694,4 +688,120 @@ fn component_clis_reject_the_other_contract_tier() {
         .expect("meta cli output");
     assert!(!meta_output.status.success());
     assert!(String::from_utf8_lossy(&meta_output.stderr).contains("invalid meta orchestrate"));
+}
+
+#[test]
+fn ordinary_cli_rejects_bad_default_and_override_socket_paths_with_source() {
+    let request = encode_nota(&SchemaInput::Observe(SchemaObservation::Roles));
+    let missing_default = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
+        .env_remove("XDG_RUNTIME_DIR")
+        .env_remove("PERSONA_ORCHESTRATE_SOCKET")
+        .arg(&request)
+        .output()
+        .expect("ordinary cli output");
+    assert!(!missing_default.status.success());
+    let stderr = String::from_utf8_lossy(&missing_default.stderr);
+    assert!(stderr.contains("XDG_RUNTIME_DIR"), "stderr was {stderr}");
+
+    let empty_default = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
+        .env("XDG_RUNTIME_DIR", "")
+        .env_remove("PERSONA_ORCHESTRATE_SOCKET")
+        .arg(&request)
+        .output()
+        .expect("ordinary cli output");
+    assert!(!empty_default.status.success());
+    let stderr = String::from_utf8_lossy(&empty_default.stderr);
+    assert!(stderr.contains("XDG_RUNTIME_DIR"), "stderr was {stderr}");
+    assert!(stderr.contains("is empty"), "stderr was {stderr}");
+
+    let relative_override = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
+        .env("XDG_RUNTIME_DIR", "/tmp")
+        .env("PERSONA_ORCHESTRATE_SOCKET", "relative.sock")
+        .arg(&request)
+        .output()
+        .expect("ordinary cli output");
+    assert!(!relative_override.status.success());
+    let stderr = String::from_utf8_lossy(&relative_override.stderr);
+    assert!(
+        stderr.contains("PERSONA_ORCHESTRATE_SOCKET"),
+        "stderr was {stderr}"
+    );
+    assert!(stderr.contains("relative.sock"), "stderr was {stderr}");
+}
+
+#[test]
+fn meta_cli_rejects_relative_socket_override_with_source() {
+    let request = encode_nota(&MetaSchemaInput::Create(SchemaCreateRoleOrder {
+        role: SchemaRoleIdentifier::new("bad-socket-role"),
+        harness: SchemaHarnessKind::Codex,
+    }));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_meta-orchestrate"))
+        .env("XDG_RUNTIME_DIR", "/tmp")
+        .env("PERSONA_ORCHESTRATE_META_SOCKET", "relative-meta.sock")
+        .arg(request)
+        .output()
+        .expect("meta cli output");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("PERSONA_ORCHESTRATE_META_SOCKET"),
+        "stderr was {stderr}"
+    );
+    assert!(stderr.contains("relative-meta.sock"), "stderr was {stderr}");
+}
+
+#[test]
+fn ordinary_cli_connect_error_names_socket_path_and_source() {
+    let directory = TempDir::new().expect("tempdir");
+    let socket_path = directory.path().join("missing.sock");
+    let request = encode_nota(&SchemaInput::Observe(SchemaObservation::Roles));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
+        .env("XDG_RUNTIME_DIR", directory.path())
+        .env("PERSONA_ORCHESTRATE_SOCKET", &socket_path)
+        .arg(request)
+        .output()
+        .expect("ordinary cli output");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&socket_path.display().to_string()),
+        "stderr was {stderr}"
+    );
+    assert!(
+        stderr.contains("PERSONA_ORCHESTRATE_SOCKET"),
+        "stderr was {stderr}"
+    );
+}
+
+#[test]
+fn configuration_writer_rejects_relative_paths_before_creating_directories() {
+    let directory = TempDir::new().expect("tempdir");
+    let absolute = directory.path();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_orchestrate-write-configuration"))
+        .current_dir(absolute)
+        .args([
+            "relative/daemon.signal".to_string(),
+            absolute.join("store.sema").display().to_string(),
+            absolute.join("ordinary.sock").display().to_string(),
+            absolute.join("meta.sock").display().to_string(),
+            absolute.join("upgrade.sock").display().to_string(),
+            absolute.join("workspace").display().to_string(),
+            absolute.join("git-index").display().to_string(),
+        ])
+        .output()
+        .expect("writer output");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("signal_path"), "stderr was {stderr}");
+    assert!(stderr.contains("relative"), "stderr was {stderr}");
+    assert!(
+        !absolute.join("relative").exists(),
+        "writer must fail before mutating cwd for a relative signal path"
+    );
 }

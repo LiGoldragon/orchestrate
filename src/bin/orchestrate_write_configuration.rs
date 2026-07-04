@@ -7,9 +7,10 @@
 use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 use orchestrate::{
-    ConfigurationError, DaemonConfiguration, Error as OrchestrateError, layout::wire_path,
+    layout::wire_path, ConfigurationError, DaemonConfiguration, Error as OrchestrateError,
 };
 use thiserror::Error;
+use triad_runtime::{AbsoluteRuntimePath, RuntimePathError, SocketPathSource};
 
 const REQUIRED_ARGUMENT_COUNT: usize = 7;
 
@@ -41,13 +42,13 @@ impl DaemonConfigurationWriter {
 }
 
 struct DaemonConfigurationArguments {
-    signal_path: PathBuf,
-    store_path: PathBuf,
-    ordinary_socket_path: PathBuf,
-    meta_socket_path: PathBuf,
-    upgrade_socket_path: PathBuf,
-    workspace_root: PathBuf,
-    git_index_root: PathBuf,
+    signal_path: AbsoluteRuntimePath,
+    store_path: AbsoluteRuntimePath,
+    ordinary_socket_path: AbsoluteRuntimePath,
+    meta_socket_path: AbsoluteRuntimePath,
+    upgrade_socket_path: AbsoluteRuntimePath,
+    workspace_root: AbsoluteRuntimePath,
+    git_index_root: AbsoluteRuntimePath,
 }
 
 impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
@@ -60,29 +61,15 @@ impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
                 actual: arguments.len(),
             });
         }
-        let mut paths = arguments.into_iter().map(PathBuf::from);
+        let mut paths = arguments.into_iter();
         Ok(Self {
-            signal_path: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            store_path: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            ordinary_socket_path: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            meta_socket_path: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            upgrade_socket_path: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            workspace_root: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
-            git_index_root: paths
-                .next()
-                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            signal_path: ArgumentPath::required("signal_path", &mut paths)?,
+            store_path: ArgumentPath::required("store_path", &mut paths)?,
+            ordinary_socket_path: ArgumentPath::required("ordinary_socket_path", &mut paths)?,
+            meta_socket_path: ArgumentPath::required("meta_socket_path", &mut paths)?,
+            upgrade_socket_path: ArgumentPath::required("upgrade_socket_path", &mut paths)?,
+            workspace_root: ArgumentPath::required("workspace_root", &mut paths)?,
+            git_index_root: ArgumentPath::required("git_index_root", &mut paths)?,
         })
     }
 }
@@ -90,22 +77,24 @@ impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
 impl DaemonConfigurationArguments {
     fn write(self) -> Result<(), DaemonConfigurationWriterError> {
         self.create_runtime_directories()?;
-        std::fs::write(&self.signal_path, self.configuration()?.to_signal_bytes()?).map_err(
-            |source| DaemonConfigurationWriterError::WriteSignalFile {
-                path: self.signal_path,
+        let bytes = self.configuration()?.to_signal_bytes()?;
+        let signal_path = self.signal_path.into_path_buf();
+        std::fs::write(&signal_path, bytes).map_err(|source| {
+            DaemonConfigurationWriterError::WriteSignalFile {
+                path: signal_path,
                 source,
-            },
-        )
+            }
+        })
     }
 
     fn configuration(&self) -> Result<DaemonConfiguration, DaemonConfigurationWriterError> {
         Ok(DaemonConfiguration::new(
-            wire_path(&self.store_path)?,
-            wire_path(&self.ordinary_socket_path)?,
-            wire_path(&self.meta_socket_path)?,
-            wire_path(&self.upgrade_socket_path)?,
-            wire_path(&self.workspace_root)?,
-            wire_path(&self.git_index_root)?,
+            wire_path(self.store_path.as_path())?,
+            wire_path(self.ordinary_socket_path.as_path())?,
+            wire_path(self.meta_socket_path.as_path())?,
+            wire_path(self.upgrade_socket_path.as_path())?,
+            wire_path(self.workspace_root.as_path())?,
+            wire_path(self.git_index_root.as_path())?,
         ))
     }
 
@@ -118,17 +107,35 @@ impl DaemonConfigurationArguments {
     }
 }
 
+struct ArgumentPath;
+
+impl ArgumentPath {
+    fn required(
+        field: &'static str,
+        paths: &mut impl Iterator<Item = OsString>,
+    ) -> Result<AbsoluteRuntimePath, DaemonConfigurationWriterError> {
+        let path = paths
+            .next()
+            .ok_or(DaemonConfigurationWriterError::MissingArgument)?;
+        AbsoluteRuntimePath::try_new(
+            SocketPathSource::configuration_field(field),
+            PathBuf::from(path),
+        )
+        .map_err(DaemonConfigurationWriterError::RuntimePath)
+    }
+}
+
 struct PathPreparation<'path> {
-    path: &'path PathBuf,
+    path: &'path AbsoluteRuntimePath,
 }
 
 impl<'path> PathPreparation<'path> {
-    fn new(path: &'path PathBuf) -> Self {
+    fn new(path: &'path AbsoluteRuntimePath) -> Self {
         Self { path }
     }
 
     fn create_parent(&self) -> Result<(), DaemonConfigurationWriterError> {
-        match self.path.parent() {
+        match self.path.as_path().parent() {
             Some(parent) => std::fs::create_dir_all(parent).map_err(|source| {
                 DaemonConfigurationWriterError::CreateDirectory {
                     path: parent.to_path_buf(),
@@ -136,7 +143,7 @@ impl<'path> PathPreparation<'path> {
                 }
             }),
             None => Err(DaemonConfigurationWriterError::ParentlessPath {
-                path: self.path.clone(),
+                path: self.path.as_path().to_path_buf(),
             }),
         }
     }
@@ -152,6 +159,9 @@ enum DaemonConfigurationWriterError {
 
     #[error("invalid orchestrate path: {0}")]
     Path(#[from] OrchestrateError),
+
+    #[error("invalid runtime path: {0}")]
+    RuntimePath(#[from] RuntimePathError),
 
     #[error("configuration encode failed: {0}")]
     Configuration(#[from] ConfigurationError),
