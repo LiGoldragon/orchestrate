@@ -16,6 +16,8 @@ use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
 const ORDINARY_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_SOCKET";
+const DEFAULT_SOCKET_DIRECTORY: &str = "orchestrate";
+const ORDINARY_SOCKET_FILE: &str = "orchestrate.sock";
 
 fn main() -> ExitCode {
     match OrchestrateCli::from_environment().run() {
@@ -49,17 +51,8 @@ impl OrchestrateCli {
     fn socket_path(&self) -> Result<String, OrchestrateCliError> {
         match env::var(ORDINARY_SOCKET_VARIABLE) {
             Ok(socket) => Ok(socket),
-            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
+            Err(_) => Ok(RuntimeSocketPath::ordinary()?.display().to_string()),
         }
-    }
-
-    fn primary_workspace_socket() -> Result<PathBuf, OrchestrateCliError> {
-        let home =
-            env::var("HOME").map_err(|source| OrchestrateCliError::HomeDirectory { source })?;
-        Ok(PathBuf::from(home)
-            .join("primary")
-            .join("orchestrate")
-            .join("orchestrate.sock"))
     }
 
     fn argument_text(&self) -> Result<String, OrchestrateCliError> {
@@ -73,6 +66,43 @@ impl OrchestrateCli {
     fn read_nota_file(path: PathBuf) -> Result<String, OrchestrateCliError> {
         fs::read_to_string(&path)
             .map_err(|source| OrchestrateCliError::ReadNotaFile { path, source })
+    }
+}
+
+struct RuntimeSocketPath {
+    path: PathBuf,
+}
+
+impl RuntimeSocketPath {
+    fn ordinary() -> Result<Self, OrchestrateCliError> {
+        Ok(Self {
+            path: XdgRuntimeDirectory::from_environment()?
+                .join(DEFAULT_SOCKET_DIRECTORY)
+                .join(ORDINARY_SOCKET_FILE),
+        })
+    }
+
+    fn display(&self) -> std::path::Display<'_> {
+        self.path.display()
+    }
+}
+
+struct XdgRuntimeDirectory {
+    path: PathBuf,
+}
+
+impl XdgRuntimeDirectory {
+    fn from_environment() -> Result<Self, OrchestrateCliError> {
+        Ok(Self {
+            path: PathBuf::from(
+                env::var("XDG_RUNTIME_DIR")
+                    .map_err(|source| OrchestrateCliError::RuntimeDirectory { source })?,
+            ),
+        })
+    }
+
+    fn join(&self, segment: impl AsRef<std::path::Path>) -> PathBuf {
+        self.path.join(segment)
     }
 }
 
@@ -108,8 +138,8 @@ enum OrchestrateCliError {
     #[error("invalid ordinary orchestrate request NOTA: {0}")]
     NotaDecode(NotaDecodeError),
 
-    #[error("HOME environment variable is unavailable: {source}")]
-    HomeDirectory {
+    #[error("XDG_RUNTIME_DIR environment variable is unavailable: {source}")]
+    RuntimeDirectory {
         #[source]
         source: env::VarError,
     },

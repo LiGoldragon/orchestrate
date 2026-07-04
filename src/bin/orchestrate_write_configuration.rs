@@ -1,0 +1,175 @@
+//! Write the binary daemon configuration consumed by `orchestrate-daemon`.
+//!
+//! The daemon deliberately accepts one signal-encoded configuration file rather
+//! than parsing text at startup. This small boundary program lets declarative
+//! service managers materialize that file from ordinary absolute paths.
+
+use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
+
+use orchestrate::{
+    ConfigurationError, DaemonConfiguration, Error as OrchestrateError, layout::wire_path,
+};
+use thiserror::Error;
+
+const REQUIRED_ARGUMENT_COUNT: usize = 7;
+
+fn main() -> ExitCode {
+    match DaemonConfigurationWriter::from_environment().run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("orchestrate-write-configuration: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+struct DaemonConfigurationWriter {
+    arguments: Vec<OsString>,
+}
+
+impl DaemonConfigurationWriter {
+    fn from_environment() -> Self {
+        Self {
+            arguments: env::args_os().skip(1).collect(),
+        }
+    }
+
+    fn run(self) -> Result<(), DaemonConfigurationWriterError> {
+        let arguments = DaemonConfigurationArguments::try_from(self.arguments)?;
+        arguments.write()
+    }
+}
+
+struct DaemonConfigurationArguments {
+    signal_path: PathBuf,
+    store_path: PathBuf,
+    ordinary_socket_path: PathBuf,
+    meta_socket_path: PathBuf,
+    upgrade_socket_path: PathBuf,
+    workspace_root: PathBuf,
+    git_index_root: PathBuf,
+}
+
+impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
+    type Error = DaemonConfigurationWriterError;
+
+    fn try_from(arguments: Vec<OsString>) -> Result<Self, Self::Error> {
+        if arguments.len() != REQUIRED_ARGUMENT_COUNT {
+            return Err(DaemonConfigurationWriterError::ArgumentCount {
+                expected: REQUIRED_ARGUMENT_COUNT,
+                actual: arguments.len(),
+            });
+        }
+        let mut paths = arguments.into_iter().map(PathBuf::from);
+        Ok(Self {
+            signal_path: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            store_path: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            ordinary_socket_path: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            meta_socket_path: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            upgrade_socket_path: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            workspace_root: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+            git_index_root: paths
+                .next()
+                .ok_or(DaemonConfigurationWriterError::MissingArgument)?,
+        })
+    }
+}
+
+impl DaemonConfigurationArguments {
+    fn write(self) -> Result<(), DaemonConfigurationWriterError> {
+        self.create_runtime_directories()?;
+        std::fs::write(&self.signal_path, self.configuration()?.to_signal_bytes()?).map_err(
+            |source| DaemonConfigurationWriterError::WriteSignalFile {
+                path: self.signal_path,
+                source,
+            },
+        )
+    }
+
+    fn configuration(&self) -> Result<DaemonConfiguration, DaemonConfigurationWriterError> {
+        Ok(DaemonConfiguration::new(
+            wire_path(&self.store_path)?,
+            wire_path(&self.ordinary_socket_path)?,
+            wire_path(&self.meta_socket_path)?,
+            wire_path(&self.upgrade_socket_path)?,
+            wire_path(&self.workspace_root)?,
+            wire_path(&self.git_index_root)?,
+        ))
+    }
+
+    fn create_runtime_directories(&self) -> Result<(), DaemonConfigurationWriterError> {
+        PathPreparation::new(&self.signal_path).create_parent()?;
+        PathPreparation::new(&self.store_path).create_parent()?;
+        PathPreparation::new(&self.ordinary_socket_path).create_parent()?;
+        PathPreparation::new(&self.meta_socket_path).create_parent()?;
+        PathPreparation::new(&self.upgrade_socket_path).create_parent()
+    }
+}
+
+struct PathPreparation<'path> {
+    path: &'path PathBuf,
+}
+
+impl<'path> PathPreparation<'path> {
+    fn new(path: &'path PathBuf) -> Self {
+        Self { path }
+    }
+
+    fn create_parent(&self) -> Result<(), DaemonConfigurationWriterError> {
+        match self.path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent).map_err(|source| {
+                DaemonConfigurationWriterError::CreateDirectory {
+                    path: parent.to_path_buf(),
+                    source,
+                }
+            }),
+            None => Err(DaemonConfigurationWriterError::ParentlessPath {
+                path: self.path.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+enum DaemonConfigurationWriterError {
+    #[error("expected {expected} path arguments, received {actual}")]
+    ArgumentCount { expected: usize, actual: usize },
+
+    #[error("missing required path argument")]
+    MissingArgument,
+
+    #[error("invalid orchestrate path: {0}")]
+    Path(#[from] OrchestrateError),
+
+    #[error("configuration encode failed: {0}")]
+    Configuration(#[from] ConfigurationError),
+
+    #[error("create directory {}: {source}", path.display())]
+    CreateDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("path has no parent directory: {}", path.display())]
+    ParentlessPath { path: PathBuf },
+
+    #[error("write signal file {}: {source}", path.display())]
+    WriteSignalFile {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}

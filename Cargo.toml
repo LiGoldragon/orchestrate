@@ -27,6 +27,10 @@ name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
 required-features = ["nota-text"]
 
+[[bin]]
+name = "orchestrate-write-configuration"
+path = "src/bin/orchestrate_write_configuration.rs"
+
 # The daemon-and-CLI end-to-end test drives the schema-frame `orchestrate` CLI
 # binary, which decodes/encodes NOTA — so it needs `nota-text` active to build
 # that binary. `cargo test --features nota-text` runs the full suite.

@@ -13,6 +13,8 @@ use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
 const META_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_META_SOCKET";
+const DEFAULT_SOCKET_DIRECTORY: &str = "orchestrate";
+const META_SOCKET_FILE: &str = "orchestrate-owner.sock";
 
 fn main() -> ExitCode {
     match MetaOrchestrateCli::from_environment().run() {
@@ -46,17 +48,8 @@ impl MetaOrchestrateCli {
     fn socket_path(&self) -> Result<String, MetaOrchestrateCliError> {
         match env::var(META_SOCKET_VARIABLE) {
             Ok(socket) => Ok(socket),
-            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
+            Err(_) => Ok(RuntimeSocketPath::meta()?.display().to_string()),
         }
-    }
-
-    fn primary_workspace_socket() -> Result<PathBuf, MetaOrchestrateCliError> {
-        let home =
-            env::var("HOME").map_err(|source| MetaOrchestrateCliError::HomeDirectory { source })?;
-        Ok(PathBuf::from(home)
-            .join("primary")
-            .join("orchestrate")
-            .join("orchestrate-owner.sock"))
     }
 
     fn argument_text(&self) -> Result<String, MetaOrchestrateCliError> {
@@ -70,6 +63,43 @@ impl MetaOrchestrateCli {
     fn read_nota_file(path: PathBuf) -> Result<String, MetaOrchestrateCliError> {
         fs::read_to_string(&path)
             .map_err(|source| MetaOrchestrateCliError::ReadNotaFile { path, source })
+    }
+}
+
+struct RuntimeSocketPath {
+    path: PathBuf,
+}
+
+impl RuntimeSocketPath {
+    fn meta() -> Result<Self, MetaOrchestrateCliError> {
+        Ok(Self {
+            path: XdgRuntimeDirectory::from_environment()?
+                .join(DEFAULT_SOCKET_DIRECTORY)
+                .join(META_SOCKET_FILE),
+        })
+    }
+
+    fn display(&self) -> std::path::Display<'_> {
+        self.path.display()
+    }
+}
+
+struct XdgRuntimeDirectory {
+    path: PathBuf,
+}
+
+impl XdgRuntimeDirectory {
+    fn from_environment() -> Result<Self, MetaOrchestrateCliError> {
+        Ok(Self {
+            path: PathBuf::from(
+                env::var("XDG_RUNTIME_DIR")
+                    .map_err(|source| MetaOrchestrateCliError::RuntimeDirectory { source })?,
+            ),
+        })
+    }
+
+    fn join(&self, segment: impl AsRef<std::path::Path>) -> PathBuf {
+        self.path.join(segment)
     }
 }
 
@@ -105,8 +135,8 @@ enum MetaOrchestrateCliError {
     #[error("invalid meta orchestrate request NOTA: {0}")]
     NotaDecode(NotaDecodeError),
 
-    #[error("HOME environment variable is unavailable: {source}")]
-    HomeDirectory {
+    #[error("XDG_RUNTIME_DIR environment variable is unavailable: {source}")]
+    RuntimeDirectory {
         #[source]
         source: env::VarError,
     },
