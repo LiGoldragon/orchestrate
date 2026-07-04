@@ -7,7 +7,7 @@
 use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 use orchestrate::{
-    layout::wire_path, ConfigurationError, DaemonConfiguration, Error as OrchestrateError,
+    ConfigurationError, DaemonConfiguration, Error as OrchestrateError, layout::wire_path,
 };
 use thiserror::Error;
 use triad_runtime::{AbsoluteRuntimePath, RuntimePathError, SocketPathSource};
@@ -76,8 +76,8 @@ impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
 
 impl DaemonConfigurationArguments {
     fn write(self) -> Result<(), DaemonConfigurationWriterError> {
-        self.create_runtime_directories()?;
         let bytes = self.configuration()?.to_signal_bytes()?;
+        self.create_runtime_directories()?;
         let signal_path = self.signal_path.into_path_buf();
         std::fs::write(&signal_path, bytes).map_err(|source| {
             DaemonConfigurationWriterError::WriteSignalFile {

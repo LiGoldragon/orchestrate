@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::io::{Read, Write};
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -803,5 +805,50 @@ fn configuration_writer_rejects_relative_paths_before_creating_directories() {
     assert!(
         !absolute.join("relative").exists(),
         "writer must fail before mutating cwd for a relative signal path"
+    );
+}
+
+#[test]
+fn configuration_writer_rejects_non_utf8_configuration_before_creating_directories() {
+    let directory = TempDir::new().expect("tempdir");
+    let absolute = directory.path();
+    let signal_path = absolute.join("generated").join("daemon.signal");
+    let store_path = absolute.join("store").join("orchestrate.sema");
+    let ordinary_socket_path = absolute.join("sockets").join("ordinary.sock");
+    let meta_socket_path = absolute.join("sockets").join("meta.sock");
+    let upgrade_socket_path = absolute.join("sockets").join("upgrade.sock");
+    let workspace_root = absolute.join("workspace");
+    let git_index_root = absolute.join(PathBuf::from(OsString::from_vec(
+        b"git-index-\xff".to_vec(),
+    )));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_orchestrate-write-configuration"))
+        .arg(&signal_path)
+        .arg(&store_path)
+        .arg(&ordinary_socket_path)
+        .arg(&meta_socket_path)
+        .arg(&upgrade_socket_path)
+        .arg(&workspace_root)
+        .arg(&git_index_root)
+        .output()
+        .expect("writer output");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid orchestrate path"),
+        "stderr was {stderr}"
+    );
+    assert!(
+        !absolute.join("generated").exists(),
+        "writer must serialize configuration before creating the signal parent"
+    );
+    assert!(
+        !absolute.join("store").exists(),
+        "writer must serialize configuration before creating the store parent"
+    );
+    assert!(
+        !absolute.join("sockets").exists(),
+        "writer must serialize configuration before creating socket parents"
     );
 }
