@@ -479,6 +479,44 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
 }
 
 #[test]
+fn cli_unregistered_lane_claim_returns_structured_error_output() {
+    let fixture = DaemonFixture::start("orchestrate-cli-unregistered-claim");
+
+    let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
+        role: SchemaRoleName::new(SchemaRoleIdentifier::new("unregistered-audit-lane")),
+        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
+            "/tmp/session-lane-audit-unregistered",
+        ))]
+        .into(),
+        reason: SchemaScopeReason::new("should fail without transport failure"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("transport error"),
+        "unregistered claim must not fail at transport layer: {stderr}"
+    );
+
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::PartialApplied(partial) = reply else {
+        panic!("expected structured partial failure, got {reply:?}");
+    };
+    let failure = partial
+        .failed
+        .payload()
+        .first()
+        .expect("partial failure detail");
+    assert_eq!(
+        failure.detail.payload(),
+        "lane is not registered: unregistered-audit-lane"
+    );
+}
+
+#[test]
 fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
     let fixture = DaemonFixture::start("orchestrate-cli-observe-lanes");
 

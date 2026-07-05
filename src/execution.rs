@@ -44,12 +44,18 @@ impl OrchestrateService {
         input: ordinary_schema::Input,
     ) -> Result<ordinary_schema::Output> {
         let signal_input = nexus_schema::SignalInput::ordinary_input(input);
-        match OrchestrateRequestExecution::drive_nexus(self, signal_input).await? {
-            nexus_schema::SignalOutput::OrdinaryOutput(output) => Ok(output),
-            nexus_schema::SignalOutput::MetaOutput(_) => Err(Error::NexusReplyTierMismatch {
+        match OrchestrateRequestExecution::drive_nexus(self, signal_input).await {
+            Ok(nexus_schema::SignalOutput::OrdinaryOutput(output)) => Ok(output),
+            Ok(nexus_schema::SignalOutput::MetaOutput(_)) => Err(Error::NexusReplyTierMismatch {
                 expected: "ordinary",
                 actual: "meta",
             }),
+            Err(error @ Error::LaneNotRegistered { .. }) => {
+                Ok(ordinary_schema::Output::partial_applied(
+                    SchemaFailure::from_error(&error).partial_applied(),
+                ))
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -633,6 +639,12 @@ impl SchemaFailure {
             detail: ordinary_schema::ScopeReason::new(
                 "orchestrate nexus runner could not produce a committed reply",
             ),
+        }
+    }
+
+    fn from_error(error: &Error) -> Self {
+        Self {
+            detail: ordinary_schema::ScopeReason::new(error.to_string()),
         }
     }
 
