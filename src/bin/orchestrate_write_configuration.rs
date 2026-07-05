@@ -4,13 +4,18 @@
 //! than parsing text at startup. This small boundary program lets declarative
 //! service managers materialize that file from ordinary absolute paths.
 
-use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
+use std::{
+    env,
+    ffi::OsString,
+    fmt::{Display, Formatter},
+    path::{Component, Path, PathBuf},
+    process::ExitCode,
+};
 
 use orchestrate::{
     ConfigurationError, DaemonConfiguration, Error as OrchestrateError, layout::wire_path,
 };
 use thiserror::Error;
-use triad_runtime::{AbsoluteRuntimePath, RuntimePathError, SocketPathSource};
 
 const REQUIRED_ARGUMENT_COUNT: usize = 7;
 
@@ -42,13 +47,13 @@ impl DaemonConfigurationWriter {
 }
 
 struct DaemonConfigurationArguments {
-    signal_path: AbsoluteRuntimePath,
-    store_path: AbsoluteRuntimePath,
-    ordinary_socket_path: AbsoluteRuntimePath,
-    meta_socket_path: AbsoluteRuntimePath,
-    upgrade_socket_path: AbsoluteRuntimePath,
-    workspace_root: AbsoluteRuntimePath,
-    git_index_root: AbsoluteRuntimePath,
+    signal_path: RuntimePath,
+    store_path: RuntimePath,
+    ordinary_socket_path: RuntimePath,
+    meta_socket_path: RuntimePath,
+    upgrade_socket_path: RuntimePath,
+    workspace_root: RuntimePath,
+    git_index_root: RuntimePath,
 }
 
 impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
@@ -113,24 +118,107 @@ impl ArgumentPath {
     fn required(
         field: &'static str,
         paths: &mut impl Iterator<Item = OsString>,
-    ) -> Result<AbsoluteRuntimePath, DaemonConfigurationWriterError> {
+    ) -> Result<RuntimePath, DaemonConfigurationWriterError> {
         let path = paths
             .next()
             .ok_or(DaemonConfigurationWriterError::MissingArgument)?;
-        AbsoluteRuntimePath::try_new(
-            SocketPathSource::configuration_field(field),
-            PathBuf::from(path),
+        RuntimePath::try_new(field, PathBuf::from(path))
+            .map_err(DaemonConfigurationWriterError::RuntimePath)
+    }
+}
+
+struct RuntimePath {
+    path: PathBuf,
+}
+
+impl RuntimePath {
+    fn try_new(field: &'static str, path: PathBuf) -> Result<Self, RuntimePathError> {
+        if path.as_os_str().is_empty() {
+            return Err(RuntimePathError::new(
+                field,
+                path,
+                RuntimePathErrorKind::Empty,
+            ));
+        }
+        if !path.is_absolute() {
+            return Err(RuntimePathError::new(
+                field,
+                path,
+                RuntimePathErrorKind::Relative,
+            ));
+        }
+        if path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(RuntimePathError::new(
+                field,
+                path,
+                RuntimePathErrorKind::ParentDirectory,
+            ));
+        }
+        Ok(Self { path })
+    }
+
+    fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    fn into_path_buf(self) -> PathBuf {
+        self.path
+    }
+}
+
+#[derive(Debug)]
+struct RuntimePathError {
+    field: &'static str,
+    path: PathBuf,
+    kind: RuntimePathErrorKind,
+}
+
+impl RuntimePathError {
+    fn new(field: &'static str, path: PathBuf, kind: RuntimePathErrorKind) -> Self {
+        Self { field, path, kind }
+    }
+}
+
+impl Display for RuntimePathError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "configuration field {} path {} is {}",
+            self.field,
+            self.path.display(),
+            self.kind
         )
-        .map_err(DaemonConfigurationWriterError::RuntimePath)
+    }
+}
+
+impl std::error::Error for RuntimePathError {}
+
+#[derive(Clone, Copy, Debug)]
+enum RuntimePathErrorKind {
+    Empty,
+    Relative,
+    ParentDirectory,
+}
+
+impl Display for RuntimePathErrorKind {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("empty"),
+            Self::Relative => formatter.write_str("relative"),
+            Self::ParentDirectory => formatter.write_str("using a parent directory component"),
+        }
     }
 }
 
 struct PathPreparation<'path> {
-    path: &'path AbsoluteRuntimePath,
+    path: &'path RuntimePath,
 }
 
 impl<'path> PathPreparation<'path> {
-    fn new(path: &'path AbsoluteRuntimePath) -> Self {
+    fn new(path: &'path RuntimePath) -> Self {
         Self { path }
     }
 

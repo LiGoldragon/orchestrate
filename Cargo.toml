@@ -48,25 +48,25 @@ nota-text = [
 
 [dependencies]
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "main" }
-signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
-signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
-signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
-signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
-triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
-nota-next                   = { git = "https://github.com/LiGoldragon/nota-next.git", branch = "main" }
-version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "drop-next" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "drop-next" }
+signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "drop-next" }
+signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "drop-next" }
+signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "drop-next" }
+signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "drop-next" }
+triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "drop-next" }
+nota                   = { git = "https://github.com/LiGoldragon/nota.git", branch = "main" }
+version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "drop-next" }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }
 
 [build-dependencies]
-schema-rust-next = { git = "https://github.com/LiGoldragon/schema-rust-next.git", branch = "main" }
+schema-rust = { git = "https://github.com/LiGoldragon/schema-rust.git", branch = "drop-next" }
 
 [dev-dependencies]
-criome = { git = "https://github.com/LiGoldragon/criome.git", branch = "main" }
-schema-next = { git = "https://github.com/LiGoldragon/schema-next.git", branch = "main" }
+criome = { git = "https://github.com/LiGoldragon/criome.git", branch = "drop-next" }
+schema = { git = "https://github.com/LiGoldragon/schema.git", branch = "drop-next" }
 tempfile = "3"
 
 [lints.rust]

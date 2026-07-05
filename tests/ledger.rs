@@ -633,8 +633,8 @@ fn role_retirement_removes_claims_and_lock_projection() {
 #[test]
 fn path_overlap_uses_component_boundaries_not_substrings() {
     let mut fixture = Fixture::new("orchestrate-path-boundaries");
-    let schema_help = path("/home/li/wt/github.com/LiGoldragon/schema-next/schema-help");
-    let help_design = path("/home/li/wt/github.com/LiGoldragon/schema-next/schema-help-design");
+    let schema_help = path("/home/li/wt/github.com/LiGoldragon/schema/schema-help");
+    let help_design = path("/home/li/wt/github.com/LiGoldragon/schema/schema-help-design");
 
     let first = fixture
         .handle(OrchestrateRequest::Claim(RoleClaim {

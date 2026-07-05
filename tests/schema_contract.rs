@@ -1,4 +1,4 @@
-use schema_next::{
+use schema::{
     EnumDeclaration, ImportResolver, Root, SchemaEngine, SchemaIdentity, SchemaSourceArtifact,
 };
 use std::path::PathBuf;
@@ -39,14 +39,14 @@ fn resolver() -> ImportResolver {
             ),
             "0.3.0",
         )
-        .with_package(schema_next::SchemaPackage::new(
+        .with_package(schema::SchemaPackage::new(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             "orchestrate",
             "0.4.0",
         ))
 }
 
-fn lower_schema(name: &str, module: &str) -> schema_next::Schema {
+fn lower_schema(name: &str, module: &str) -> schema::Schema {
     let source = std::fs::read_to_string(schema_file(name)).expect("read schema source");
     let artifact = SchemaSourceArtifact::from_schema_text(&source).expect("schema source decodes");
     SchemaEngine::default()

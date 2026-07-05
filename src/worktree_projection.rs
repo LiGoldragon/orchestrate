@@ -6,7 +6,7 @@
 //! [`WorktreeProjection::gc_candidates`] reads it back and returns entries
 //! in [`WorktreeStatus::Archived`] or [`WorktreeStatus::Recycled`] state.
 
-use nota_next::{NotaEncode, NotaSource};
+use nota::{NotaEncode, NotaSource};
 use signal_orchestrate::{Worktree, WorktreeStatus};
 
 use crate::{Error, OrchestrateLayout, OrchestrateTables, Result};

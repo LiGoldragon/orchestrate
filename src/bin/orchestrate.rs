@@ -7,19 +7,15 @@
 //! `PERSONA_ORCHESTRATE_SOCKET`, and the reply `Output` is printed as NOTA.
 //! Meta-policy requests belong to the sibling `meta-orchestrate` CLI.
 
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use nota_next::{NotaDecodeError, NotaSource};
+use nota::{NotaDecodeError, NotaSource};
 use orchestrate::{OrdinarySignalTransport, TransportError};
 use signal_orchestrate::schema::lib::Input;
 use thiserror::Error;
-use triad_runtime::{
-    ArgumentError, ComponentArgument, ComponentCommand, RuntimePathError, SocketPathSelection,
-};
+use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
 const ORDINARY_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_SOCKET";
-const DEFAULT_SOCKET_DIRECTORY: &str = "orchestrate";
-const ORDINARY_SOCKET_FILE: &str = "orchestrate.sock";
 
 fn main() -> ExitCode {
     match OrchestrateCli::from_environment().run() {
@@ -50,18 +46,20 @@ impl OrchestrateCli {
         Ok(())
     }
 
-    fn socket_path(&self) -> Result<SocketPathSelection, OrchestrateCliError> {
-        if let Some(selection) =
-            SocketPathSelection::from_environment_override(ORDINARY_SOCKET_VARIABLE)?
-        {
-            return Ok(selection);
+    fn socket_path(&self) -> Result<String, OrchestrateCliError> {
+        match env::var(ORDINARY_SOCKET_VARIABLE) {
+            Ok(socket) => Ok(socket),
+            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
         }
-        SocketPathSelection::from_runtime_directory(
-            "XDG_RUNTIME_DIR",
-            "ordinary_socket_path",
-            PathBuf::from(DEFAULT_SOCKET_DIRECTORY).join(ORDINARY_SOCKET_FILE),
-        )
-        .map_err(OrchestrateCliError::RuntimePath)
+    }
+
+    fn primary_workspace_socket() -> Result<PathBuf, OrchestrateCliError> {
+        let home =
+            env::var("HOME").map_err(|source| OrchestrateCliError::HomeDirectory { source })?;
+        Ok(PathBuf::from(home)
+            .join("primary")
+            .join("orchestrate")
+            .join("orchestrate.sock"))
     }
 
     fn argument_text(&self) -> Result<String, OrchestrateCliError> {
@@ -110,8 +108,11 @@ enum OrchestrateCliError {
     #[error("invalid ordinary orchestrate request NOTA: {0}")]
     NotaDecode(NotaDecodeError),
 
-    #[error("runtime socket path error: {0}")]
-    RuntimePath(#[from] RuntimePathError),
+    #[error("HOME environment variable is unavailable: {source}")]
+    HomeDirectory {
+        #[source]
+        source: env::VarError,
+    },
 
     #[error("transport error: {0}")]
     Transport(#[from] TransportError),

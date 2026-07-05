@@ -3,7 +3,7 @@
 //! The uniform daemon skeleton (argv parsing, async task-backed multi-listener
 //! binding, the kameo `EngineActor` that owns the engine, the
 //! decode -> ask -> encode spine, and the `ExitReport` entry) is emitted into
-//! `src/schema/daemon.rs` by schema-rust-next's daemon emitter. Orchestrate
+//! `src/schema/daemon.rs` by schema-rust's daemon emitter. Orchestrate
 //! fills only the record-1488 escape hatches through
 //! `impl ComponentDaemon for OrchestrateDaemon`: how to load its binary
 //! `Configuration`, how to open its Store/Engine (`build_runtime`), how one

@@ -1,6 +1,6 @@
 use std::{env, path::PathBuf};
 
-use schema_rust_next::{
+use schema_rust::{
     MetaListenerTier, NexusDaemonShape, SocketModeBits, UpgradeListenerTier, WorkingListenerTier,
     build::{DependencySchema, GenerationDriver, GenerationPlan, ModuleEmission},
 };

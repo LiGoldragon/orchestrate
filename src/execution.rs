@@ -662,7 +662,7 @@ where
 
 /// Bridge a schema-emitted `Vector` wrapper newtype (e.g. `RoleTokens`,
 /// `ScopeReferences`) against the contract's bare `Vec<Inner>`. The newest
-/// `schema-rust-next` emits each `(Vector T)` as a distinct newtype with
+/// `schema-rust` emits each `(Vector T)` as a distinct newtype with
 /// `new` / `into_payload` / `From<Vec<T>>`; the contract keeps a plain
 /// `Vec`. Each invocation wires both directions through the element
 /// `ProjectInto` and the existing `Vec` blanket above.
@@ -2887,7 +2887,9 @@ impl ProjectInto<meta_contract::WorktreeIndexRefreshed> for meta_schema::Worktre
 
 impl ProjectInto<meta_schema::ArchiveWorktreeOrder> for meta_contract::ArchiveWorktreeOrder {
     fn project_into(self) -> Result<meta_schema::ArchiveWorktreeOrder> {
-        Ok(meta_schema::ArchiveWorktreeOrder::new(self.path.project_into()?))
+        Ok(meta_schema::ArchiveWorktreeOrder::new(
+            self.path.project_into()?,
+        ))
     }
 }
 
@@ -2901,7 +2903,9 @@ impl ProjectInto<meta_contract::ArchiveWorktreeOrder> for meta_schema::ArchiveWo
 
 impl ProjectInto<meta_schema::WorktreeArchived> for meta_contract::WorktreeArchived {
     fn project_into(self) -> Result<meta_schema::WorktreeArchived> {
-        Ok(meta_schema::WorktreeArchived::new(self.worktree.project_into()?))
+        Ok(meta_schema::WorktreeArchived::new(
+            self.worktree.project_into()?,
+        ))
     }
 }
 

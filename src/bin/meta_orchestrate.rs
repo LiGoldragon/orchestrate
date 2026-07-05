@@ -4,19 +4,15 @@
 //! `meta_signal_orchestrate::schema::lib::Input`, exchanges it on
 //! `PERSONA_ORCHESTRATE_META_SOCKET`, and prints the meta `Output` as NOTA.
 
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use meta_signal_orchestrate::schema::lib::Input;
-use nota_next::{NotaDecodeError, NotaSource};
+use nota::{NotaDecodeError, NotaSource};
 use orchestrate::{MetaSignalTransport, TransportError};
 use thiserror::Error;
-use triad_runtime::{
-    ArgumentError, ComponentArgument, ComponentCommand, RuntimePathError, SocketPathSelection,
-};
+use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
 const META_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_META_SOCKET";
-const DEFAULT_SOCKET_DIRECTORY: &str = "orchestrate";
-const META_SOCKET_FILE: &str = "orchestrate-owner.sock";
 
 fn main() -> ExitCode {
     match MetaOrchestrateCli::from_environment().run() {
@@ -47,18 +43,20 @@ impl MetaOrchestrateCli {
         Ok(())
     }
 
-    fn socket_path(&self) -> Result<SocketPathSelection, MetaOrchestrateCliError> {
-        if let Some(selection) =
-            SocketPathSelection::from_environment_override(META_SOCKET_VARIABLE)?
-        {
-            return Ok(selection);
+    fn socket_path(&self) -> Result<String, MetaOrchestrateCliError> {
+        match env::var(META_SOCKET_VARIABLE) {
+            Ok(socket) => Ok(socket),
+            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
         }
-        SocketPathSelection::from_runtime_directory(
-            "XDG_RUNTIME_DIR",
-            "meta_socket_path",
-            PathBuf::from(DEFAULT_SOCKET_DIRECTORY).join(META_SOCKET_FILE),
-        )
-        .map_err(MetaOrchestrateCliError::RuntimePath)
+    }
+
+    fn primary_workspace_socket() -> Result<PathBuf, MetaOrchestrateCliError> {
+        let home =
+            env::var("HOME").map_err(|source| MetaOrchestrateCliError::HomeDirectory { source })?;
+        Ok(PathBuf::from(home)
+            .join("primary")
+            .join("orchestrate")
+            .join("orchestrate-owner.sock"))
     }
 
     fn argument_text(&self) -> Result<String, MetaOrchestrateCliError> {
@@ -107,8 +105,11 @@ enum MetaOrchestrateCliError {
     #[error("invalid meta orchestrate request NOTA: {0}")]
     NotaDecode(NotaDecodeError),
 
-    #[error("runtime socket path error: {0}")]
-    RuntimePath(#[from] RuntimePathError),
+    #[error("HOME environment variable is unavailable: {source}")]
+    HomeDirectory {
+        #[source]
+        source: env::VarError,
+    },
 
     #[error("transport error: {0}")]
     Transport(#[from] TransportError),
