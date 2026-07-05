@@ -68,6 +68,7 @@ impl<'tables> LaneRegistry<'tables> {
         let ended_at = self.tables.current_timestamp()?;
         registration.status = signal_orchestrate::LaneStatus::Released;
         registration.updated_at = ended_at;
+        self.tables.remove_claims_for_lane(&request.lane)?;
         self.tables.insert_lane(&registration)?;
         Ok(MetaOrchestrateReply::LaneUnregistered(LaneUnregistered {
             session: request.session,
@@ -80,6 +81,9 @@ impl<'tables> LaneRegistry<'tables> {
     pub fn clear_session(&self, request: SessionClearRequest) -> Result<MetaOrchestrateReply> {
         let ended_at = self.tables.current_timestamp()?;
         let cleared_lanes = self.tables.remove_lanes_for_session(&request.session)?;
+        for lane in &cleared_lanes {
+            self.tables.remove_claims_for_lane(&lane.assignment.lane)?;
+        }
         Ok(MetaOrchestrateReply::SessionCleared(SessionCleared {
             session: request.session,
             cleared_lanes: cleared_lanes.len() as u32,
@@ -94,6 +98,7 @@ impl<'tables> LaneRegistry<'tables> {
                 lane: lane.as_wire_token().to_string(),
             });
         }
+        self.tables.remove_claims_for_lane(&lane)?;
         self.tables.remove_first_lane(&lane)?;
         Ok(MetaOrchestrateReply::LaneRetired(LaneRetired { lane }))
     }
@@ -208,10 +213,9 @@ impl<'tables> LaneRegistry<'tables> {
         claims: &[StoredClaim],
         observed_at: signal_orchestrate::TimestampNanos,
     ) -> Result<LaneProjection> {
-        let owner_role = Self::role_name_for(&registration.assignment.owner.role)?;
         let resource_claims = claims
             .iter()
-            .filter(|claim| claim.role == owner_role)
+            .filter(|claim| claim.lane == registration.assignment.lane)
             .map(StoredClaim::resource_claim)
             .collect();
         Ok(LaneProjection {
@@ -222,7 +226,7 @@ impl<'tables> LaneRegistry<'tables> {
         })
     }
 
-    fn role_name_for(role: &Role) -> Result<RoleName> {
+    pub(crate) fn role_name_for(role: &Role) -> Result<RoleName> {
         let rendered = role
             .tokens()
             .iter()

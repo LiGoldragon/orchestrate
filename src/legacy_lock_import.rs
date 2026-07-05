@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use signal_orchestrate::{RoleName, ScopeReason, ScopeReference, TaskToken, WirePath};
+use signal_orchestrate::{
+    LaneIdentifier, RoleName, ScopeReason, ScopeReference, TaskToken, WirePath,
+};
 
 use crate::{Error, OrchestrateLayout, OrchestrateTables, Result, StoredClaim};
 
@@ -97,7 +99,7 @@ impl LegacyLockLine<'_> {
         let scope = LegacyScopeText { text: scope }.scope()?;
         let reason = ScopeReason::from_text(reason)?;
         Ok(StoredClaim::new(
-            self.role.clone(),
+            LaneIdentifier::from_wire_token(self.role.as_wire_token().to_string())?,
             scope,
             reason,
             imported_at,

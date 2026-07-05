@@ -8,7 +8,7 @@ use orchestrate::{
     OrchestrateService, OrchestrateTables, PartialApplied, RefreshRepositoryIndexOrder,
     RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
     ScopeReason, ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation,
-    StoredClaim, StoredRole, TaskToken, TimestampNanos, WirePath, WorkflowRunRequest,
+    StoredClaim, StoredLaneRegistration, TaskToken, TimestampNanos, WirePath, WorkflowRunRequest,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -54,11 +54,12 @@ impl Fixture {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let service = OrchestrateService::open_with_layout(
+        let mut service = OrchestrateService::open_with_layout(
             &store,
             OrchestrateLayout::new(workspace, git_index),
         )
         .expect("service opens");
+        register_standard_lanes(&mut service);
         Self {
             _temporary: temporary,
             service,
@@ -109,11 +110,12 @@ impl LayoutFixture {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let service = OrchestrateService::open_with_layout(
+        let mut service = OrchestrateService::open_with_layout(
             &store,
             OrchestrateLayout::new(workspace.clone(), git_index.clone()),
         )
         .expect("service opens");
+        register_standard_lanes(&mut service);
         Self {
             _temporary: temporary,
             workspace,
@@ -164,6 +166,23 @@ fn lane(value: &str) -> LaneIdentifier {
 
 fn session(value: &str) -> SessionIdentifier {
     SessionIdentifier::from_camel_case_name(value).expect("session")
+}
+
+fn register_standard_lanes(service: &mut OrchestrateService) {
+    for (lane_name, role) in [
+        ("operator", role_vector(&["Operator"])),
+        ("designer", role_vector(&["Designer"])),
+        ("system-operator", role_vector(&["System", "Operator"])),
+        ("schema-operator", role_vector(&["Schema", "Operator"])),
+        ("schema-designer", role_vector(&["Schema", "Designer"])),
+    ] {
+        let request = MetaOrchestrateRequest::Register(lane_registration(
+            "FixtureClaimSession",
+            lane_name,
+            role,
+        ));
+        block_on(service.handle_meta(request)).expect("standard lane registration");
+    }
 }
 
 fn lane_registration(session_name: &str, lane_name: &str, role: Role) -> LaneRegistrationRequest {
@@ -387,6 +406,29 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     };
     assert_eq!(rejection.role, designer());
     assert_eq!(rejection.conflicts[0].held_by, operator());
+    let lanes = fixture
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("FixtureClaimSession"),
+        )))
+        .expect("observe claim lanes");
+    let OrchestrateReply::LanesObserved(lanes) = lanes else {
+        panic!("expected lanes observed");
+    };
+    let operator_lane = lanes
+        .lanes
+        .iter()
+        .find(|lane| lane.registration.assignment.lane.as_wire_token() == "operator")
+        .expect("operator lane projection");
+    assert_eq!(
+        operator_lane
+            .registration
+            .assignment
+            .session
+            .as_wire_token(),
+        "FixtureClaimSession"
+    );
+    assert_eq!(operator_lane.resource_claims.len(), 1);
+    assert_eq!(operator_lane.resource_claims[0].scope, scope);
 
     let handoff = fixture
         .handle(orchestrate::OrchestrateRequest::Handoff(RoleHandoff {
@@ -411,6 +453,19 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
         .expect("designer status");
     assert_eq!(designer_status.claims[0].scope, scope);
 
+    let operator_scope = path("/git/github.com/LiGoldragon/orchestrate-operator-followup");
+    let operator_claim = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: operator(),
+            scopes: vec![operator_scope.clone()],
+            reason: reason("operator keeps separate work"),
+        }))
+        .expect("operator separate claim");
+    assert!(matches!(
+        operator_claim,
+        OrchestrateReply::ClaimAcceptance(_)
+    ));
+
     let released = fixture
         .handle(orchestrate::OrchestrateRequest::Release(RoleRelease {
             role: designer(),
@@ -420,6 +475,39 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
         panic!("expected release acknowledgment");
     };
     assert_eq!(acknowledgment.released_scopes, vec![scope]);
+    let after_release = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Roles))
+        .expect("observe after release");
+    let OrchestrateReply::RoleSnapshot(after_release) = after_release else {
+        panic!("expected role snapshot");
+    };
+    let operator_status = after_release
+        .roles
+        .iter()
+        .find(|status| status.role == operator())
+        .expect("operator status");
+    assert!(
+        operator_status
+            .claims
+            .iter()
+            .any(|claim| claim.scope == operator_scope)
+    );
+}
+
+#[test]
+fn claim_under_unregistered_lane_fails_clearly() {
+    let mut fixture = Fixture::new("orchestrate-unregistered-lane-claim");
+    let failure = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: role("unregistered-lane"),
+            scopes: vec![path("/tmp/unregistered-lane-claim")],
+            reason: reason("must fail without lane registration"),
+        }))
+        .expect_err("unregistered lane must fail");
+    assert!(matches!(
+        failure,
+        orchestrate::Error::LaneNotRegistered { lane } if lane == "unregistered-lane"
+    ));
 }
 
 #[test]
@@ -557,6 +645,18 @@ fn dynamic_role_creation_creates_report_lane_and_lock_identity() {
     assert_eq!(created_status.harness, HarnessKind::Codex);
 
     let scope = path("/tmp/primary-orchestrate-mvp-zxq9-never-collide");
+    let lane_registered = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "DynamicRoleSession",
+            "primary-orchestrate-mvp-zxq9-never-collide",
+            role_vector(&["Primary", "Orchestrate", "Mvp", "Zxq9", "Never", "Collide"]),
+        )))
+        .expect("register dynamic role lane");
+    assert!(matches!(
+        lane_registered,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+
     let accepted = fixture
         .handle(orchestrate::OrchestrateRequest::Claim(RoleClaim {
             role: created_status.role.clone(),
@@ -593,6 +693,43 @@ fn role_retirement_removes_claims_and_lock_projection() {
         }))
         .expect("create survivor role");
     assert!(matches!(survivor, MetaOrchestrateReply::RoleCreated(_)));
+
+    let retired_lane = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "RetirementSession",
+            "primary-orchestrate-retirement-zxq9-never-collide",
+            role_vector(&[
+                "Primary",
+                "Orchestrate",
+                "Retirement",
+                "Zxq9",
+                "Never",
+                "Collide",
+            ]),
+        )))
+        .expect("register retired role lane");
+    assert!(matches!(
+        retired_lane,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+    let survivor_lane = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "RetirementSession",
+            "primary-orchestrate-survivor-zxq9-never-collide",
+            role_vector(&[
+                "Primary",
+                "Orchestrate",
+                "Survivor",
+                "Zxq9",
+                "Never",
+                "Collide",
+            ]),
+        )))
+        .expect("register survivor role lane");
+    assert!(matches!(
+        survivor_lane,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
 
     let accepted = fixture
         .handle(OrchestrateRequest::Claim(RoleClaim {
@@ -677,7 +814,7 @@ fn path_overlap_uses_component_boundaries_not_substrings() {
 }
 
 #[test]
-fn claim_cleanup_removes_rows_for_missing_roles() {
+fn claim_cleanup_removes_rows_for_missing_lanes() {
     let temporary = tempfile::Builder::new()
         .prefix("orchestrate-orphan-claims")
         .tempdir()
@@ -691,23 +828,21 @@ fn claim_cleanup_removes_rows_for_missing_roles() {
     );
     let tables = OrchestrateTables::open(&store).expect("tables open");
     tables
-        .insert_role(&StoredRole::new(
-            operator(),
-            HarnessKind::Codex,
-            WirePath::from_absolute_path("/tmp/operator-reports").expect("report repository"),
-            WirePath::from_absolute_path("/tmp/operator-reports/operator").expect("report lane"),
+        .insert_lane(&StoredLaneRegistration::active(
+            lane_registration("CleanupSession", "operator", role_vector(&["Operator"])).assignment,
+            TimestampNanos::new(1),
         ))
-        .expect("insert role");
+        .expect("insert lane");
     tables
         .replace_all_claims(&[
             StoredClaim::new(
-                operator(),
+                lane("operator"),
                 path("/tmp/visible-claim"),
                 reason("visible claim"),
                 TimestampNanos::new(1),
             ),
             StoredClaim::new(
-                role("retired-role-never-visible"),
+                lane("retired-role-never-visible"),
                 path("/tmp/orphan-claim"),
                 reason("orphan claim"),
                 TimestampNanos::new(1),
@@ -716,16 +851,16 @@ fn claim_cleanup_removes_rows_for_missing_roles() {
         .expect("insert claims");
 
     let removed = tables
-        .remove_claims_without_roles()
+        .remove_claims_without_lanes()
         .expect("remove orphan claims");
     assert_eq!(removed.len(), 1);
     assert_eq!(
-        removed[0].role.as_wire_token(),
+        removed[0].lane.as_wire_token(),
         "retired-role-never-visible"
     );
     let remaining = tables.claim_records().expect("remaining claims");
     assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].role, operator());
+    assert_eq!(remaining[0].lane, lane("operator"));
 }
 
 #[test]
@@ -736,7 +871,7 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     let first = fixture
         .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
             "LedgerSession",
-            "designer",
+            "designer-ledger",
             designer_role.clone(),
         )))
         .expect("register first lane");
@@ -745,13 +880,13 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     };
     assert_eq!(
         first.registration.assignment.lane.as_wire_token(),
-        "designer"
+        "designer-ledger"
     );
 
     let second = fixture
         .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
             "LedgerSession",
-            "second-designer",
+            "second-designer-ledger",
             designer_role,
         )))
         .expect("register second lane");
@@ -760,27 +895,29 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     };
     assert_eq!(
         second.registration.assignment.lane.as_wire_token(),
-        "second-designer"
+        "second-designer-ledger"
     );
 
     let observed = fixture
-        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("LedgerSession"),
+        )))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(observed) = observed else {
         panic!("expected lanes observed");
     };
     assert_eq!(observed.lanes.len(), 2);
     assert!(observed.lanes.iter().any(|registration| {
-        registration.registration.assignment.lane.as_wire_token() == "designer"
+        registration.registration.assignment.lane.as_wire_token() == "designer-ledger"
     }));
     assert!(observed.lanes.iter().any(|registration| {
-        registration.registration.assignment.lane.as_wire_token() == "second-designer"
+        registration.registration.assignment.lane.as_wire_token() == "second-designer-ledger"
     }));
 
     let set = fixture
         .handle_meta(MetaOrchestrateRequest::SetAuthority(
             meta_signal_orchestrate::LaneAuthorityChange {
-                lane: lane("designer"),
+                lane: lane("designer-ledger"),
                 authority: LaneAuthority::Support,
             },
         ))
@@ -788,21 +925,23 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     let MetaOrchestrateReply::LaneAuthoritySet(set) = set else {
         panic!("expected authority set");
     };
-    assert_eq!(set.lane.as_wire_token(), "designer");
+    assert_eq!(set.lane.as_wire_token(), "designer-ledger");
     assert_eq!(set.authority, LaneAuthority::Support);
 
     let retired = fixture
         .handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
-            "designer",
+            "designer-ledger",
         ))))
         .expect("retire lane");
     let MetaOrchestrateReply::LaneRetired(retired) = retired else {
         panic!("expected lane retired");
     };
-    assert_eq!(retired.lane.as_wire_token(), "designer");
+    assert_eq!(retired.lane.as_wire_token(), "designer-ledger");
 
     let observed = fixture
-        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("LedgerSession"),
+        )))
         .expect("observe lanes");
     let OrchestrateReply::LanesObserved(observed) = observed else {
         panic!("expected lanes observed");
@@ -814,7 +953,7 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
             .assignment
             .lane
             .as_wire_token(),
-        "second-designer"
+        "second-designer-ledger"
     );
 
     let missing = fixture.handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(

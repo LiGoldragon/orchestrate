@@ -15,7 +15,7 @@ use nota::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
     DaemonConfiguration, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
     LaneStatus, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role,
-    RoleName, RoleToken, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
+    RoleToken, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
     TimestampNanos, WirePath,
 };
 use signal_frame::{
@@ -32,13 +32,19 @@ use signal_orchestrate::{
 // generated nouns directly and unwrap them only when checking filesystem paths.
 use meta_signal_orchestrate::schema::lib::{
     CreateRoleOrder as SchemaCreateRoleOrder, HarnessKind as SchemaHarnessKind,
-    Input as MetaSchemaInput, Output as MetaSchemaOutput,
+    Input as MetaSchemaInput, LaneAssignment as SchemaLaneAssignment,
+    LaneAuthority as SchemaLaneAuthority, LaneDetails as SchemaLaneDetails,
+    LaneIdentifier as SchemaLaneIdentifier, LaneOwner as SchemaLaneOwner,
+    LaneRegistrationMode as SchemaLaneRegistrationMode,
+    LaneRegistrationRequest as SchemaLaneRegistrationRequest, Output as MetaSchemaOutput,
+    Role as SchemaRole, SessionIdentifier as SchemaSessionIdentifier,
 };
 use signal_orchestrate::schema::lib::{
     Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
     RoleClaim as SchemaRoleClaim, RoleIdentifier as SchemaRoleIdentifier,
-    RoleName as SchemaRoleName, ScopeReason as SchemaScopeReason,
-    ScopeReference as SchemaScopeReference, WirePath as SchemaWirePath,
+    RoleName as SchemaRoleName, RoleToken as SchemaRoleToken, RoleTokens as SchemaRoleTokens,
+    ScopeReason as SchemaScopeReason, ScopeReference as SchemaScopeReference,
+    WirePath as SchemaWirePath,
 };
 use signal_version_handover::{
     CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
@@ -184,10 +190,6 @@ fn wire_path(path: &Path) -> WirePath {
     WirePath::from_absolute_path(path.to_string_lossy()).expect("wire path")
 }
 
-fn role(value: &str) -> RoleName {
-    RoleName::from_wire_token(value).expect("role")
-}
-
 fn role_token(value: &str) -> RoleToken {
     RoleToken::from_text(value).expect("role token")
 }
@@ -198,6 +200,34 @@ fn role_vector(values: &[&str]) -> Role {
 
 fn lane_identifier(value: &str) -> LaneIdentifier {
     LaneIdentifier::from_wire_token(value).expect("lane")
+}
+
+fn schema_role_vector(values: &[&str]) -> SchemaRole {
+    SchemaRole::new(SchemaRoleTokens::new(
+        values
+            .iter()
+            .map(|value| SchemaRoleToken::new(*value))
+            .collect(),
+    ))
+}
+
+fn schema_lane_registration(
+    session: &str,
+    lane: &str,
+    role: SchemaRole,
+) -> SchemaLaneRegistrationRequest {
+    SchemaLaneRegistrationRequest {
+        assignment: SchemaLaneAssignment {
+            session: SchemaSessionIdentifier::new(session),
+            lane: SchemaLaneIdentifier::new(lane),
+            owner: SchemaLaneOwner {
+                role,
+                authority: SchemaLaneAuthority::Structural,
+            },
+            details: SchemaLaneDetails::new("daemon cli lane registration"),
+        },
+        mode: SchemaLaneRegistrationMode::Fresh,
+    }
 }
 
 fn reason(value: &str) -> ScopeReason {
@@ -315,7 +345,7 @@ fn complete_handover(fixture: &DaemonFixture) -> HandoverMarker {
 fn test_mirror_payload() -> MirrorPayload {
     MirrorSnapshot {
         claims: vec![StoredClaim::new(
-            role("operator"),
+            lane_identifier("operator"),
             ScopeReference::Path(
                 WirePath::from_absolute_path("/tmp/orchestrate-upgrade-mirror-claim")
                     .expect("claim path"),
@@ -323,21 +353,40 @@ fn test_mirror_payload() -> MirrorPayload {
             reason("upgrade mirror restore"),
             TimestampNanos::new(1),
         )],
-        lanes: vec![StoredLaneRegistration::new(
-            LaneAssignment {
-                session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
-                    .expect("session"),
-                lane: lane_identifier("schema-designer-assistant"),
-                owner: LaneOwner {
-                    role: role_vector(&["Schema", "Designer"]),
-                    authority: LaneAuthority::Support,
+        lanes: vec![
+            StoredLaneRegistration::new(
+                LaneAssignment {
+                    session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
+                        .expect("session"),
+                    lane: lane_identifier("operator"),
+                    owner: LaneOwner {
+                        role: role_vector(&["Operator"]),
+                        authority: LaneAuthority::Structural,
+                    },
+                    details: LaneDetails::from_text("daemon cli mirror operator lane")
+                        .expect("lane details"),
                 },
-                details: LaneDetails::from_text("daemon cli mirror lane").expect("lane details"),
-            },
-            TimestampNanos::new(1),
-            TimestampNanos::new(1),
-            LaneStatus::Active,
-        )],
+                TimestampNanos::new(1),
+                TimestampNanos::new(1),
+                LaneStatus::Active,
+            ),
+            StoredLaneRegistration::new(
+                LaneAssignment {
+                    session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
+                        .expect("session"),
+                    lane: lane_identifier("schema-designer-assistant"),
+                    owner: LaneOwner {
+                        role: role_vector(&["Schema", "Designer"]),
+                        authority: LaneAuthority::Support,
+                    },
+                    details: LaneDetails::from_text("daemon cli mirror lane")
+                        .expect("lane details"),
+                },
+                TimestampNanos::new(1),
+                TimestampNanos::new(1),
+                LaneStatus::Active,
+            ),
+        ],
     }
     .into_mirror_payload(MirrorVersions::new(
         ContractVersion::new([1; 32]),
@@ -388,6 +437,24 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
             .any(|status| status.role == schema_role_name)
     );
 
+    let output = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
+        "DaemonCliSession",
+        &role,
+        schema_role_vector(&[
+            "Primary",
+            "Orchestrate",
+            "Daemon",
+            "Zxq9",
+            "Never",
+            "Collide",
+        ]),
+    )));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
         role: schema_role_name,
         scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
@@ -412,7 +479,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
 }
 
 #[test]
-fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
+fn daemon_drops_legacy_lock_claims_without_registered_lanes() {
     let fixture = DaemonFixture::start_with_legacy_locks(
         "orchestrate-import-legacy-lock",
         &[(
@@ -440,15 +507,8 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
         })
         .expect("system-operator role");
     assert!(
-        system_operator
-            .claims
-            .payload()
-            .iter()
-            .any(|claim| matches!(
-                &claim.scope,
-                SchemaScopeReference::Path(path)
-                    if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
-            ))
+        system_operator.claims.payload().is_empty(),
+        "legacy role locks must not create ordinary claims without registered lanes"
     );
 }
 

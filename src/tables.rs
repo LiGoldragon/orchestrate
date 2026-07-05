@@ -14,7 +14,7 @@ use sema_engine::{
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
-    PartialApplied, PurposeText, PushedState, RepositoryName, RoleName, ScopeReason,
+    PartialApplied, PurposeText, PushedState, RepositoryName, Role, RoleName, ScopeReason,
     ScopeReference, SessionIdentifier, TimestampNanos, WirePath, Worktree, WorktreeStatus,
 };
 
@@ -39,13 +39,12 @@ where
 {
 }
 
-// Bumped 3 -> 4 for session-owned lane registration rows and claim
-// timestamps. Existing v3 stores do not have an in-place row projection; the
-// operator path is to stop the old daemon, keep the old sema store as a backup,
-// start a fresh v4 store so roles.list and projected lock files reseed usable
-// role/claim state, then register first-class session lanes through the meta
-// lane lifecycle once that bead lands.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(4);
+// Bumped 4 -> 5 for lane-owned claims. Existing v4 stores kept ordinary
+// claim owners in the old role-shaped field; the operator path is to stop the
+// old daemon, keep the old sema store as a backup, start a fresh v5 store, and
+// register first-class session lanes through the meta lane lifecycle before
+// ordinary claims are accepted.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(5);
 
 const CLAIMS: TableName = TableName::new("claims");
 const ROLES: TableName = TableName::new("roles");
@@ -74,7 +73,7 @@ pub struct OrchestrateTables {
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredClaim {
-    pub role: RoleName,
+    pub lane: LaneIdentifier,
     pub scope: ScopeReference,
     pub reason: ScopeReason,
     pub claimed_at: TimestampNanos,
@@ -247,6 +246,15 @@ impl OrchestrateTables {
             .find(|registration| registration.assignment.lane == *lane))
     }
 
+    pub fn active_lane_record(
+        &self,
+        lane: &LaneIdentifier,
+    ) -> Result<Option<StoredLaneRegistration>> {
+        Ok(self.lane_records()?.into_iter().find(|registration| {
+            registration.assignment.lane == *lane && registration.status == LaneStatus::Active
+        }))
+    }
+
     pub fn session_lane_records(
         &self,
         session: &SessionIdentifier,
@@ -387,11 +395,11 @@ impl OrchestrateTables {
         self.replace_claims(&remove_keys, claims)
     }
 
-    pub fn remove_claims_for_role(&self, role: &RoleName) -> Result<Vec<StoredClaim>> {
+    pub fn remove_claims_for_lane(&self, lane: &LaneIdentifier) -> Result<Vec<StoredClaim>> {
         let removed_claims = self
             .claim_records()?
             .into_iter()
-            .filter(|claim| claim.role == *role)
+            .filter(|claim| claim.lane == *lane)
             .collect::<Vec<_>>();
         let remove_keys = removed_claims
             .iter()
@@ -401,16 +409,37 @@ impl OrchestrateTables {
         Ok(removed_claims)
     }
 
-    pub fn remove_claims_without_roles(&self) -> Result<Vec<StoredClaim>> {
-        let roles = self
-            .role_records()?
+    pub fn remove_claims_for_role(&self, role: &RoleName) -> Result<Vec<StoredClaim>> {
+        let mut role_lanes = std::collections::BTreeSet::new();
+        for registration in self.lane_records()? {
+            if registration.owner_role_name()? == *role {
+                role_lanes.insert(registration.assignment.lane);
+            }
+        }
+        let removed_claims = self
+            .claim_records()?
             .into_iter()
-            .map(|role| role.role)
+            .filter(|claim| role_lanes.contains(&claim.lane))
+            .collect::<Vec<_>>();
+        let remove_keys = removed_claims
+            .iter()
+            .map(StoredClaim::key)
+            .collect::<Vec<_>>();
+        self.replace_claims(&remove_keys, &[])?;
+        Ok(removed_claims)
+    }
+
+    pub fn remove_claims_without_lanes(&self) -> Result<Vec<StoredClaim>> {
+        let active_lanes = self
+            .lane_records()?
+            .into_iter()
+            .filter(|registration| registration.status == LaneStatus::Active)
+            .map(|registration| registration.assignment.lane)
             .collect::<std::collections::BTreeSet<_>>();
         let removed_claims = self
             .claim_records()?
             .into_iter()
-            .filter(|claim| !roles.contains(&claim.role))
+            .filter(|claim| !active_lanes.contains(&claim.lane))
             .collect::<Vec<_>>();
         let remove_keys = removed_claims
             .iter()
@@ -696,13 +725,13 @@ impl StoredDivergence {
 
 impl StoredClaim {
     pub fn new(
-        role: RoleName,
+        lane: LaneIdentifier,
         scope: ScopeReference,
         reason: ScopeReason,
         claimed_at: TimestampNanos,
     ) -> Self {
         Self {
-            role,
+            lane,
             scope,
             reason,
             claimed_at,
@@ -710,7 +739,7 @@ impl StoredClaim {
     }
 
     pub fn key(&self) -> String {
-        ClaimKey::new(&self.role, &self.scope).into_string()
+        ClaimKey::new(&self.lane, &self.scope).into_string()
     }
 
     pub fn resource_claim(&self) -> LaneResourceClaim {
@@ -727,6 +756,10 @@ impl StoredClaim {
 }
 
 impl StoredLaneRegistration {
+    pub fn owner_role_name(&self) -> Result<RoleName> {
+        RoleNameForLaneOwner::new(&self.assignment.owner.role).role_name()
+    }
+
     pub fn new(
         assignment: LaneAssignment,
         registered_at: TimestampNanos,
@@ -759,6 +792,38 @@ impl StoredLaneRegistration {
 
     pub fn age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
         TimestampInterval::new(self.updated_at, observed_at).duration()
+    }
+}
+
+struct RoleNameForLaneOwner<'role> {
+    role: &'role Role,
+}
+
+impl<'role> RoleNameForLaneOwner<'role> {
+    fn new(role: &'role Role) -> Self {
+        Self { role }
+    }
+
+    fn role_name(&self) -> Result<RoleName> {
+        let rendered = self
+            .role
+            .tokens()
+            .iter()
+            .map(|token| Self::pascal_to_kebab(token.as_str()))
+            .collect::<Vec<_>>()
+            .join("-");
+        Ok(RoleName::from_wire_token(rendered)?)
+    }
+
+    fn pascal_to_kebab(value: &str) -> String {
+        let mut rendered = String::new();
+        for (index, character) in value.chars().enumerate() {
+            if index > 0 && character.is_ascii_uppercase() {
+                rendered.push('-');
+            }
+            rendered.push(character.to_ascii_lowercase());
+        }
+        rendered
     }
 }
 
@@ -854,20 +919,20 @@ impl StoreClock {
 }
 
 struct ClaimKey {
-    role: String,
+    lane: String,
     scope: String,
 }
 
 impl ClaimKey {
-    fn new(role: &RoleName, scope: &ScopeReference) -> Self {
+    fn new(lane: &LaneIdentifier, scope: &ScopeReference) -> Self {
         Self {
-            role: role.as_wire_token().to_string(),
+            lane: lane.as_wire_token().to_string(),
             scope: ScopeKey::new(scope).into_string(),
         }
     }
 
     fn into_string(self) -> String {
-        format!("{}|{}", self.role, self.scope)
+        format!("{}|{}", self.lane, self.scope)
     }
 }
 
@@ -973,7 +1038,7 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-claim-age-storage");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
         let claim = StoredClaim::new(
-            RoleName::from_wire_token("designer").expect("role"),
+            LaneIdentifier::from_wire_token("designer").expect("lane"),
             ScopeReference::Path(
                 WirePath::from_absolute_path("/tmp/orchestrate-storage").expect("path"),
             ),

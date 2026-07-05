@@ -1,6 +1,6 @@
 use signal_orchestrate::ScopeReference;
 
-use crate::{OrchestrateLayout, OrchestrateTables, Result, StoredClaim};
+use crate::{LaneRegistry, OrchestrateLayout, OrchestrateTables, Result, StoredClaim};
 
 pub struct LockProjection<'tables> {
     tables: &'tables OrchestrateTables,
@@ -14,14 +14,25 @@ impl<'tables> LockProjection<'tables> {
 
     pub fn project(&self) -> Result<()> {
         let claims = self.tables.claim_records()?;
+        let lanes = self.tables.lane_records()?;
         for role in self.tables.role_records()? {
             let lock_path = self.layout.role_lock_path(&role.role);
             if let Some(parent) = lock_path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            let role_lanes = lanes
+                .iter()
+                .filter(|lane| lane.status == signal_orchestrate::LaneStatus::Active)
+                .filter_map(|lane| {
+                    LaneRegistry::role_name_for(&lane.assignment.owner.role)
+                        .ok()
+                        .filter(|owner| owner == &role.role)
+                        .map(|_| lane.assignment.lane.clone())
+                })
+                .collect::<Vec<_>>();
             let body = claims
                 .iter()
-                .filter(|claim| claim.role == role.role)
+                .filter(|claim| role_lanes.iter().any(|lane| lane == &claim.lane))
                 .map(Self::lock_line)
                 .collect::<Vec<_>>()
                 .join("\n");

@@ -37,11 +37,19 @@ impl Fixture {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let service = OrchestrateService::open_with_layout(
+        let mut service = OrchestrateService::open_with_layout(
             &store,
             OrchestrateLayout::new(workspace, git_index),
         )
         .expect("service opens");
+        block_on(
+            service.handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+                "ArchitectureSession",
+                "operator",
+                role_vector(&["Operator"]),
+            ))),
+        )
+        .expect("operator lane registration");
         Self {
             _temporary: temporary,
             service,

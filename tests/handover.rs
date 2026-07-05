@@ -117,6 +117,18 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     let mut old = Fixture::new("orchestrate-old-handover");
     let claim_scope = path("/git/github.com/LiGoldragon/orchestrate");
 
+    let operator_lane = old
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "HandoverSession",
+            "operator",
+            role_vector(&["Operator"]),
+        )))
+        .expect("register operator lane");
+    assert!(matches!(
+        operator_lane,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+
     let accepted = old
         .handle(OrchestrateRequest::Claim(RoleClaim {
             role: role("operator"),
@@ -154,7 +166,7 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
         .restore_mirror_payload(&payload)
         .expect("restore mirror");
     assert_eq!(restored.claims.len(), 1);
-    assert_eq!(restored.lanes.len(), 1);
+    assert_eq!(restored.lanes.len(), 2);
 
     let roles = new
         .handle(OrchestrateRequest::Observe(Observation::Roles))
@@ -175,9 +187,15 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lanes observed");
     };
-    assert_eq!(
-        lanes.lanes[0].registration.assignment.lane.as_wire_token(),
-        "designer"
+    assert!(lanes.lanes.iter().any(|lane| {
+        lane.registration.assignment.lane.as_wire_token() == "operator"
+            && lane.resource_claims.len() == 1
+    }));
+    assert!(
+        lanes
+            .lanes
+            .iter()
+            .any(|lane| { lane.registration.assignment.lane.as_wire_token() == "designer" })
     );
 }
 
