@@ -967,6 +967,123 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
 }
 
 #[test]
+fn observe_projects_sessions_all_lanes_session_lanes_and_resource_claims() {
+    let mut fixture = Fixture::new("orchestrate-lane-observe-projections");
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "AlphaObserveSession",
+            "alpha-observe-worker",
+            role_vector(&["Alpha", "Observe", "Worker"]),
+        )))
+        .expect("register alpha lane");
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "BetaObserveSession",
+            "beta-observe-worker",
+            role_vector(&["Beta", "Observe", "Worker"]),
+        )))
+        .expect("register beta lane");
+
+    let claimed_scope = path("/tmp/orchestrate-observe-alpha");
+    let claimed_reason = reason("alpha lane projects its resource claim");
+    fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: role("alpha-observe-worker"),
+            scopes: vec![claimed_scope.clone()],
+            reason: claimed_reason.clone(),
+        }))
+        .expect("claim alpha lane resource");
+
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Unregister(
+            LaneUnregistrationRequest {
+                session: session("BetaObserveSession"),
+                lane: lane("beta-observe-worker"),
+                details: LaneDetails::from_text("handover ended beta lane").expect("details"),
+            },
+        ))
+        .expect("unregister beta lane");
+
+    let sessions = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Sessions))
+        .expect("observe sessions");
+    let OrchestrateReply::SessionsObserved(sessions) = sessions else {
+        panic!("expected sessions observed");
+    };
+    let alpha_session = sessions
+        .sessions
+        .iter()
+        .find(|projection| projection.session == session("AlphaObserveSession"))
+        .expect("alpha session projection");
+    assert_eq!(alpha_session.active_lanes, 1);
+    let beta_session = sessions
+        .sessions
+        .iter()
+        .find(|projection| projection.session == session("BetaObserveSession"))
+        .expect("beta session projection remains until session clear");
+    assert_eq!(beta_session.active_lanes, 0);
+
+    let session_lanes = fixture
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("AlphaObserveSession"),
+        )))
+        .expect("observe alpha session lanes");
+    let OrchestrateReply::LanesObserved(session_lanes) = session_lanes else {
+        panic!("expected alpha session lanes observed");
+    };
+    assert_eq!(session_lanes.lanes.len(), 1);
+    let alpha_lane = &session_lanes.lanes[0];
+    assert_eq!(
+        alpha_lane.registration.assignment.lane.as_wire_token(),
+        "alpha-observe-worker"
+    );
+    assert_eq!(
+        alpha_lane.registration.status,
+        orchestrate::LaneStatus::Active
+    );
+    assert_eq!(
+        alpha_lane.registration.assignment.details.as_str(),
+        "ledger lane registration"
+    );
+    assert!(alpha_lane.observed_at.value() >= alpha_lane.registration.registered_at.value());
+    assert_eq!(
+        alpha_lane.age.value(),
+        alpha_lane.observed_at.value() - alpha_lane.registration.registered_at.value()
+    );
+    assert_eq!(alpha_lane.resource_claims.len(), 1);
+    assert_eq!(alpha_lane.resource_claims[0].scope, claimed_scope);
+    assert_eq!(alpha_lane.resource_claims[0].reason, claimed_reason);
+    assert!(
+        alpha_lane.resource_claims[0].claimed_at.value()
+            >= alpha_lane.registration.registered_at.value()
+    );
+
+    let all_lanes = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Lanes))
+        .expect("observe all lanes");
+    let OrchestrateReply::LanesObserved(all_lanes) = all_lanes else {
+        panic!("expected all lanes observed");
+    };
+    let beta_lane = all_lanes
+        .lanes
+        .iter()
+        .find(|projection| projection.registration.assignment.lane == lane("beta-observe-worker"))
+        .expect("beta lane visible in all-lane projection");
+    assert_eq!(
+        beta_lane.registration.status,
+        orchestrate::LaneStatus::Released
+    );
+    assert!(
+        all_lanes
+            .lanes
+            .iter()
+            .any(|projection| projection.registration.assignment.lane
+                == lane("alpha-observe-worker")
+                && projection.resource_claims.len() == 1)
+    );
+}
+
+#[test]
 fn lane_lifecycle_reports_duplicates_unregisters_and_clears_session_rows() {
     let mut fixture = Fixture::new("orchestrate-lane-lifecycle");
     let registration = lane_registration(

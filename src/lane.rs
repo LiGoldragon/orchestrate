@@ -166,8 +166,9 @@ impl<'tables> LaneRegistry<'tables> {
     pub fn observe_sessions(&self) -> Result<OrchestrateReply> {
         let mut sessions = BTreeMap::new();
         for registration in self.tables.lane_records()? {
+            let active_lanes = sessions.entry(registration.assignment.session).or_insert(0);
             if registration.status == signal_orchestrate::LaneStatus::Active {
-                *sessions.entry(registration.assignment.session).or_insert(0) += 1;
+                *active_lanes += 1;
             }
         }
         Ok(OrchestrateReply::SessionsObserved(SessionsObserved {
