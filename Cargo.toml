@@ -48,8 +48,8 @@ nota-text = [
 
 [dependencies]
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "drop-next" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "drop-next" }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "session-lane-protocol-contracts" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "session-lane-protocol-contracts" }
 signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "drop-next" }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "drop-next" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "drop-next" }

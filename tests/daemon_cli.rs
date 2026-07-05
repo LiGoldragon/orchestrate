@@ -13,9 +13,10 @@ use meta_signal_orchestrate::{
 };
 use nota::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
-    DaemonConfiguration, LaneAuthority, LaneIdentifier, LaneRegistration, MirrorSnapshot,
-    MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName, RoleToken,
-    StoreLocation, StoredClaim, WirePath,
+    DaemonConfiguration, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
+    LaneStatus, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role,
+    RoleName, RoleToken, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
+    TimestampNanos, WirePath,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -320,12 +321,23 @@ fn test_mirror_payload() -> MirrorPayload {
                     .expect("claim path"),
             ),
             reason("upgrade mirror restore"),
+            TimestampNanos::new(1),
         )],
-        lanes: vec![LaneRegistration {
-            lane: lane_identifier("schema-designer-assistant"),
-            role: role_vector(&["Schema", "Designer"]),
-            authority: LaneAuthority::Support,
-        }],
+        lanes: vec![StoredLaneRegistration::new(
+            LaneAssignment {
+                session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
+                    .expect("session"),
+                lane: lane_identifier("schema-designer-assistant"),
+                owner: LaneOwner {
+                    role: role_vector(&["Schema", "Designer"]),
+                    authority: LaneAuthority::Support,
+                },
+                details: LaneDetails::from_text("daemon cli mirror lane").expect("lane details"),
+            },
+            TimestampNanos::new(1),
+            TimestampNanos::new(1),
+            LaneStatus::Active,
+        )],
     }
     .into_mirror_payload(MirrorVersions::new(
         ContractVersion::new([1; 32]),
@@ -536,12 +548,9 @@ fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lane snapshot");
     };
-    assert!(
-        lanes
-            .lanes
-            .iter()
-            .any(|lane| lane.lane.as_wire_token() == "schema-designer-assistant")
-    );
+    assert!(lanes.lanes.iter().any(|lane| {
+        lane.registration.assignment.lane.as_wire_token() == "schema-designer-assistant"
+    }));
 }
 
 #[test]

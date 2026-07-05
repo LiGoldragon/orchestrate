@@ -56,6 +56,7 @@ impl<'tables> ClaimLedger<'tables> {
             }));
         }
 
+        let claimed_at = self.tables.current_timestamp()?;
         let mut next_entries = entries.clone();
         for scope in &claim.scopes {
             if Self::role_already_owns(&next_entries, &claim.role, scope) {
@@ -69,6 +70,7 @@ impl<'tables> ClaimLedger<'tables> {
                 claim.role.clone(),
                 scope.clone(),
                 claim.reason.clone(),
+                claimed_at,
             ));
         }
 
@@ -136,12 +138,18 @@ impl<'tables> ClaimLedger<'tables> {
             .filter(|entry| Self::removed_by_handoff(entry, &handoff))
             .map(StoredClaim::key)
             .collect::<Vec<_>>();
+        let claimed_at = self.tables.current_timestamp()?;
         let insert_claims = handoff
             .scopes
             .iter()
             .filter(|scope| !Self::role_already_owns(&entries, &handoff.to, scope))
             .map(|scope| {
-                StoredClaim::new(handoff.to.clone(), scope.clone(), handoff.reason.clone())
+                StoredClaim::new(
+                    handoff.to.clone(),
+                    scope.clone(),
+                    handoff.reason.clone(),
+                    claimed_at,
+                )
             })
             .collect::<Vec<_>>();
 

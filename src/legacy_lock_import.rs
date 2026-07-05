@@ -45,8 +45,9 @@ impl<'tables> LegacyLockImport<'tables> {
 
     fn imported_claims(&self) -> Result<Vec<StoredClaim>> {
         let mut claims = Vec::new();
+        let imported_at = self.tables.current_timestamp()?;
         for role in self.tables.role_records()? {
-            claims.extend(LegacyLockFile::read(role.role, self.layout)?.claims()?);
+            claims.extend(LegacyLockFile::read(role.role, self.layout)?.claims(imported_at)?);
         }
         Ok(claims)
     }
@@ -63,7 +64,7 @@ impl LegacyLockFile {
         Ok(Self { role, path, body })
     }
 
-    fn claims(&self) -> Result<Vec<StoredClaim>> {
+    fn claims(&self, imported_at: signal_orchestrate::TimestampNanos) -> Result<Vec<StoredClaim>> {
         let mut claims = Vec::new();
         for (index, line) in self.body.lines().enumerate() {
             let line_number = index + 1;
@@ -77,7 +78,7 @@ impl LegacyLockFile {
                     line_number,
                     text: line,
                 }
-                .claim()?,
+                .claim(imported_at)?,
             );
         }
         Ok(claims)
@@ -85,7 +86,7 @@ impl LegacyLockFile {
 }
 
 impl LegacyLockLine<'_> {
-    fn claim(&self) -> Result<StoredClaim> {
+    fn claim(&self, imported_at: signal_orchestrate::TimestampNanos) -> Result<StoredClaim> {
         let Some((scope, reason)) = self.text.split_once(" # ") else {
             return Err(Error::InvalidLegacyLockLine {
                 path: self.path.display().to_string(),
@@ -95,7 +96,12 @@ impl LegacyLockLine<'_> {
         };
         let scope = LegacyScopeText { text: scope }.scope()?;
         let reason = ScopeReason::from_text(reason)?;
-        Ok(StoredClaim::new(self.role.clone(), scope, reason))
+        Ok(StoredClaim::new(
+            self.role.clone(),
+            scope,
+            reason,
+            imported_at,
+        ))
     }
 }
 

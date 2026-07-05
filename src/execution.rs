@@ -378,6 +378,12 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 ordinary_contract::Observation::Roles,
             ) => ClaimLedger::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Sessions,
+            ) => LaneRegistry::new(self.service.tables()).observe_sessions()?,
+            ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::SessionLanes(session),
+            ) => LaneRegistry::new(self.service.tables()).observe_session(session)?,
+            ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Lanes,
             ) => LaneRegistry::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
@@ -441,6 +447,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
             meta_contract::MetaOrchestrateRequest::Register(request) => {
                 LaneRegistry::new(self.service.tables()).register(request)?
+            }
+            meta_contract::MetaOrchestrateRequest::Unregister(request) => {
+                LaneRegistry::new(self.service.tables()).unregister(request)?
             }
             meta_contract::MetaOrchestrateRequest::SetAuthority(change) => {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
@@ -707,6 +716,21 @@ vector_wrapper_projection!(
     ordinary_schema::LaneRegistrations,
     ordinary_contract::LaneRegistration,
     ordinary_schema::LaneRegistration
+);
+vector_wrapper_projection!(
+    ordinary_schema::SessionProjections,
+    ordinary_contract::SessionProjection,
+    ordinary_schema::SessionProjection
+);
+vector_wrapper_projection!(
+    ordinary_schema::LaneProjections,
+    ordinary_contract::LaneProjection,
+    ordinary_schema::LaneProjection
+);
+vector_wrapper_projection!(
+    ordinary_schema::LaneResourceClaims,
+    ordinary_contract::LaneResourceClaim,
+    ordinary_schema::LaneResourceClaim
 );
 vector_wrapper_projection!(
     ordinary_schema::RoleStatuses,
@@ -1483,6 +1507,46 @@ impl ProjectInto<ordinary_contract::Role> for ordinary_schema::Role {
     }
 }
 
+impl ProjectInto<String> for ordinary_contract::SessionIdentifier {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_wire_token().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::SessionIdentifier> for ordinary_contract::SessionIdentifier {
+    fn project_into(self) -> Result<ordinary_schema::SessionIdentifier> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::SessionIdentifier::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::SessionIdentifier> for ordinary_schema::SessionIdentifier {
+    fn project_into(self) -> Result<ordinary_contract::SessionIdentifier> {
+        ordinary_contract::SessionIdentifier::from_camel_case_name(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<String> for ordinary_contract::LaneDetails {
+    fn project_into(self) -> Result<String> {
+        Ok(self.as_str().to_string())
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneDetails> for ordinary_contract::LaneDetails {
+    fn project_into(self) -> Result<ordinary_schema::LaneDetails> {
+        let payload: String = self.project_into()?;
+        Ok(ordinary_schema::LaneDetails::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneDetails> for ordinary_schema::LaneDetails {
+    fn project_into(self) -> Result<ordinary_contract::LaneDetails> {
+        ordinary_contract::LaneDetails::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
 impl ProjectInto<ordinary_schema::LaneAuthority> for ordinary_contract::LaneAuthority {
     fn project_into(self) -> Result<ordinary_schema::LaneAuthority> {
         Ok(match self {
@@ -1530,12 +1594,76 @@ impl ProjectInto<ordinary_contract::LaneIdentifier> for String {
     }
 }
 
+impl ProjectInto<ordinary_schema::LaneStatus> for ordinary_contract::LaneStatus {
+    fn project_into(self) -> Result<ordinary_schema::LaneStatus> {
+        Ok(match self {
+            ordinary_contract::LaneStatus::Active => ordinary_schema::LaneStatus::Active,
+            ordinary_contract::LaneStatus::Released => ordinary_schema::LaneStatus::Released,
+            ordinary_contract::LaneStatus::HandoverEnded => {
+                ordinary_schema::LaneStatus::HandoverEnded
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneStatus> for ordinary_schema::LaneStatus {
+    fn project_into(self) -> Result<ordinary_contract::LaneStatus> {
+        Ok(match self {
+            ordinary_schema::LaneStatus::Active => ordinary_contract::LaneStatus::Active,
+            ordinary_schema::LaneStatus::Released => ordinary_contract::LaneStatus::Released,
+            ordinary_schema::LaneStatus::HandoverEnded => {
+                ordinary_contract::LaneStatus::HandoverEnded
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneOwner> for ordinary_contract::LaneOwner {
+    fn project_into(self) -> Result<ordinary_schema::LaneOwner> {
+        Ok(ordinary_schema::LaneOwner {
+            role: self.role.project_into()?,
+            authority: self.authority.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneOwner> for ordinary_schema::LaneOwner {
+    fn project_into(self) -> Result<ordinary_contract::LaneOwner> {
+        Ok(ordinary_contract::LaneOwner {
+            role: self.role.project_into()?,
+            authority: self.authority.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneAssignment> for ordinary_contract::LaneAssignment {
+    fn project_into(self) -> Result<ordinary_schema::LaneAssignment> {
+        Ok(ordinary_schema::LaneAssignment {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            owner: self.owner.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneAssignment> for ordinary_schema::LaneAssignment {
+    fn project_into(self) -> Result<ordinary_contract::LaneAssignment> {
+        Ok(ordinary_contract::LaneAssignment {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            owner: self.owner.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<ordinary_schema::LaneRegistration> for ordinary_contract::LaneRegistration {
     fn project_into(self) -> Result<ordinary_schema::LaneRegistration> {
         Ok(ordinary_schema::LaneRegistration {
-            lane: self.lane.project_into()?,
-            role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            assignment: self.assignment.project_into()?,
+            registered_at: self.registered_at.project_into()?,
+            status: self.status.project_into()?,
         })
     }
 }
@@ -1543,9 +1671,9 @@ impl ProjectInto<ordinary_schema::LaneRegistration> for ordinary_contract::LaneR
 impl ProjectInto<ordinary_contract::LaneRegistration> for ordinary_schema::LaneRegistration {
     fn project_into(self) -> Result<ordinary_contract::LaneRegistration> {
         Ok(ordinary_contract::LaneRegistration {
-            lane: self.lane.project_into()?,
-            role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            assignment: self.assignment.project_into()?,
+            registered_at: self.registered_at.project_into()?,
+            status: self.status.project_into()?,
         })
     }
 }
@@ -1693,6 +1821,18 @@ impl ProjectInto<ordinary_contract::TimestampNanos> for ordinary_schema::Timesta
     }
 }
 
+impl ProjectInto<ordinary_schema::DurationNanos> for ordinary_contract::DurationNanos {
+    fn project_into(self) -> Result<ordinary_schema::DurationNanos> {
+        Ok(ordinary_schema::DurationNanos::new(self.value()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::DurationNanos> for ordinary_schema::DurationNanos {
+    fn project_into(self) -> Result<ordinary_contract::DurationNanos> {
+        Ok(ordinary_contract::DurationNanos::new(self.into_payload()))
+    }
+}
+
 impl ProjectInto<ordinary_schema::ObservationToken> for ordinary_contract::ObservationToken {
     fn project_into(self) -> Result<ordinary_schema::ObservationToken> {
         Ok(ordinary_schema::ObservationToken::new(self.value()))
@@ -1767,6 +1907,10 @@ impl ProjectInto<ordinary_schema::Observation> for ordinary_contract::Observatio
     fn project_into(self) -> Result<ordinary_schema::Observation> {
         Ok(match self {
             ordinary_contract::Observation::Roles => ordinary_schema::Observation::Roles,
+            ordinary_contract::Observation::Sessions => ordinary_schema::Observation::Sessions,
+            ordinary_contract::Observation::SessionLanes(session) => {
+                ordinary_schema::Observation::SessionLanes(session.project_into()?)
+            }
             ordinary_contract::Observation::Lanes => ordinary_schema::Observation::Lanes,
             ordinary_contract::Observation::Worktrees => ordinary_schema::Observation::Worktrees,
         })
@@ -1777,6 +1921,10 @@ impl ProjectInto<ordinary_contract::Observation> for ordinary_schema::Observatio
     fn project_into(self) -> Result<ordinary_contract::Observation> {
         Ok(match self {
             ordinary_schema::Observation::Roles => ordinary_contract::Observation::Roles,
+            ordinary_schema::Observation::Sessions => ordinary_contract::Observation::Sessions,
+            ordinary_schema::Observation::SessionLanes(session) => {
+                ordinary_contract::Observation::SessionLanes(session.project_into()?)
+            }
             ordinary_schema::Observation::Lanes => ordinary_contract::Observation::Lanes,
             ordinary_schema::Observation::Worktrees => ordinary_contract::Observation::Worktrees,
         })
@@ -2373,6 +2521,82 @@ impl ProjectInto<ordinary_contract::RoleSnapshot> for ordinary_schema::RoleSnaps
     }
 }
 
+impl ProjectInto<ordinary_schema::SessionProjection> for ordinary_contract::SessionProjection {
+    fn project_into(self) -> Result<ordinary_schema::SessionProjection> {
+        Ok(ordinary_schema::SessionProjection {
+            session: self.session.project_into()?,
+            active_lanes: self.active_lanes,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::SessionProjection> for ordinary_schema::SessionProjection {
+    fn project_into(self) -> Result<ordinary_contract::SessionProjection> {
+        Ok(ordinary_contract::SessionProjection {
+            session: self.session.project_into()?,
+            active_lanes: self.active_lanes,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::SessionsObserved> for ordinary_contract::SessionsObserved {
+    fn project_into(self) -> Result<ordinary_schema::SessionsObserved> {
+        Ok(ordinary_schema::SessionsObserved::new(
+            self.sessions.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::SessionsObserved> for ordinary_schema::SessionsObserved {
+    fn project_into(self) -> Result<ordinary_contract::SessionsObserved> {
+        Ok(ordinary_contract::SessionsObserved {
+            sessions: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneResourceClaim> for ordinary_contract::LaneResourceClaim {
+    fn project_into(self) -> Result<ordinary_schema::LaneResourceClaim> {
+        Ok(ordinary_schema::LaneResourceClaim {
+            scope: self.scope.project_into()?,
+            reason: self.reason.project_into()?,
+            claimed_at: self.claimed_at.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneResourceClaim> for ordinary_schema::LaneResourceClaim {
+    fn project_into(self) -> Result<ordinary_contract::LaneResourceClaim> {
+        Ok(ordinary_contract::LaneResourceClaim {
+            scope: self.scope.project_into()?,
+            reason: self.reason.project_into()?,
+            claimed_at: self.claimed_at.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::LaneProjection> for ordinary_contract::LaneProjection {
+    fn project_into(self) -> Result<ordinary_schema::LaneProjection> {
+        Ok(ordinary_schema::LaneProjection {
+            registration: self.registration.project_into()?,
+            resource_claims: self.resource_claims.project_into()?,
+            observed_at: self.observed_at.project_into()?,
+            age: self.age.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::LaneProjection> for ordinary_schema::LaneProjection {
+    fn project_into(self) -> Result<ordinary_contract::LaneProjection> {
+        Ok(ordinary_contract::LaneProjection {
+            registration: self.registration.project_into()?,
+            resource_claims: self.resource_claims.project_into()?,
+            observed_at: self.observed_at.project_into()?,
+            age: self.age.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<ordinary_schema::LanesObserved> for ordinary_contract::LanesObserved {
     fn project_into(self) -> Result<ordinary_schema::LanesObserved> {
         Ok(ordinary_schema::LanesObserved::new(
@@ -2636,6 +2860,9 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::RoleSnapshot(payload) => {
                 ordinary_schema::Output::role_snapshot(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::SessionsObserved(payload) => {
+                ordinary_schema::Output::SessionsObserved(payload.project_into()?)
+            }
             ordinary_contract::OrchestrateReply::LanesObserved(payload) => {
                 ordinary_schema::Output::LanesObserved(payload.project_into()?)
             }
@@ -2698,6 +2925,9 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             }
             ordinary_schema::Output::RoleSnapshot(payload) => {
                 ordinary_contract::OrchestrateReply::RoleSnapshot(payload.project_into()?)
+            }
+            ordinary_schema::Output::SessionsObserved(payload) => {
+                ordinary_contract::OrchestrateReply::SessionsObserved(payload.project_into()?)
             }
             ordinary_schema::Output::LanesObserved(payload) => {
                 ordinary_contract::OrchestrateReply::LanesObserved(payload.project_into()?)
@@ -2917,11 +3147,33 @@ impl ProjectInto<meta_contract::WorktreeArchived> for meta_schema::WorktreeArchi
     }
 }
 
+impl ProjectInto<meta_schema::LaneRegistrationMode> for meta_contract::LaneRegistrationMode {
+    fn project_into(self) -> Result<meta_schema::LaneRegistrationMode> {
+        Ok(match self {
+            meta_contract::LaneRegistrationMode::Fresh => meta_schema::LaneRegistrationMode::Fresh,
+            meta_contract::LaneRegistrationMode::Recovery => {
+                meta_schema::LaneRegistrationMode::Recovery
+            }
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::LaneRegistrationMode> for meta_schema::LaneRegistrationMode {
+    fn project_into(self) -> Result<meta_contract::LaneRegistrationMode> {
+        Ok(match self {
+            meta_schema::LaneRegistrationMode::Fresh => meta_contract::LaneRegistrationMode::Fresh,
+            meta_schema::LaneRegistrationMode::Recovery => {
+                meta_contract::LaneRegistrationMode::Recovery
+            }
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_schema::LaneRegistrationRequest> {
         Ok(meta_schema::LaneRegistrationRequest {
-            role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            assignment: self.assignment.project_into()?,
+            mode: self.mode.project_into()?,
         })
     }
 }
@@ -2929,8 +3181,32 @@ impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRe
 impl ProjectInto<meta_contract::LaneRegistrationRequest> for meta_schema::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_contract::LaneRegistrationRequest> {
         Ok(meta_contract::LaneRegistrationRequest {
-            role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            assignment: self.assignment.project_into()?,
+            mode: self.mode.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::LaneUnregistrationRequest>
+    for meta_contract::LaneUnregistrationRequest
+{
+    fn project_into(self) -> Result<meta_schema::LaneUnregistrationRequest> {
+        Ok(meta_schema::LaneUnregistrationRequest {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::LaneUnregistrationRequest>
+    for meta_schema::LaneUnregistrationRequest
+{
+    fn project_into(self) -> Result<meta_contract::LaneUnregistrationRequest> {
+        Ok(meta_contract::LaneUnregistrationRequest {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            details: self.details.project_into()?,
         })
     }
 }
@@ -2968,6 +3244,9 @@ impl ProjectInto<meta_schema::Input> for meta_contract::MetaOrchestrateRequest {
             meta_contract::MetaOrchestrateRequest::Register(payload) => {
                 meta_schema::Input::register(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateRequest::Unregister(payload) => {
+                meta_schema::Input::unregister(payload.project_into()?)
+            }
             meta_contract::MetaOrchestrateRequest::SetAuthority(payload) => {
                 meta_schema::Input::set_authority(payload.project_into()?)
             }
@@ -2998,6 +3277,9 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequest> for meta_schema::Input {
             }
             meta_schema::Input::Register(payload) => {
                 meta_contract::MetaOrchestrateRequest::Register(payload.project_into()?)
+            }
+            meta_schema::Input::Unregister(payload) => {
+                meta_contract::MetaOrchestrateRequest::Unregister(payload.project_into()?)
             }
             meta_schema::Input::SetAuthority(payload) => {
                 meta_contract::MetaOrchestrateRequest::SetAuthority(payload.project_into()?)
@@ -3143,6 +3425,78 @@ impl ProjectInto<meta_contract::LaneRegistered> for meta_schema::LaneRegistered 
     }
 }
 
+impl ProjectInto<meta_schema::LaneAlreadyRegisteredResolution>
+    for meta_contract::LaneAlreadyRegisteredResolution
+{
+    fn project_into(self) -> Result<meta_schema::LaneAlreadyRegisteredResolution> {
+        Ok(match self {
+            meta_contract::LaneAlreadyRegisteredResolution::FreshConflict => {
+                meta_schema::LaneAlreadyRegisteredResolution::FreshConflict
+            }
+            meta_contract::LaneAlreadyRegisteredResolution::RecoveryInherited => {
+                meta_schema::LaneAlreadyRegisteredResolution::RecoveryInherited
+            }
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::LaneAlreadyRegisteredResolution>
+    for meta_schema::LaneAlreadyRegisteredResolution
+{
+    fn project_into(self) -> Result<meta_contract::LaneAlreadyRegisteredResolution> {
+        Ok(match self {
+            meta_schema::LaneAlreadyRegisteredResolution::FreshConflict => {
+                meta_contract::LaneAlreadyRegisteredResolution::FreshConflict
+            }
+            meta_schema::LaneAlreadyRegisteredResolution::RecoveryInherited => {
+                meta_contract::LaneAlreadyRegisteredResolution::RecoveryInherited
+            }
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::LaneAlreadyRegistered> for meta_contract::LaneAlreadyRegistered {
+    fn project_into(self) -> Result<meta_schema::LaneAlreadyRegistered> {
+        Ok(meta_schema::LaneAlreadyRegistered {
+            requested: self.requested.project_into()?,
+            active: self.active.project_into()?,
+            resolution: self.resolution.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::LaneAlreadyRegistered> for meta_schema::LaneAlreadyRegistered {
+    fn project_into(self) -> Result<meta_contract::LaneAlreadyRegistered> {
+        Ok(meta_contract::LaneAlreadyRegistered {
+            requested: self.requested.project_into()?,
+            active: self.active.project_into()?,
+            resolution: self.resolution.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_schema::LaneUnregistered> for meta_contract::LaneUnregistered {
+    fn project_into(self) -> Result<meta_schema::LaneUnregistered> {
+        Ok(meta_schema::LaneUnregistered {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            ended_at: self.ended_at.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::LaneUnregistered> for meta_schema::LaneUnregistered {
+    fn project_into(self) -> Result<meta_contract::LaneUnregistered> {
+        Ok(meta_contract::LaneUnregistered {
+            session: self.session.project_into()?,
+            lane: self.lane.project_into()?,
+            ended_at: self.ended_at.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneRetired> for meta_contract::LaneRetired {
     fn project_into(self) -> Result<meta_schema::LaneRetired> {
         Ok(meta_schema::LaneRetired::new(self.lane.project_into()?))
@@ -3182,6 +3536,9 @@ impl ProjectInto<meta_schema::MetaOperationKind> for meta_contract::MetaOperatio
             meta_contract::MetaOperationKind::Retire => meta_schema::MetaOperationKind::Retire,
             meta_contract::MetaOperationKind::Refresh => meta_schema::MetaOperationKind::Refresh,
             meta_contract::MetaOperationKind::Register => meta_schema::MetaOperationKind::Register,
+            meta_contract::MetaOperationKind::Unregister => {
+                meta_schema::MetaOperationKind::Unregister
+            }
             meta_contract::MetaOperationKind::SetAuthority => {
                 meta_schema::MetaOperationKind::SetAuthority
             }
@@ -3205,6 +3562,9 @@ impl ProjectInto<meta_contract::MetaOperationKind> for meta_schema::MetaOperatio
             meta_schema::MetaOperationKind::Retire => meta_contract::MetaOperationKind::Retire,
             meta_schema::MetaOperationKind::Refresh => meta_contract::MetaOperationKind::Refresh,
             meta_schema::MetaOperationKind::Register => meta_contract::MetaOperationKind::Register,
+            meta_schema::MetaOperationKind::Unregister => {
+                meta_contract::MetaOperationKind::Unregister
+            }
             meta_schema::MetaOperationKind::SetAuthority => {
                 meta_contract::MetaOperationKind::SetAuthority
             }
@@ -3291,6 +3651,12 @@ impl ProjectInto<meta_schema::Output> for meta_contract::MetaOrchestrateReply {
             meta_contract::MetaOrchestrateReply::LaneRegistered(payload) => {
                 meta_schema::Output::LaneRegistered(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateReply::LaneAlreadyRegistered(payload) => {
+                meta_schema::Output::LaneAlreadyRegistered(payload.project_into()?)
+            }
+            meta_contract::MetaOrchestrateReply::LaneUnregistered(payload) => {
+                meta_schema::Output::LaneUnregistered(payload.project_into()?)
+            }
             meta_contract::MetaOrchestrateReply::LaneRetired(payload) => {
                 meta_schema::Output::LaneRetired(payload.project_into()?)
             }
@@ -3335,6 +3701,12 @@ impl ProjectInto<meta_contract::MetaOrchestrateReply> for meta_schema::Output {
             }
             meta_schema::Output::LaneRegistered(payload) => {
                 meta_contract::MetaOrchestrateReply::LaneRegistered(payload.project_into()?)
+            }
+            meta_schema::Output::LaneAlreadyRegistered(payload) => {
+                meta_contract::MetaOrchestrateReply::LaneAlreadyRegistered(payload.project_into()?)
+            }
+            meta_schema::Output::LaneUnregistered(payload) => {
+                meta_contract::MetaOrchestrateReply::LaneUnregistered(payload.project_into()?)
             }
             meta_schema::Output::LaneRetired(payload) => {
                 meta_contract::MetaOrchestrateReply::LaneRetired(payload.project_into()?)

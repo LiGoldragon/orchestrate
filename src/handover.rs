@@ -1,9 +1,8 @@
-use signal_orchestrate::LaneRegistration;
 use signal_version_handover::{Date, HandoverMarker, MirrorPayload, Time};
 use std::time::{SystemTime, UNIX_EPOCH};
 use version_projection::{ComponentName, ContractVersion, RecordKind};
 
-use crate::{Error, OrchestrateTables, Result, StoredClaim};
+use crate::{Error, OrchestrateTables, Result, StoredClaim, StoredLaneRegistration};
 
 const COMPONENT_NAME: &str = "orchestrate";
 const MIRROR_SNAPSHOT_KIND: &str = "MirrorSnapshot";
@@ -20,7 +19,7 @@ pub struct MirrorVersions {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct MirrorSnapshot {
     pub claims: Vec<StoredClaim>,
-    pub lanes: Vec<LaneRegistration>,
+    pub lanes: Vec<StoredLaneRegistration>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

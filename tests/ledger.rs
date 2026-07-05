@@ -1,12 +1,14 @@
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
-    HarnessKind, LaneAuthority, LaneIdentifier, LaneRegistrationRequest, LaneRegistry,
-    MetaOrchestrateReply, MetaOrchestrateRequest, Observation, ObservationSubscription,
-    OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, OrchestrateTables,
-    PartialApplied, RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim,
-    RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, StoreLocation,
-    StoredClaim, StoredRole, TaskToken, WirePath, WorkflowRunRequest,
+    HarnessKind, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
+    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, MetaOrchestrateReply,
+    MetaOrchestrateRequest, Observation, ObservationSubscription, OrchestrateLayout,
+    OrchestrateReply, OrchestrateRequest, OrchestrateService, OrchestrateTables, PartialApplied,
+    RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
+    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
+    StoreLocation, StoredClaim, StoredRole, TaskToken, TimestampNanos, WirePath,
+    WorkflowRunRequest,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -160,6 +162,25 @@ fn lane(value: &str) -> LaneIdentifier {
     LaneIdentifier::from_wire_token(value).expect("lane")
 }
 
+fn session(value: &str) -> SessionIdentifier {
+    SessionIdentifier::from_camel_case_name(value).expect("session")
+}
+
+fn lane_registration(session_name: &str, lane_name: &str, role: Role) -> LaneRegistrationRequest {
+    LaneRegistrationRequest {
+        assignment: LaneAssignment {
+            session: session(session_name),
+            lane: lane(lane_name),
+            owner: LaneOwner {
+                role,
+                authority: LaneAuthority::Structural,
+            },
+            details: LaneDetails::from_text("ledger lane registration").expect("lane details"),
+        },
+        mode: LaneRegistrationMode::Fresh,
+    }
+}
+
 fn operator() -> RoleName {
     role("operator")
 }
@@ -260,7 +281,7 @@ fn lane_identifier_derivation_follows_role_vector_authority_and_ordinal() {
 fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
     let workflow = WorkflowDigest::from_bytes(b"fixture workflow");
     let operation = OperationDigest::from_bytes(b"spirit guarded head");
-    let contract = Contract::new(Rule::workflow(WorkflowGuard {
+    let contract = Contract::root(Rule::workflow(WorkflowGuard {
         workflow: workflow.clone(),
         executor: Identity::host("orchestrate".to_string()),
     }));
@@ -683,11 +704,13 @@ fn claim_cleanup_removes_rows_for_missing_roles() {
                 operator(),
                 path("/tmp/visible-claim"),
                 reason("visible claim"),
+                TimestampNanos::new(1),
             ),
             StoredClaim::new(
                 role("retired-role-never-visible"),
                 path("/tmp/orphan-claim"),
                 reason("orphan claim"),
+                TimestampNanos::new(1),
             ),
         ])
         .expect("insert claims");
@@ -711,26 +734,34 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     let designer_role = role_vector(&["Designer"]);
 
     let first = fixture
-        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-            role: designer_role.clone(),
-            authority: LaneAuthority::Structural,
-        }))
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "LedgerSession",
+            "designer",
+            designer_role.clone(),
+        )))
         .expect("register first lane");
     let MetaOrchestrateReply::LaneRegistered(first) = first else {
         panic!("expected lane registered");
     };
-    assert_eq!(first.registration.lane.as_wire_token(), "designer");
+    assert_eq!(
+        first.registration.assignment.lane.as_wire_token(),
+        "designer"
+    );
 
     let second = fixture
-        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-            role: designer_role,
-            authority: LaneAuthority::Structural,
-        }))
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "LedgerSession",
+            "second-designer",
+            designer_role,
+        )))
         .expect("register second lane");
     let MetaOrchestrateReply::LaneRegistered(second) = second else {
         panic!("expected lane registered");
     };
-    assert_eq!(second.registration.lane.as_wire_token(), "second-designer");
+    assert_eq!(
+        second.registration.assignment.lane.as_wire_token(),
+        "second-designer"
+    );
 
     let observed = fixture
         .handle(OrchestrateRequest::Observe(Observation::Lanes))
@@ -739,18 +770,12 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
         panic!("expected lanes observed");
     };
     assert_eq!(observed.lanes.len(), 2);
-    assert!(
-        observed
-            .lanes
-            .iter()
-            .any(|registration| registration.lane.as_wire_token() == "designer")
-    );
-    assert!(
-        observed
-            .lanes
-            .iter()
-            .any(|registration| registration.lane.as_wire_token() == "second-designer")
-    );
+    assert!(observed.lanes.iter().any(|registration| {
+        registration.registration.assignment.lane.as_wire_token() == "designer"
+    }));
+    assert!(observed.lanes.iter().any(|registration| {
+        registration.registration.assignment.lane.as_wire_token() == "second-designer"
+    }));
 
     let set = fixture
         .handle_meta(MetaOrchestrateRequest::SetAuthority(
@@ -783,7 +808,14 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
         panic!("expected lanes observed");
     };
     assert_eq!(observed.lanes.len(), 1);
-    assert_eq!(observed.lanes[0].lane.as_wire_token(), "second-designer");
+    assert_eq!(
+        observed.lanes[0]
+            .registration
+            .assignment
+            .lane
+            .as_wire_token(),
+        "second-designer"
+    );
 
     let missing = fixture.handle_meta(MetaOrchestrateRequest::Retire(Retirement::Lane(lane(
         "missing-designer",

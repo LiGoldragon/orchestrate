@@ -12,9 +12,10 @@ use sema_engine::{
     VersionedStoreName, VersioningPolicy,
 };
 use signal_orchestrate::{
-    Activity, ApplicationFailure, ApplicationSuccess, BranchName, HarnessKind, LaneIdentifier,
-    LaneName, LaneRegistration, PartialApplied, PurposeText, PushedState, RepositoryName, RoleName,
-    ScopeReason, ScopeReference, TimestampNanos, WirePath, Worktree, WorktreeStatus,
+    Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
+    LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
+    PartialApplied, PurposeText, PushedState, RepositoryName, RoleName, ScopeReason,
+    ScopeReference, SessionIdentifier, TimestampNanos, WirePath, Worktree, WorktreeStatus,
 };
 
 use crate::{Result, StoreLocation};
@@ -38,10 +39,13 @@ where
 {
 }
 
-// Bumped 2 -> 3 for the worktrees table (Spirit eh5a). The live store needs a
-// sema-upgrade migration on integration; see worktree.rs / the report's
-// migration flag — do NOT migrate the live store from a prototype branch.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(3);
+// Bumped 3 -> 4 for session-owned lane registration rows and claim
+// timestamps. Existing v3 stores do not have an in-place row projection; the
+// operator path is to stop the old daemon, keep the old sema store as a backup,
+// start a fresh v4 store so roles.list and projected lock files reseed usable
+// role/claim state, then register first-class session lanes through the meta
+// lane lifecycle once that bead lands.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(4);
 
 const CLAIMS: TableName = TableName::new("claims");
 const ROLES: TableName = TableName::new("roles");
@@ -59,7 +63,7 @@ pub struct OrchestrateTables {
     engine: Engine,
     claims: TableReference<StoredClaim>,
     roles: TableReference<StoredRole>,
-    lane_registry: TableReference<LaneRegistration>,
+    lane_registry: TableReference<StoredLaneRegistration>,
     repositories: TableReference<StoredRepository>,
     worktrees: TableReference<StoredWorktree>,
     activities: TableReference<StoredActivity>,
@@ -73,6 +77,15 @@ pub struct StoredClaim {
     pub role: RoleName,
     pub scope: ScopeReference,
     pub reason: ScopeReason,
+    pub claimed_at: TimestampNanos,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredLaneRegistration {
+    pub assignment: LaneAssignment,
+    pub registered_at: TimestampNanos,
+    pub updated_at: TimestampNanos,
+    pub status: LaneStatus,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -207,31 +220,58 @@ impl OrchestrateTables {
         Ok(())
     }
 
-    pub fn lane_records(&self) -> Result<Vec<LaneRegistration>> {
+    pub fn lane_records(&self) -> Result<Vec<StoredLaneRegistration>> {
         self.records(self.lane_registry)
     }
 
-    pub fn lane_record(&self, lane: &LaneIdentifier) -> Result<Option<LaneRegistration>> {
-        self.record(self.lane_registry, lane.as_wire_token())
+    pub fn lane_record(
+        &self,
+        session: &SessionIdentifier,
+        lane: &LaneIdentifier,
+    ) -> Result<Option<StoredLaneRegistration>> {
+        self.record(
+            self.lane_registry,
+            LaneRegistrationKey::new(session, lane)
+                .into_string()
+                .as_str(),
+        )
     }
 
-    pub fn insert_lane(&self, registration: &LaneRegistration) -> Result<()> {
-        self.upsert(
-            self.lane_registry,
-            registration.lane.as_wire_token(),
-            registration,
-        )?;
+    pub fn first_lane_record(
+        &self,
+        lane: &LaneIdentifier,
+    ) -> Result<Option<StoredLaneRegistration>> {
+        Ok(self
+            .lane_records()?
+            .into_iter()
+            .find(|registration| registration.assignment.lane == *lane))
+    }
+
+    pub fn session_lane_records(
+        &self,
+        session: &SessionIdentifier,
+    ) -> Result<Vec<StoredLaneRegistration>> {
+        Ok(self
+            .lane_records()?
+            .into_iter()
+            .filter(|registration| registration.assignment.session == *session)
+            .collect())
+    }
+
+    pub fn insert_lane(&self, registration: &StoredLaneRegistration) -> Result<()> {
+        let key = registration.key();
+        self.upsert(self.lane_registry, key.as_str(), registration)?;
         Ok(())
     }
 
-    pub fn replace_lanes(&self, lanes: &[LaneRegistration]) -> Result<()> {
+    pub fn replace_lanes(&self, lanes: &[StoredLaneRegistration]) -> Result<()> {
         let existing = self
             .lane_records()?
             .into_iter()
-            .map(|registration| registration.lane)
+            .map(|registration| registration.key())
             .collect::<Vec<_>>();
-        for lane in existing {
-            self.remove_if_present(self.lane_registry, lane.as_wire_token())?;
+        for key in existing {
+            self.remove_if_present(self.lane_registry, key.as_str())?;
         }
         for registration in lanes {
             self.insert_lane(registration)?;
@@ -239,9 +279,33 @@ impl OrchestrateTables {
         Ok(())
     }
 
-    pub fn remove_lane(&self, lane: &LaneIdentifier) -> Result<()> {
-        self.remove_if_present(self.lane_registry, lane.as_wire_token())?;
+    pub fn remove_lane(&self, session: &SessionIdentifier, lane: &LaneIdentifier) -> Result<()> {
+        self.remove_if_present(
+            self.lane_registry,
+            LaneRegistrationKey::new(session, lane)
+                .into_string()
+                .as_str(),
+        )?;
         Ok(())
+    }
+
+    pub fn remove_first_lane(&self, lane: &LaneIdentifier) -> Result<()> {
+        if let Some(registration) = self.first_lane_record(lane)? {
+            let key = registration.key();
+            self.remove_if_present(self.lane_registry, key.as_str())?;
+        }
+        Ok(())
+    }
+
+    pub fn remove_lanes_for_session(
+        &self,
+        session: &SessionIdentifier,
+    ) -> Result<Vec<StoredLaneRegistration>> {
+        let removed_lanes = self.session_lane_records(session)?;
+        for key in removed_lanes.iter().map(StoredLaneRegistration::key) {
+            self.remove_if_present(self.lane_registry, key.as_str())?;
+        }
+        Ok(removed_lanes)
     }
 
     pub fn repository_records(&self) -> Result<Vec<StoredRepository>> {
@@ -631,16 +695,103 @@ impl StoredDivergence {
 }
 
 impl StoredClaim {
-    pub fn new(role: RoleName, scope: ScopeReference, reason: ScopeReason) -> Self {
+    pub fn new(
+        role: RoleName,
+        scope: ScopeReference,
+        reason: ScopeReason,
+        claimed_at: TimestampNanos,
+    ) -> Self {
         Self {
             role,
             scope,
             reason,
+            claimed_at,
         }
     }
 
     pub fn key(&self) -> String {
         ClaimKey::new(&self.role, &self.scope).into_string()
+    }
+
+    pub fn resource_claim(&self) -> LaneResourceClaim {
+        LaneResourceClaim {
+            scope: self.scope.clone(),
+            reason: self.reason.clone(),
+            claimed_at: self.claimed_at,
+        }
+    }
+
+    pub fn age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
+        TimestampInterval::new(self.claimed_at, observed_at).duration()
+    }
+}
+
+impl StoredLaneRegistration {
+    pub fn new(
+        assignment: LaneAssignment,
+        registered_at: TimestampNanos,
+        updated_at: TimestampNanos,
+        status: LaneStatus,
+    ) -> Self {
+        Self {
+            assignment,
+            registered_at,
+            updated_at,
+            status,
+        }
+    }
+
+    pub fn active(assignment: LaneAssignment, registered_at: TimestampNanos) -> Self {
+        Self::new(assignment, registered_at, registered_at, LaneStatus::Active)
+    }
+
+    pub fn key(&self) -> String {
+        LaneRegistrationKey::new(&self.assignment.session, &self.assignment.lane).into_string()
+    }
+
+    pub fn registration(&self) -> LaneRegistration {
+        LaneRegistration {
+            assignment: self.assignment.clone(),
+            registered_at: self.registered_at,
+            status: self.status,
+        }
+    }
+
+    pub fn age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
+        TimestampInterval::new(self.updated_at, observed_at).duration()
+    }
+}
+
+struct LaneRegistrationKey {
+    session: String,
+    lane: String,
+}
+
+impl LaneRegistrationKey {
+    fn new(session: &SessionIdentifier, lane: &LaneIdentifier) -> Self {
+        Self {
+            session: session.as_wire_token().to_string(),
+            lane: lane.as_wire_token().to_string(),
+        }
+    }
+
+    fn into_string(self) -> String {
+        format!("{}|{}", self.session, self.lane)
+    }
+}
+
+struct TimestampInterval {
+    start: TimestampNanos,
+    end: TimestampNanos,
+}
+
+impl TimestampInterval {
+    fn new(start: TimestampNanos, end: TimestampNanos) -> Self {
+        Self { start, end }
+    }
+
+    fn duration(&self) -> DurationNanos {
+        DurationNanos::new(self.end.value().saturating_sub(self.start.value()))
     }
 }
 
@@ -735,5 +886,114 @@ impl ScopeKey {
 
     fn into_string(self) -> String {
         self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use signal_orchestrate::{LaneAuthority, LaneDetails, LaneOwner, Role, RoleToken};
+
+    struct TemporaryStore {
+        path: std::path::PathBuf,
+    }
+
+    impl TemporaryStore {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "{name}-{}-{}.sema",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system time after epoch")
+                    .as_nanos()
+            ));
+            Self { path }
+        }
+
+        fn location(&self) -> StoreLocation {
+            StoreLocation::new(self.path.to_string_lossy().into_owned())
+        }
+    }
+
+    impl Drop for TemporaryStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn session_lane_rows_are_keyed_by_session_and_lane_with_age_support() {
+        let temporary = TemporaryStore::new("orchestrate-session-lane-storage");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        let assignment = LaneAssignment {
+            session: SessionIdentifier::from_camel_case_name("StorageMigration").expect("session"),
+            lane: LaneIdentifier::from_wire_token("storage-worker").expect("lane"),
+            owner: LaneOwner {
+                role: Role::try_new(vec![RoleToken::from_text("Designer").expect("role token")])
+                    .expect("role"),
+                authority: LaneAuthority::Structural,
+            },
+            details: LaneDetails::from_text("storage migration test lane").expect("details"),
+        };
+        let mut stored =
+            StoredLaneRegistration::active(assignment.clone(), TimestampNanos::new(100));
+        stored.updated_at = TimestampNanos::new(125);
+
+        tables.insert_lane(&stored).expect("insert lane");
+
+        let found = tables
+            .lane_record(&assignment.session, &assignment.lane)
+            .expect("read lane")
+            .expect("stored lane");
+        assert_eq!(found.assignment, assignment);
+        assert_eq!(found.registration().registered_at, TimestampNanos::new(100));
+        assert_eq!(found.age_at(TimestampNanos::new(175)).value(), 50);
+        assert!(
+            tables
+                .session_lane_records(&found.assignment.session)
+                .expect("session lanes")
+                .iter()
+                .any(|lane| lane.assignment.lane == found.assignment.lane)
+        );
+        let removed = tables
+            .remove_lanes_for_session(&found.assignment.session)
+            .expect("clear session lanes");
+        assert_eq!(removed.len(), 1);
+        assert!(
+            tables
+                .session_lane_records(&found.assignment.session)
+                .expect("cleared session lanes")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn claim_rows_store_claimed_at_for_resource_age_evidence() {
+        let temporary = TemporaryStore::new("orchestrate-claim-age-storage");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        let claim = StoredClaim::new(
+            RoleName::from_wire_token("designer").expect("role"),
+            ScopeReference::Path(
+                WirePath::from_absolute_path("/tmp/orchestrate-storage").expect("path"),
+            ),
+            ScopeReason::from_text("owns storage migration").expect("reason"),
+            TimestampNanos::new(200),
+        );
+
+        tables
+            .replace_all_claims(std::slice::from_ref(&claim))
+            .expect("insert claim");
+
+        let stored = tables
+            .claim_records()
+            .expect("claims")
+            .pop()
+            .expect("claim");
+        assert_eq!(stored.claimed_at, TimestampNanos::new(200));
+        assert_eq!(stored.age_at(TimestampNanos::new(275)).value(), 75);
+        let resource = stored.resource_claim();
+        assert_eq!(resource.claimed_at, TimestampNanos::new(200));
+        assert_eq!(resource.reason, claim.reason);
     }
 }
