@@ -13,6 +13,7 @@ pub mod location;
 pub mod lock_projection;
 pub mod repository;
 pub mod role;
+#[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
 #[cfg(feature = "nota-text")]
@@ -41,34 +42,36 @@ pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
 pub use meta_signal_orchestrate::{
-    CreateRoleOrder, LaneAuthorityChange, LaneAuthoritySet, LaneRegistered,
-    LaneRegistrationRequest, LaneRetired, MetaOrchestrateReply, MetaOrchestrateRequest,
+    CreateRoleOrder, LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange,
+    LaneAuthoritySet, LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired,
+    LaneUnregistered, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
     RefreshRepositoryIndexOrder, RefreshWorktreeIndexOrder, RegisterWorktree, RetireRoleOrder,
-    Retirement, WorktreeIndexRefreshed, WorktreeRegistered,
+    Retirement, SessionClearRequest, SessionCleared, WorktreeIndexRefreshed, WorktreeRegistered,
 };
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
-    ApplicationFailureReason, ApplicationSuccess, BranchName, DownstreamComponent, HarnessKind,
-    LaneAuthority, LaneIdentifier, LaneName, LaneRegistration, LanesObserved, Observation,
-    ObservationClosed, ObservationEvent, ObservationOpened, ObservationSubscription,
-    ObservationToken, OperationKind, OrchestrateReply, OrchestrateRequest, PartialApplied,
-    PurposeText, PushedState, RepositoryName, Role, RoleClaim, RoleHandoff, RoleIdentifier,
-    RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, TaskToken,
-    TimestampNanos, WirePath, WorkflowReceiptProduced, WorkflowRunDigest, WorkflowRunHandle,
-    WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation, WorkflowRunObservationClosed,
-    WorkflowRunObservationOpened, WorkflowRunObservationToken, WorkflowRunRequest,
-    WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
+    ApplicationFailureReason, ApplicationSuccess, BranchName, DownstreamComponent, DurationNanos,
+    HarnessKind, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneName, LaneOwner,
+    LaneRegistration, LaneResourceClaim, LaneStatus, LanesObserved, Observation, ObservationClosed,
+    ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
+    OrchestrateReply, OrchestrateRequest, PartialApplied, PurposeText, PushedState, RepositoryName,
+    Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName, RoleObservation, RoleRelease,
+    RoleToken, ScopeReason, ScopeReference, SessionIdentifier, SessionName, SessionsObserved,
+    TaskToken, TimestampNanos, WirePath, WorkflowReceiptProduced, WorkflowRunDigest,
+    WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
+    WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
+    WorkflowRunRequest, WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
-    OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredRepository, StoredRole,
-    StoredWorktree,
+    OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredLaneRegistration,
+    StoredRepository, StoredRole, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
 pub use workflow::WorkflowRunner;

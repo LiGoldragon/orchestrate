@@ -1,8 +1,9 @@
 use orchestrate::{
-    Error, LaneAuthority, LaneRegistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
+    Error, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
+    LaneRegistrationMode, LaneRegistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
     MirrorSnapshot, MirrorVersions, Observation, OrchestrateLayout, OrchestrateReply,
     OrchestrateRequest, OrchestrateService, Role, RoleClaim, RoleName, RoleToken, ScopeReason,
-    ScopeReference, StoreLocation, WirePath,
+    ScopeReference, SessionIdentifier, StoreLocation, WirePath,
 };
 use tempfile::TempDir;
 use version_projection::{ComponentName, ContractVersion, RecordKind};
@@ -77,6 +78,21 @@ fn role_vector(values: &[&str]) -> Role {
     Role::try_new(values.iter().map(|value| role_token(value)).collect()).expect("role vector")
 }
 
+fn lane_registration(session: &str, lane: &str, role: Role) -> LaneRegistrationRequest {
+    LaneRegistrationRequest {
+        assignment: LaneAssignment {
+            session: SessionIdentifier::from_camel_case_name(session).expect("session"),
+            lane: LaneIdentifier::from_wire_token(lane).expect("lane"),
+            owner: LaneOwner {
+                role,
+                authority: LaneAuthority::Structural,
+            },
+            details: LaneDetails::from_text("handover lane registration").expect("lane details"),
+        },
+        mode: LaneRegistrationMode::Fresh,
+    }
+}
+
 fn path(value: &str) -> ScopeReference {
     ScopeReference::Path(WirePath::from_absolute_path(value).expect("path"))
 }
@@ -101,6 +117,18 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     let mut old = Fixture::new("orchestrate-old-handover");
     let claim_scope = path("/git/github.com/LiGoldragon/orchestrate");
 
+    let operator_lane = old
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "HandoverSession",
+            "operator",
+            role_vector(&["Operator"]),
+        )))
+        .expect("register operator lane");
+    assert!(matches!(
+        operator_lane,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+
     let accepted = old
         .handle(OrchestrateRequest::Claim(RoleClaim {
             role: role("operator"),
@@ -111,15 +139,19 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
 
     let registered = old
-        .handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-            role: role_vector(&["Designer"]),
-            authority: LaneAuthority::Structural,
-        }))
+        .handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+            "HandoverSession",
+            "designer",
+            role_vector(&["Designer"]),
+        )))
         .expect("register lane");
     let MetaOrchestrateReply::LaneRegistered(registered) = registered else {
         panic!("expected lane registered");
     };
-    assert_eq!(registered.registration.lane.as_wire_token(), "designer");
+    assert_eq!(
+        registered.registration.assignment.lane.as_wire_token(),
+        "designer"
+    );
 
     let payload = old
         .service
@@ -134,7 +166,7 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
         .restore_mirror_payload(&payload)
         .expect("restore mirror");
     assert_eq!(restored.claims.len(), 1);
-    assert_eq!(restored.lanes.len(), 1);
+    assert_eq!(restored.lanes.len(), 2);
 
     let roles = new
         .handle(OrchestrateRequest::Observe(Observation::Roles))
@@ -155,7 +187,16 @@ fn mirror_payload_carries_claim_and_lane_state_between_services() {
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lanes observed");
     };
-    assert_eq!(lanes.lanes[0].lane.as_wire_token(), "designer");
+    assert!(lanes.lanes.iter().any(|lane| {
+        lane.registration.assignment.lane.as_wire_token() == "operator"
+            && lane.resource_claims.len() == 1
+    }));
+    assert!(
+        lanes
+            .lanes
+            .iter()
+            .any(|lane| { lane.registration.assignment.lane.as_wire_token() == "designer" })
+    );
 }
 
 #[test]

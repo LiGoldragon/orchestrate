@@ -13,9 +13,10 @@ use meta_signal_orchestrate::{
 };
 use nota::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
-    DaemonConfiguration, LaneAuthority, LaneIdentifier, LaneRegistration, MirrorSnapshot,
-    MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleName, RoleToken,
-    StoreLocation, StoredClaim, WirePath,
+    DaemonConfiguration, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
+    LaneStatus, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role,
+    RoleToken, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
+    TimestampNanos, WirePath,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -31,13 +32,19 @@ use signal_orchestrate::{
 // generated nouns directly and unwrap them only when checking filesystem paths.
 use meta_signal_orchestrate::schema::lib::{
     CreateRoleOrder as SchemaCreateRoleOrder, HarnessKind as SchemaHarnessKind,
-    Input as MetaSchemaInput, Output as MetaSchemaOutput,
+    Input as MetaSchemaInput, LaneAssignment as SchemaLaneAssignment,
+    LaneAuthority as SchemaLaneAuthority, LaneDetails as SchemaLaneDetails,
+    LaneIdentifier as SchemaLaneIdentifier, LaneOwner as SchemaLaneOwner,
+    LaneRegistrationMode as SchemaLaneRegistrationMode,
+    LaneRegistrationRequest as SchemaLaneRegistrationRequest, Output as MetaSchemaOutput,
+    Role as SchemaRole, SessionIdentifier as SchemaSessionIdentifier,
 };
 use signal_orchestrate::schema::lib::{
     Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
     RoleClaim as SchemaRoleClaim, RoleIdentifier as SchemaRoleIdentifier,
-    RoleName as SchemaRoleName, ScopeReason as SchemaScopeReason,
-    ScopeReference as SchemaScopeReference, WirePath as SchemaWirePath,
+    RoleName as SchemaRoleName, RoleToken as SchemaRoleToken, RoleTokens as SchemaRoleTokens,
+    ScopeReason as SchemaScopeReason, ScopeReference as SchemaScopeReference,
+    WirePath as SchemaWirePath,
 };
 use signal_version_handover::{
     CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
@@ -183,10 +190,6 @@ fn wire_path(path: &Path) -> WirePath {
     WirePath::from_absolute_path(path.to_string_lossy()).expect("wire path")
 }
 
-fn role(value: &str) -> RoleName {
-    RoleName::from_wire_token(value).expect("role")
-}
-
 fn role_token(value: &str) -> RoleToken {
     RoleToken::from_text(value).expect("role token")
 }
@@ -197,6 +200,34 @@ fn role_vector(values: &[&str]) -> Role {
 
 fn lane_identifier(value: &str) -> LaneIdentifier {
     LaneIdentifier::from_wire_token(value).expect("lane")
+}
+
+fn schema_role_vector(values: &[&str]) -> SchemaRole {
+    SchemaRole::new(SchemaRoleTokens::new(
+        values
+            .iter()
+            .map(|value| SchemaRoleToken::new(*value))
+            .collect(),
+    ))
+}
+
+fn schema_lane_registration(
+    session: &str,
+    lane: &str,
+    role: SchemaRole,
+) -> SchemaLaneRegistrationRequest {
+    SchemaLaneRegistrationRequest {
+        assignment: SchemaLaneAssignment {
+            session: SchemaSessionIdentifier::new(session),
+            lane: SchemaLaneIdentifier::new(lane),
+            owner: SchemaLaneOwner {
+                role,
+                authority: SchemaLaneAuthority::Structural,
+            },
+            details: SchemaLaneDetails::new("daemon cli lane registration"),
+        },
+        mode: SchemaLaneRegistrationMode::Fresh,
+    }
 }
 
 fn reason(value: &str) -> ScopeReason {
@@ -314,18 +345,48 @@ fn complete_handover(fixture: &DaemonFixture) -> HandoverMarker {
 fn test_mirror_payload() -> MirrorPayload {
     MirrorSnapshot {
         claims: vec![StoredClaim::new(
-            role("operator"),
+            lane_identifier("operator"),
             ScopeReference::Path(
                 WirePath::from_absolute_path("/tmp/orchestrate-upgrade-mirror-claim")
                     .expect("claim path"),
             ),
             reason("upgrade mirror restore"),
+            TimestampNanos::new(1),
         )],
-        lanes: vec![LaneRegistration {
-            lane: lane_identifier("schema-designer-assistant"),
-            role: role_vector(&["Schema", "Designer"]),
-            authority: LaneAuthority::Support,
-        }],
+        lanes: vec![
+            StoredLaneRegistration::new(
+                LaneAssignment {
+                    session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
+                        .expect("session"),
+                    lane: lane_identifier("operator"),
+                    owner: LaneOwner {
+                        role: role_vector(&["Operator"]),
+                        authority: LaneAuthority::Structural,
+                    },
+                    details: LaneDetails::from_text("daemon cli mirror operator lane")
+                        .expect("lane details"),
+                },
+                TimestampNanos::new(1),
+                TimestampNanos::new(1),
+                LaneStatus::Active,
+            ),
+            StoredLaneRegistration::new(
+                LaneAssignment {
+                    session: SessionIdentifier::from_camel_case_name("DaemonCliSession")
+                        .expect("session"),
+                    lane: lane_identifier("schema-designer-assistant"),
+                    owner: LaneOwner {
+                        role: role_vector(&["Schema", "Designer"]),
+                        authority: LaneAuthority::Support,
+                    },
+                    details: LaneDetails::from_text("daemon cli mirror lane")
+                        .expect("lane details"),
+                },
+                TimestampNanos::new(1),
+                TimestampNanos::new(1),
+                LaneStatus::Active,
+            ),
+        ],
     }
     .into_mirror_payload(MirrorVersions::new(
         ContractVersion::new([1; 32]),
@@ -376,6 +437,24 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
             .any(|status| status.role == schema_role_name)
     );
 
+    let output = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
+        "DaemonCliSession",
+        &role,
+        schema_role_vector(&[
+            "Primary",
+            "Orchestrate",
+            "Daemon",
+            "Zxq9",
+            "Never",
+            "Collide",
+        ]),
+    )));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
         role: schema_role_name,
         scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
@@ -400,7 +479,125 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
 }
 
 #[test]
-fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
+fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
+    let fixture = DaemonFixture::start("orchestrate-cli-observe-lanes");
+
+    let alpha_register = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
+        "DaemonCliObserveSession",
+        "daemon-cli-alpha-observe",
+        schema_role_vector(&["Daemon", "Cli", "Alpha", "Observe"]),
+    )));
+    assert!(
+        alpha_register.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&alpha_register.stderr)
+    );
+    let beta_register = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
+        "SecondDaemonCliObserveSession",
+        "daemon-cli-beta-observe",
+        schema_role_vector(&["Daemon", "Cli", "Beta", "Observe"]),
+    )));
+    assert!(
+        beta_register.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&beta_register.stderr)
+    );
+
+    let claim_output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
+        role: SchemaRoleName::new(SchemaRoleIdentifier::new("daemon-cli-alpha-observe")),
+        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
+            "/tmp/daemon-cli-alpha-observe",
+        ))]
+        .into(),
+        reason: SchemaScopeReason::new("daemon CLI observe resource claim"),
+    }));
+    assert!(
+        claim_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&claim_output.stderr)
+    );
+
+    let sessions_output = fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::Sessions));
+    assert!(
+        sessions_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&sessions_output.stderr)
+    );
+    let sessions_reply: SchemaOutput = decode_nota(&sessions_output.stdout);
+    let SchemaOutput::SessionsObserved(sessions) = sessions_reply else {
+        panic!("expected sessions observed, got {sessions_reply:?}");
+    };
+    let daemon_session = sessions
+        .payload()
+        .payload()
+        .iter()
+        .find(|projection| {
+            projection.session == SchemaSessionIdentifier::new("DaemonCliObserveSession")
+        })
+        .expect("daemon cli observe session");
+    assert_eq!(daemon_session.active_lanes, 1);
+
+    let empty_session_output =
+        fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::SessionLanes(
+            SchemaSessionIdentifier::new("MissingDaemonCliObserveSession"),
+        )));
+    assert!(
+        empty_session_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&empty_session_output.stderr)
+    );
+    let empty_session_reply: SchemaOutput = decode_nota(&empty_session_output.stdout);
+    let SchemaOutput::LanesObserved(empty_lanes) = empty_session_reply else {
+        panic!("expected empty lanes observed, got {empty_session_reply:?}");
+    };
+    assert!(empty_lanes.payload().payload().is_empty());
+
+    let session_lanes_output = fixture.ordinary_cli(SchemaInput::Observe(
+        SchemaObservation::SessionLanes(SchemaSessionIdentifier::new("DaemonCliObserveSession")),
+    ));
+    assert!(
+        session_lanes_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&session_lanes_output.stderr)
+    );
+    let session_lanes_reply: SchemaOutput = decode_nota(&session_lanes_output.stdout);
+    let SchemaOutput::LanesObserved(session_lanes) = session_lanes_reply else {
+        panic!("expected session lanes observed, got {session_lanes_reply:?}");
+    };
+    assert_eq!(session_lanes.payload().payload().len(), 1);
+    let alpha_lane = &session_lanes.payload().payload()[0];
+    assert_eq!(
+        alpha_lane.registration.assignment.lane,
+        SchemaLaneIdentifier::new("daemon-cli-alpha-observe")
+    );
+    assert_eq!(
+        alpha_lane.registration.status,
+        signal_orchestrate::schema::lib::LaneStatus::Active
+    );
+    assert_eq!(alpha_lane.resource_claims.payload().len(), 1);
+    assert_eq!(
+        alpha_lane.resource_claims.payload()[0].reason,
+        SchemaScopeReason::new("daemon CLI observe resource claim")
+    );
+
+    let all_lanes_output = fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::Lanes));
+    assert!(
+        all_lanes_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&all_lanes_output.stderr)
+    );
+    let all_lanes_reply: SchemaOutput = decode_nota(&all_lanes_output.stdout);
+    let SchemaOutput::LanesObserved(all_lanes) = all_lanes_reply else {
+        panic!("expected all lanes observed, got {all_lanes_reply:?}");
+    };
+    assert!(all_lanes.payload().payload().iter().any(|projection| {
+        projection.registration.assignment.lane
+            == SchemaLaneIdentifier::new("daemon-cli-beta-observe")
+    }));
+}
+
+#[test]
+fn daemon_drops_legacy_lock_claims_without_registered_lanes() {
     let fixture = DaemonFixture::start_with_legacy_locks(
         "orchestrate-import-legacy-lock",
         &[(
@@ -428,15 +625,8 @@ fn daemon_imports_legacy_lock_file_claims_on_empty_store() {
         })
         .expect("system-operator role");
     assert!(
-        system_operator
-            .claims
-            .payload()
-            .iter()
-            .any(|claim| matches!(
-                &claim.scope,
-                SchemaScopeReference::Path(path)
-                    if path.payload().as_str() == "/git/github.com/LiGoldragon/orchestrate"
-            ))
+        system_operator.claims.payload().is_empty(),
+        "legacy role locks must not create ordinary claims without registered lanes"
     );
 }
 
@@ -536,12 +726,9 @@ fn upgrade_socket_accepts_mirror_before_readiness_and_persists_snapshot() {
     let OrchestrateReply::LanesObserved(lanes) = lanes else {
         panic!("expected lane snapshot");
     };
-    assert!(
-        lanes
-            .lanes
-            .iter()
-            .any(|lane| lane.lane.as_wire_token() == "schema-designer-assistant")
-    );
+    assert!(lanes.lanes.iter().any(|lane| {
+        lane.registration.assignment.lane.as_wire_token() == "schema-designer-assistant"
+    }));
 }
 
 #[test]

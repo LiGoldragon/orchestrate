@@ -1,11 +1,10 @@
-use meta_signal_orchestrate::{
-    LaneRegistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
-};
+use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest};
 use orchestrate::{
-    Error, LaneAuthority, MetaRequestExecution, OrchestrateLayout, OrchestrateNexusEngine,
-    OrchestrateReply, OrchestrateRequest, OrchestrateRequestExecution, OrchestrateSemaEngine,
-    OrchestrateService, Role, RoleClaim, RoleName, RoleToken, ScopeReason, ScopeReference,
-    StoreLocation, TaskToken,
+    Error, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
+    LaneRegistrationMode, LaneRegistrationRequest, MetaRequestExecution, OrchestrateLayout,
+    OrchestrateNexusEngine, OrchestrateReply, OrchestrateRequest, OrchestrateRequestExecution,
+    OrchestrateSemaEngine, OrchestrateService, Role, RoleClaim, RoleName, RoleToken, ScopeReason,
+    ScopeReference, SessionIdentifier, StoreLocation, TaskToken,
 };
 use signal_frame::{AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, SubReply};
 use signal_orchestrate::Observation;
@@ -38,11 +37,19 @@ impl Fixture {
                 .to_string_lossy()
                 .into_owned(),
         );
-        let service = OrchestrateService::open_with_layout(
+        let mut service = OrchestrateService::open_with_layout(
             &store,
             OrchestrateLayout::new(workspace, git_index),
         )
         .expect("service opens");
+        block_on(
+            service.handle_meta(MetaOrchestrateRequest::Register(lane_registration(
+                "ArchitectureSession",
+                "operator",
+                role_vector(&["Operator"]),
+            ))),
+        )
+        .expect("operator lane registration");
         Self {
             _temporary: temporary,
             service,
@@ -102,10 +109,11 @@ impl DirectDependencyWitness {
 
     fn signal_frame_request_payloads_are_linked() {
         let _ordinary = role_claim().into_request();
-        let _meta = MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-            role: role_vector(&["Designer"]),
-            authority: LaneAuthority::Structural,
-        })
+        let _meta = MetaOrchestrateRequest::Register(lane_registration(
+            "ArchitectureSession",
+            "designer",
+            role_vector(&["Designer"]),
+        ))
         .into_request();
     }
 
@@ -186,10 +194,11 @@ fn ordinary_requests_execute_through_generated_nexus_engine() {
 #[test]
 fn meta_requests_execute_through_generated_nexus_engine() {
     let mut fixture = Fixture::new("orchestrate-meta-nexus");
-    let request = MetaOrchestrateRequest::Register(LaneRegistrationRequest {
-        role: role_vector(&["Schema", "Designer"]),
-        authority: LaneAuthority::Structural,
-    });
+    let request = MetaOrchestrateRequest::Register(lane_registration(
+        "ArchitectureSession",
+        "schema-designer",
+        role_vector(&["Schema", "Designer"]),
+    ));
 
     let (reply, engine_error) =
         block_on(MetaRequestExecution::new(&mut fixture.service, request.into_request()).execute());
@@ -207,7 +216,7 @@ fn meta_requests_execute_through_generated_nexus_engine() {
         panic!("expected lane registration");
     };
     assert_eq!(
-        registration.registration.lane.as_wire_token(),
+        registration.registration.assignment.lane.as_wire_token(),
         "schema-designer"
     );
     assert!(engine_error.is_none());
@@ -325,4 +334,20 @@ fn role_token(value: &str) -> RoleToken {
 
 fn role_vector(values: &[&str]) -> Role {
     Role::try_new(values.iter().map(|value| role_token(value)).collect()).expect("role vector")
+}
+
+fn lane_registration(session: &str, lane: &str, role: Role) -> LaneRegistrationRequest {
+    LaneRegistrationRequest {
+        assignment: LaneAssignment {
+            session: SessionIdentifier::from_camel_case_name(session).expect("session"),
+            lane: LaneIdentifier::from_wire_token(lane).expect("lane"),
+            owner: LaneOwner {
+                role,
+                authority: LaneAuthority::Structural,
+            },
+            details: LaneDetails::from_text("architecture lane registration")
+                .expect("lane details"),
+        },
+        mode: LaneRegistrationMode::Fresh,
+    }
 }

@@ -1,10 +1,13 @@
 use signal_orchestrate::{
     Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, HandoffAcceptance, HandoffRejection,
-    HandoffRejectionReason, OrchestrateReply, ReleaseAcknowledgment, RoleClaim, RoleHandoff,
-    RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,
+    HandoffRejectionReason, LaneIdentifier, OrchestrateReply, ReleaseAcknowledgment, RoleClaim,
+    RoleHandoff, RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,
 };
 
-use crate::{OrchestrateTables, Result, StoredActivity, StoredClaim};
+use crate::{
+    Error, LaneRegistry, OrchestrateTables, Result, StoredActivity, StoredClaim,
+    StoredLaneRegistration,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimState {
@@ -47,8 +50,9 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_claim(&self, claim: RoleClaim) -> Result<OrchestrateReply> {
+        let claimant = ClaimLane::from_role_name(&claim.role)?.registered(self.tables)?;
         let entries = self.tables.claim_records()?;
-        let conflicts = Self::conflicts_for(&entries, &claim);
+        let conflicts = Self::conflicts_for(&entries, &claim, claimant.lane())?;
         if !conflicts.is_empty() {
             return Ok(OrchestrateReply::ClaimRejection(ClaimRejection {
                 role: claim.role,
@@ -56,30 +60,32 @@ impl<'tables> ClaimLedger<'tables> {
             }));
         }
 
+        let claimed_at = self.tables.current_timestamp()?;
         let mut next_entries = entries.clone();
         for scope in &claim.scopes {
-            if Self::role_already_owns(&next_entries, &claim.role, scope) {
+            if Self::lane_already_owns(&next_entries, claimant.lane(), scope) {
                 continue;
             }
             next_entries.retain(|entry| {
-                entry.role != claim.role
+                entry.lane != *claimant.lane()
                     || !ScopeRelation::new(scope, &entry.scope).left_contains_right()
             });
             next_entries.push(StoredClaim::new(
-                claim.role.clone(),
+                claimant.lane().clone(),
                 scope.clone(),
                 claim.reason.clone(),
+                claimed_at,
             ));
         }
 
         let remove_keys = entries
             .iter()
-            .filter(|entry| entry.role == claim.role)
+            .filter(|entry| entry.lane == *claimant.lane())
             .map(StoredClaim::key)
             .collect::<Vec<_>>();
         let insert_claims = next_entries
             .iter()
-            .filter(|entry| entry.role == claim.role)
+            .filter(|entry| entry.lane == *claimant.lane())
             .cloned()
             .collect::<Vec<_>>();
         self.tables.replace_claims(&remove_keys, &insert_claims)?;
@@ -91,15 +97,16 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_release(&self, release: RoleRelease) -> Result<OrchestrateReply> {
+        let released_lane = ClaimLane::from_role_name(&release.role)?.registered(self.tables)?;
         let entries = self.tables.claim_records()?;
         let released_scopes = entries
             .iter()
-            .filter(|entry| entry.role == release.role)
+            .filter(|entry| entry.lane == *released_lane.lane())
             .map(|entry| entry.scope.clone())
             .collect::<Vec<_>>();
         let remove_keys = entries
             .iter()
-            .filter(|entry| entry.role == release.role)
+            .filter(|entry| entry.lane == *released_lane.lane())
             .map(StoredClaim::key)
             .collect::<Vec<_>>();
         self.tables.replace_claims(&remove_keys, &[])?;
@@ -113,8 +120,10 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_handoff(&self, handoff: RoleHandoff) -> Result<OrchestrateReply> {
+        let from_lane = ClaimLane::from_role_name(&handoff.from)?.registered(self.tables)?;
+        let to_lane = ClaimLane::from_role_name(&handoff.to)?.registered(self.tables)?;
         let entries = self.tables.claim_records()?;
-        if !Self::source_holds_all(&entries, &handoff) {
+        if !Self::source_holds_all(&entries, from_lane.lane(), &handoff) {
             return Ok(OrchestrateReply::HandoffRejection(HandoffRejection {
                 from: handoff.from,
                 to: handoff.to,
@@ -122,7 +131,8 @@ impl<'tables> ClaimLedger<'tables> {
             }));
         }
 
-        let conflicts = Self::target_conflicts_for(&entries, &handoff);
+        let conflicts =
+            Self::target_conflicts_for(&entries, &handoff, from_lane.lane(), to_lane.lane())?;
         if !conflicts.is_empty() {
             return Ok(OrchestrateReply::HandoffRejection(HandoffRejection {
                 from: handoff.from,
@@ -133,15 +143,23 @@ impl<'tables> ClaimLedger<'tables> {
 
         let remove_keys = entries
             .iter()
-            .filter(|entry| Self::removed_by_handoff(entry, &handoff))
+            .filter(|entry| {
+                Self::removed_by_handoff(entry, &handoff, from_lane.lane(), to_lane.lane())
+            })
             .map(StoredClaim::key)
             .collect::<Vec<_>>();
+        let claimed_at = self.tables.current_timestamp()?;
         let insert_claims = handoff
             .scopes
             .iter()
-            .filter(|scope| !Self::role_already_owns(&entries, &handoff.to, scope))
+            .filter(|scope| !Self::lane_already_owns(&entries, to_lane.lane(), scope))
             .map(|scope| {
-                StoredClaim::new(handoff.to.clone(), scope.clone(), handoff.reason.clone())
+                StoredClaim::new(
+                    to_lane.lane().clone(),
+                    scope.clone(),
+                    handoff.reason.clone(),
+                    claimed_at,
+                )
             })
             .collect::<Vec<_>>();
 
@@ -156,6 +174,7 @@ impl<'tables> ClaimLedger<'tables> {
 
     pub fn observe(&self) -> Result<OrchestrateReply> {
         let entries = self.tables.claim_records()?;
+        let lane_records = self.tables.lane_records()?;
         let recent_activity = Self::recent_activity(
             self.tables.activity_records()?,
             Self::ROLE_OBSERVATION_ACTIVITY_LIMIT,
@@ -165,7 +184,7 @@ impl<'tables> ClaimLedger<'tables> {
         let roles = role_records
             .into_iter()
             .map(|role| RoleStatus {
-                claims: Self::claims_for(&entries, &role.role),
+                claims: Self::claims_for_role(&entries, &lane_records, &role.role),
                 role: role.role,
                 harness: role.harness,
             })
@@ -177,78 +196,111 @@ impl<'tables> ClaimLedger<'tables> {
         }))
     }
 
-    fn conflicts_for(entries: &[StoredClaim], claim: &RoleClaim) -> Vec<ScopeConflict> {
-        claim
-            .scopes
-            .iter()
-            .flat_map(|scope| {
-                entries
-                    .iter()
-                    .filter(move |entry| {
-                        entry.role != claim.role
-                            && ScopeRelation::new(scope, &entry.scope).overlaps()
-                    })
-                    .map(move |entry| ScopeConflict {
-                        scope: scope.clone(),
-                        held_by: entry.role.clone(),
-                        held_reason: entry.reason.clone(),
-                    })
-            })
-            .collect()
+    fn conflicts_for(
+        entries: &[StoredClaim],
+        claim: &RoleClaim,
+        claimant: &LaneIdentifier,
+    ) -> Result<Vec<ScopeConflict>> {
+        let mut conflicts = Vec::new();
+        for scope in &claim.scopes {
+            for entry in entries.iter().filter(|entry| {
+                entry.lane != *claimant && ScopeRelation::new(scope, &entry.scope).overlaps()
+            }) {
+                conflicts.push(ScopeConflict {
+                    scope: scope.clone(),
+                    held_by: ClaimLane::new(entry.lane.clone()).as_role_name()?,
+                    held_reason: entry.reason.clone(),
+                });
+            }
+        }
+        Ok(conflicts)
     }
 
-    fn role_already_owns(entries: &[StoredClaim], role: &RoleName, scope: &ScopeReference) -> bool {
+    fn lane_already_owns(
+        entries: &[StoredClaim],
+        lane: &LaneIdentifier,
+        scope: &ScopeReference,
+    ) -> bool {
         entries.iter().any(|entry| {
-            entry.role == *role && ScopeRelation::new(&entry.scope, scope).left_contains_right()
+            entry.lane == *lane && ScopeRelation::new(&entry.scope, scope).left_contains_right()
         })
     }
 
-    fn source_holds_all(entries: &[StoredClaim], handoff: &RoleHandoff) -> bool {
+    fn source_holds_all(
+        entries: &[StoredClaim],
+        lane: &LaneIdentifier,
+        handoff: &RoleHandoff,
+    ) -> bool {
         handoff
             .scopes
             .iter()
-            .all(|scope| Self::role_holds_exact(entries, &handoff.from, scope))
+            .all(|scope| Self::lane_holds_exact(entries, lane, scope))
     }
 
-    fn role_holds_exact(entries: &[StoredClaim], role: &RoleName, scope: &ScopeReference) -> bool {
+    fn lane_holds_exact(
+        entries: &[StoredClaim],
+        lane: &LaneIdentifier,
+        scope: &ScopeReference,
+    ) -> bool {
         entries
             .iter()
-            .any(|entry| entry.role == *role && entry.scope == *scope)
+            .any(|entry| entry.lane == *lane && entry.scope == *scope)
     }
 
-    fn target_conflicts_for(entries: &[StoredClaim], handoff: &RoleHandoff) -> Vec<ScopeConflict> {
-        handoff
-            .scopes
-            .iter()
-            .flat_map(|scope| {
-                entries
-                    .iter()
-                    .filter(move |entry| {
-                        entry.role != handoff.from
-                            && entry.role != handoff.to
-                            && ScopeRelation::new(scope, &entry.scope).overlaps()
-                    })
-                    .map(move |entry| ScopeConflict {
-                        scope: scope.clone(),
-                        held_by: entry.role.clone(),
-                        held_reason: entry.reason.clone(),
-                    })
-            })
-            .collect()
+    fn target_conflicts_for(
+        entries: &[StoredClaim],
+        handoff: &RoleHandoff,
+        from_lane: &LaneIdentifier,
+        to_lane: &LaneIdentifier,
+    ) -> Result<Vec<ScopeConflict>> {
+        let mut conflicts = Vec::new();
+        for scope in &handoff.scopes {
+            for entry in entries.iter().filter(|entry| {
+                entry.lane != *from_lane
+                    && entry.lane != *to_lane
+                    && ScopeRelation::new(scope, &entry.scope).overlaps()
+            }) {
+                conflicts.push(ScopeConflict {
+                    scope: scope.clone(),
+                    held_by: ClaimLane::new(entry.lane.clone()).as_role_name()?,
+                    held_reason: entry.reason.clone(),
+                });
+            }
+        }
+        Ok(conflicts)
     }
 
-    fn removed_by_handoff(entry: &StoredClaim, handoff: &RoleHandoff) -> bool {
+    fn removed_by_handoff(
+        entry: &StoredClaim,
+        handoff: &RoleHandoff,
+        from_lane: &LaneIdentifier,
+        to_lane: &LaneIdentifier,
+    ) -> bool {
         handoff.scopes.iter().any(|scope| {
-            (entry.role == handoff.from && entry.scope == *scope)
-                || (entry.role == handoff.to
+            (entry.lane == *from_lane && entry.scope == *scope)
+                || (entry.lane == *to_lane
                     && ScopeRelation::new(scope, &entry.scope).left_contains_right())
         })
     }
 
-    fn claims_for(entries: &[StoredClaim], role: &RoleName) -> Vec<ClaimEntry> {
+    fn claims_for_role(
+        entries: &[StoredClaim],
+        lanes: &[StoredLaneRegistration],
+        role: &RoleName,
+    ) -> Vec<ClaimEntry> {
+        let role_lanes = lanes
+            .iter()
+            .filter(|lane| lane.status == signal_orchestrate::LaneStatus::Active)
+            .filter_map(|lane| {
+                LaneRegistry::role_name_for(&lane.assignment.owner.role)
+                    .ok()
+                    .filter(|owner| owner == role)
+                    .map(|_| lane.assignment.lane.clone())
+            })
+            .collect::<Vec<_>>();
         entries
             .iter()
-            .filter(|entry| entry.role == *role)
+            .filter(|entry| role_lanes.iter().any(|lane| lane == &entry.lane))
             .map(|entry| ClaimEntry {
                 scope: entry.scope.clone(),
                 reason: entry.reason.clone(),
@@ -264,6 +316,49 @@ impl<'tables> ClaimLedger<'tables> {
             .take(limit)
             .map(StoredActivity::into_activity)
             .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClaimLane {
+    lane: LaneIdentifier,
+}
+
+impl ClaimLane {
+    fn new(lane: LaneIdentifier) -> Self {
+        Self { lane }
+    }
+
+    fn from_role_name(role: &RoleName) -> Result<Self> {
+        Ok(Self::new(LaneIdentifier::from_wire_token(
+            role.as_wire_token().to_string(),
+        )?))
+    }
+
+    fn registered(self, tables: &OrchestrateTables) -> Result<RegisteredClaimLane> {
+        if tables.active_lane_record(&self.lane)?.is_none() {
+            return Err(Error::LaneNotRegistered {
+                lane: self.lane.as_wire_token().to_string(),
+            });
+        }
+        Ok(RegisteredClaimLane { lane: self.lane })
+    }
+
+    fn as_role_name(&self) -> Result<RoleName> {
+        Ok(RoleName::from_wire_token(
+            self.lane.as_wire_token().to_string(),
+        )?)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegisteredClaimLane {
+    lane: LaneIdentifier,
+}
+
+impl RegisteredClaimLane {
+    fn lane(&self) -> &LaneIdentifier {
+        &self.lane
     }
 }
 
