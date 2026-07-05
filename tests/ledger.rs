@@ -1,14 +1,14 @@
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
-    HarnessKind, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
-    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, MetaOrchestrateReply,
-    MetaOrchestrateRequest, Observation, ObservationSubscription, OrchestrateLayout,
-    OrchestrateReply, OrchestrateRequest, OrchestrateService, OrchestrateTables, PartialApplied,
-    RefreshRepositoryIndexOrder, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
-    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
-    StoreLocation, StoredClaim, StoredRole, TaskToken, TimestampNanos, WirePath,
-    WorkflowRunRequest,
+    HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails,
+    LaneIdentifier, LaneOwner, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
+    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
+    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    OrchestrateService, OrchestrateTables, PartialApplied, RefreshRepositoryIndexOrder,
+    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
+    ScopeReason, ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation,
+    StoredClaim, StoredRole, TaskToken, TimestampNanos, WirePath, WorkflowRunRequest,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -825,6 +825,140 @@ fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
         Err(orchestrate::Error::LaneNotRegistered { lane })
             if lane == "missing-designer"
     ));
+}
+
+#[test]
+fn lane_lifecycle_reports_duplicates_unregisters_and_clears_session_rows() {
+    let mut fixture = Fixture::new("orchestrate-lane-lifecycle");
+    let registration = lane_registration(
+        "LifecycleSession",
+        "meta-lifecycle",
+        role_vector(&["Meta", "Lifecycle"]),
+    );
+
+    let registered = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(registration.clone()))
+        .expect("register lifecycle lane");
+    let MetaOrchestrateReply::LaneRegistered(registered) = registered else {
+        panic!("expected lane registered");
+    };
+    assert_eq!(
+        registered.registration.status,
+        orchestrate::LaneStatus::Active
+    );
+
+    fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: role("meta-lifecycle"),
+            scopes: vec![path("/tmp/meta-lifecycle")],
+            reason: reason("duplicate projection includes resource claims"),
+        }))
+        .expect("claim lane resource");
+
+    let fresh_duplicate = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(registration.clone()))
+        .expect("duplicate fresh register");
+    let MetaOrchestrateReply::LaneAlreadyRegistered(fresh_duplicate) = fresh_duplicate else {
+        panic!("expected already registered fresh reply");
+    };
+    assert_eq!(
+        fresh_duplicate.resolution,
+        LaneAlreadyRegisteredResolution::FreshConflict
+    );
+    assert_eq!(fresh_duplicate.active.resource_claims.len(), 1);
+    assert_eq!(
+        fresh_duplicate
+            .active
+            .registration
+            .assignment
+            .details
+            .as_str(),
+        "ledger lane registration"
+    );
+    assert_eq!(
+        fresh_duplicate.active.registration.status,
+        orchestrate::LaneStatus::Active
+    );
+    assert!(
+        fresh_duplicate.active.observed_at.value()
+            >= fresh_duplicate.active.registration.registered_at.value()
+    );
+
+    let mut recovery_request = registration.clone();
+    recovery_request.mode = LaneRegistrationMode::Recovery;
+    let recovery_duplicate = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(recovery_request))
+        .expect("duplicate recovery register");
+    let MetaOrchestrateReply::LaneAlreadyRegistered(recovery_duplicate) = recovery_duplicate else {
+        panic!("expected already registered recovery reply");
+    };
+    assert_eq!(
+        recovery_duplicate.resolution,
+        LaneAlreadyRegisteredResolution::RecoveryInherited
+    );
+
+    let unregistered = fixture
+        .handle_meta(MetaOrchestrateRequest::Unregister(
+            LaneUnregistrationRequest {
+                session: session("LifecycleSession"),
+                lane: lane("meta-lifecycle"),
+                details: LaneDetails::from_text("handover ended active lane").expect("details"),
+            },
+        ))
+        .expect("unregister lane");
+    let MetaOrchestrateReply::LaneUnregistered(unregistered) = unregistered else {
+        panic!("expected lane unregistered");
+    };
+    assert_eq!(unregistered.lane.as_wire_token(), "meta-lifecycle");
+
+    let observed = fixture
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("LifecycleSession"),
+        )))
+        .expect("observe session lanes");
+    let OrchestrateReply::LanesObserved(observed) = observed else {
+        panic!("expected session lanes observed");
+    };
+    assert_eq!(observed.lanes.len(), 1);
+    assert_eq!(
+        observed.lanes[0].registration.status,
+        orchestrate::LaneStatus::Released
+    );
+
+    let second_registration = lane_registration(
+        "LifecycleSession",
+        "session-clear-worker",
+        role_vector(&["Session", "Clear", "Worker"]),
+    );
+    let second_registered = fixture
+        .handle_meta(MetaOrchestrateRequest::Register(second_registration))
+        .expect("register second lane before clear");
+    assert!(matches!(
+        second_registered,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+
+    let cleared = fixture
+        .handle_meta(MetaOrchestrateRequest::ClearSession(SessionClearRequest {
+            session: session("LifecycleSession"),
+            details: LaneDetails::from_text("session ended").expect("details"),
+        }))
+        .expect("clear session");
+    let MetaOrchestrateReply::SessionCleared(cleared) = cleared else {
+        panic!("expected session cleared");
+    };
+    assert_eq!(cleared.session.as_wire_token(), "LifecycleSession");
+    assert_eq!(cleared.cleared_lanes, 2);
+
+    let observed = fixture
+        .handle(OrchestrateRequest::Observe(Observation::SessionLanes(
+            session("LifecycleSession"),
+        )))
+        .expect("observe cleared session lanes");
+    let OrchestrateReply::LanesObserved(observed) = observed else {
+        panic!("expected cleared session lanes observed");
+    };
+    assert!(observed.lanes.is_empty());
 }
 
 #[test]

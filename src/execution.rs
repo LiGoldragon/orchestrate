@@ -451,6 +451,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
             meta_contract::MetaOrchestrateRequest::Unregister(request) => {
                 LaneRegistry::new(self.service.tables()).unregister(request)?
             }
+            meta_contract::MetaOrchestrateRequest::ClearSession(request) => {
+                LaneRegistry::new(self.service.tables()).clear_session(request)?
+            }
             meta_contract::MetaOrchestrateRequest::SetAuthority(change) => {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
             }
@@ -3211,6 +3214,24 @@ impl ProjectInto<meta_contract::LaneUnregistrationRequest>
     }
 }
 
+impl ProjectInto<meta_schema::SessionClearRequest> for meta_contract::SessionClearRequest {
+    fn project_into(self) -> Result<meta_schema::SessionClearRequest> {
+        Ok(meta_schema::SessionClearRequest {
+            session: self.session.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::SessionClearRequest> for meta_schema::SessionClearRequest {
+    fn project_into(self) -> Result<meta_contract::SessionClearRequest> {
+        Ok(meta_contract::SessionClearRequest {
+            session: self.session.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneAuthorityChange> for meta_contract::LaneAuthorityChange {
     fn project_into(self) -> Result<meta_schema::LaneAuthorityChange> {
         Ok(meta_schema::LaneAuthorityChange {
@@ -3247,6 +3268,9 @@ impl ProjectInto<meta_schema::Input> for meta_contract::MetaOrchestrateRequest {
             meta_contract::MetaOrchestrateRequest::Unregister(payload) => {
                 meta_schema::Input::unregister(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateRequest::ClearSession(payload) => {
+                meta_schema::Input::clear_session(payload.project_into()?)
+            }
             meta_contract::MetaOrchestrateRequest::SetAuthority(payload) => {
                 meta_schema::Input::set_authority(payload.project_into()?)
             }
@@ -3280,6 +3304,9 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequest> for meta_schema::Input {
             }
             meta_schema::Input::Unregister(payload) => {
                 meta_contract::MetaOrchestrateRequest::Unregister(payload.project_into()?)
+            }
+            meta_schema::Input::ClearSession(payload) => {
+                meta_contract::MetaOrchestrateRequest::ClearSession(payload.project_into()?)
             }
             meta_schema::Input::SetAuthority(payload) => {
                 meta_contract::MetaOrchestrateRequest::SetAuthority(payload.project_into()?)
@@ -3497,6 +3524,32 @@ impl ProjectInto<meta_contract::LaneUnregistered> for meta_schema::LaneUnregiste
     }
 }
 
+impl ProjectInto<meta_schema::SessionCleared> for meta_contract::SessionCleared {
+    fn project_into(self) -> Result<meta_schema::SessionCleared> {
+        Ok(meta_schema::SessionCleared {
+            session: self.session.project_into()?,
+            cleared_lanes: u64::from(self.cleared_lanes),
+            ended_at: self.ended_at.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<meta_contract::SessionCleared> for meta_schema::SessionCleared {
+    fn project_into(self) -> Result<meta_contract::SessionCleared> {
+        Ok(meta_contract::SessionCleared {
+            session: self.session.project_into()?,
+            cleared_lanes: u32::try_from(self.cleared_lanes).map_err(|error| {
+                Error::SchemaBridge {
+                    message: format!("cleared lane count does not fit u32: {error}"),
+                }
+            })?,
+            ended_at: self.ended_at.project_into()?,
+            details: self.details.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<meta_schema::LaneRetired> for meta_contract::LaneRetired {
     fn project_into(self) -> Result<meta_schema::LaneRetired> {
         Ok(meta_schema::LaneRetired::new(self.lane.project_into()?))
@@ -3539,6 +3592,9 @@ impl ProjectInto<meta_schema::MetaOperationKind> for meta_contract::MetaOperatio
             meta_contract::MetaOperationKind::Unregister => {
                 meta_schema::MetaOperationKind::Unregister
             }
+            meta_contract::MetaOperationKind::ClearSession => {
+                meta_schema::MetaOperationKind::ClearSession
+            }
             meta_contract::MetaOperationKind::SetAuthority => {
                 meta_schema::MetaOperationKind::SetAuthority
             }
@@ -3564,6 +3620,9 @@ impl ProjectInto<meta_contract::MetaOperationKind> for meta_schema::MetaOperatio
             meta_schema::MetaOperationKind::Register => meta_contract::MetaOperationKind::Register,
             meta_schema::MetaOperationKind::Unregister => {
                 meta_contract::MetaOperationKind::Unregister
+            }
+            meta_schema::MetaOperationKind::ClearSession => {
+                meta_contract::MetaOperationKind::ClearSession
             }
             meta_schema::MetaOperationKind::SetAuthority => {
                 meta_contract::MetaOperationKind::SetAuthority
@@ -3657,6 +3716,9 @@ impl ProjectInto<meta_schema::Output> for meta_contract::MetaOrchestrateReply {
             meta_contract::MetaOrchestrateReply::LaneUnregistered(payload) => {
                 meta_schema::Output::LaneUnregistered(payload.project_into()?)
             }
+            meta_contract::MetaOrchestrateReply::SessionCleared(payload) => {
+                meta_schema::Output::SessionCleared(payload.project_into()?)
+            }
             meta_contract::MetaOrchestrateReply::LaneRetired(payload) => {
                 meta_schema::Output::LaneRetired(payload.project_into()?)
             }
@@ -3707,6 +3769,9 @@ impl ProjectInto<meta_contract::MetaOrchestrateReply> for meta_schema::Output {
             }
             meta_schema::Output::LaneUnregistered(payload) => {
                 meta_contract::MetaOrchestrateReply::LaneUnregistered(payload.project_into()?)
+            }
+            meta_schema::Output::SessionCleared(payload) => {
+                meta_contract::MetaOrchestrateReply::SessionCleared(payload.project_into()?)
             }
             meta_schema::Output::LaneRetired(payload) => {
                 meta_contract::MetaOrchestrateReply::LaneRetired(payload.project_into()?)

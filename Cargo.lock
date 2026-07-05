@@ -375,7 +375,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=session-lane-protocol-contracts#5d12d5b7a593175fa5ff49fdf71abe4fb751cb97"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=session-lane-protocol-contracts#ffa58da6b65baf81b33dc4f5adb1392ab075f900"
 dependencies = [
  "nota",
  "rkyv",

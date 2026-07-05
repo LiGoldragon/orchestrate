@@ -13,6 +13,7 @@ pub mod location;
 pub mod lock_projection;
 pub mod repository;
 pub mod role;
+#[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
 #[cfg(feature = "nota-text")]
@@ -45,7 +46,7 @@ pub use meta_signal_orchestrate::{
     LaneAuthoritySet, LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired,
     LaneUnregistered, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
     RefreshRepositoryIndexOrder, RefreshWorktreeIndexOrder, RegisterWorktree, RetireRoleOrder,
-    Retirement, WorktreeIndexRefreshed, WorktreeRegistered,
+    Retirement, SessionClearRequest, SessionCleared, WorktreeIndexRefreshed, WorktreeRegistered,
 };
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;

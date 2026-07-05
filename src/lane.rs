@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use meta_signal_orchestrate::{
     LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange, LaneAuthoritySet,
     LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired, LaneUnregistered,
-    LaneUnregistrationRequest, MetaOrchestrateReply,
+    LaneUnregistrationRequest, MetaOrchestrateReply, SessionClearRequest, SessionCleared,
 };
 use signal_orchestrate::{
     LaneAuthority, LaneIdentifier, LaneProjection, LanesObserved, OrchestrateReply, Role, RoleName,
@@ -72,6 +72,17 @@ impl<'tables> LaneRegistry<'tables> {
         Ok(MetaOrchestrateReply::LaneUnregistered(LaneUnregistered {
             session: request.session,
             lane: request.lane,
+            ended_at,
+            details: request.details,
+        }))
+    }
+
+    pub fn clear_session(&self, request: SessionClearRequest) -> Result<MetaOrchestrateReply> {
+        let ended_at = self.tables.current_timestamp()?;
+        let cleared_lanes = self.tables.remove_lanes_for_session(&request.session)?;
+        Ok(MetaOrchestrateReply::SessionCleared(SessionCleared {
+            session: request.session,
+            cleared_lanes: cleared_lanes.len() as u32,
             ended_at,
             details: request.details,
         }))
