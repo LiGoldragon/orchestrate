@@ -1,3 +1,4 @@
+use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
@@ -6,18 +7,27 @@ use orchestrate::{
     LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
     ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
     OrchestrateService, OrchestrateTables, PartialApplied, RefreshRepositoryIndexOrder,
-    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
-    ScopeReason, ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation,
-    StoredClaim, StoredLaneRegistration, TaskToken, TimestampNanos, WirePath, WorkflowRunRequest,
+    ResolvedWorkflowRunRequest, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
+    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionClearRequest,
+    SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
+    StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos, WirePath,
+    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunRequest,
+    WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
-    ComponentKind, Contract, EscalationTarget, EvaluationDecision, Evidence, Identity,
-    OperationDigest, RequiredSignatureThreshold, Rule, SignatureEnvelope, SignatureScheme,
-    TimeSignature, TimeWindow, TimestampNanos as CriomeTimestampNanos, WorkflowDigest,
-    WorkflowGuard,
+    ComponentKind, Contract, ContractDigest, EscalationTarget, EvaluationDecision, Evidence,
+    Identity, OperationDigest, RequiredSignatureThreshold, Rule, SignatureEnvelope,
+    SignatureScheme, TimeSignature, TimeWindow, TimestampNanos as CriomeTimestampNanos,
+    WorkflowDigest, WorkflowGuard,
 };
-use std::path::PathBuf;
+use signal_harness::{
+    CapabilityProfile, CodexContinuationIdentifier, ContinuationHandle, ContinuationRequest,
+    EffortRequest, HarnessKind as ResolvedHarnessKind, HarnessName, ModelRequest,
+    ModelResolutionRequest, ModelResolved, ModelSelector, ModelUnavailable, ModelUnavailableReason,
+    NamedModel,
+};
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use tempfile::TempDir;
 
 struct Fixture {
@@ -30,6 +40,12 @@ struct LayoutFixture {
     workspace: PathBuf,
     git_index: PathBuf,
     service: OrchestrateService,
+}
+
+#[derive(Clone)]
+struct RecordingModelResolver {
+    captured: Rc<RefCell<Vec<ModelResolutionRequest>>>,
+    reply: MetaHarnessReply,
 }
 
 impl Fixture {
@@ -84,6 +100,29 @@ fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
         .build()
         .expect("tokio runtime")
         .block_on(future)
+}
+
+impl RecordingModelResolver {
+    fn new(reply: MetaHarnessReply) -> Self {
+        Self {
+            captured: Rc::new(RefCell::new(Vec::new())),
+            reply,
+        }
+    }
+
+    fn captured_requests(&self) -> Vec<ModelResolutionRequest> {
+        self.captured.borrow().clone()
+    }
+}
+
+impl orchestrate::HarnessModelResolver for RecordingModelResolver {
+    fn resolve_model(
+        &self,
+        request: ModelResolutionRequest,
+    ) -> orchestrate::Result<MetaHarnessReply> {
+        self.captured.borrow_mut().push(request);
+        Ok(self.reply.clone())
+    }
 }
 
 impl LayoutFixture {
@@ -221,6 +260,35 @@ fn current_workspace_roles() -> Vec<RoleName> {
     roles
 }
 
+fn workflow_resolution_tables(name: &str) -> (TempDir, OrchestrateTables) {
+    let temporary = tempfile::Builder::new()
+        .prefix(name)
+        .tempdir()
+        .expect("temporary directory");
+    let store = StoreLocation::new(
+        temporary
+            .path()
+            .join("orchestrate.sema")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let tables = OrchestrateTables::open(&store).expect("workflow resolution tables");
+    (temporary, tables)
+}
+
+fn workflow_resolution_run_request() -> WorkflowRunRequest {
+    let operation = OperationDigest::from_bytes(b"resolved workflow operation");
+    WorkflowRunRequest {
+        workflow: WorkflowDigest::from_bytes(b"resolved workflow"),
+        operation: AuthorizedObjectReference {
+            component: ComponentKind::Spirit,
+            digest: operation.object_digest().clone(),
+            kind: AuthorizedObjectKind::Head,
+        },
+        contract: ContractDigest::from_bytes(b"resolved workflow contract"),
+    }
+}
+
 fn signed_time_evidence(operation: OperationDigest) -> (Evidence, criome::language::KeyRegistry) {
     let timekeeper = criome::master_key::MasterKey::generate().expect("timekeeper key");
     let timekeeper_identity = Identity::host("timekeeper".to_string());
@@ -341,6 +409,107 @@ fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
             .evaluate(&contract_digest, &authorized_evidence, &registry)
             .expect("evaluate with receipt"),
         EvaluationDecision::Authorized
+    );
+}
+
+#[test]
+fn resolved_workflow_exact_model_calls_harness_and_stores_opaque_continuation() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-exact-model");
+    let requested = ResolvedWorkflowRunRequest {
+        workflow_run: workflow_resolution_run_request(),
+        model_resolution: ModelResolutionRequest {
+            model: ModelRequest {
+                selector: ModelSelector::Exact(NamedModel::new("gpt-5-codex")),
+                effort: EffortRequest::High,
+            },
+            continuation: ContinuationRequest::Fresh,
+        },
+    };
+    let resolved = ModelResolved {
+        harness: HarnessName::new("codex-main"),
+        harness_kind: ResolvedHarnessKind::Codex,
+        model: NamedModel::new("gpt-5-codex"),
+        effort: EffortRequest::High,
+        continuation: ContinuationHandle::Codex(CodexContinuationIdentifier::new("codex-turn-9")),
+    };
+    let resolver = RecordingModelResolver::new(MetaHarnessReply::ModelResolved(resolved.clone()));
+
+    let reply = WorkflowRunner::new(resolver.clone())
+        .expect("runner")
+        .run_resolved_workflow(requested.clone(), &tables)
+        .expect("resolved workflow run");
+
+    assert_eq!(
+        resolver.captured_requests(),
+        vec![requested.model_resolution.clone()]
+    );
+    let OrchestrateReply::WorkflowResolvedReceiptProduced(WorkflowResolvedReceiptProduced {
+        run,
+        ..
+    }) = reply
+    else {
+        panic!("expected resolved workflow receipt, got {reply:?}");
+    };
+    assert_eq!(run.resolution, resolved);
+    let stored = tables
+        .workflow_model_resolution_record(&run.handle)
+        .expect("stored resolution")
+        .expect("resolution row");
+    assert_eq!(stored.request, requested);
+    assert_eq!(
+        stored.outcome,
+        StoredWorkflowModelResolutionOutcome::Resolved(resolved)
+    );
+}
+
+#[test]
+fn resolved_workflow_capability_unavailable_is_stored_without_fallback() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-capability-unavailable");
+    let requested = ResolvedWorkflowRunRequest {
+        workflow_run: workflow_resolution_run_request(),
+        model_resolution: ModelResolutionRequest {
+            model: ModelRequest {
+                selector: ModelSelector::CapabilityProfile(CapabilityProfile::new("orchestrator")),
+                effort: EffortRequest::Maximum,
+            },
+            continuation: ContinuationRequest::Require(ContinuationHandle::Codex(
+                CodexContinuationIdentifier::new("codex-turn-required"),
+            )),
+        },
+    };
+    let unavailable = ModelUnavailable {
+        request: requested.model_resolution.clone(),
+        reason: ModelUnavailableReason::CapabilityUnsupported,
+    };
+    let resolver =
+        RecordingModelResolver::new(MetaHarnessReply::ModelUnavailable(unavailable.clone()));
+
+    let reply = WorkflowRunner::new(resolver.clone())
+        .expect("runner")
+        .run_resolved_workflow(requested.clone(), &tables)
+        .expect("unavailable workflow run");
+
+    assert_eq!(
+        resolver.captured_requests(),
+        vec![requested.model_resolution.clone()]
+    );
+    let OrchestrateReply::WorkflowResolutionUnavailable(WorkflowResolutionUnavailable {
+        handle,
+        unavailable: surfaced,
+        ..
+    }) = reply
+    else {
+        panic!("expected typed workflow model unavailable, got {reply:?}");
+    };
+    assert_eq!(surfaced, unavailable);
+    let stored = tables
+        .workflow_model_resolution_record(&handle)
+        .expect("stored resolution")
+        .expect("resolution row");
+    assert_eq!(stored.request, requested);
+    assert_eq!(
+        stored.outcome,
+        StoredWorkflowModelResolutionOutcome::Unavailable(unavailable)
     );
 }
 

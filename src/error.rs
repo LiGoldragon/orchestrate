@@ -13,6 +13,29 @@ pub enum Error {
     #[error("signal frame: {0}")]
     SignalFrame(#[from] signal_frame::FrameError),
 
+    #[error("harness transport frame: {0}")]
+    HarnessTransportFrame(triad_runtime::FrameError),
+
+    #[error("harness reply rejected request: {reason}")]
+    HarnessReplyRejected {
+        reason: signal_frame::RequestRejectionReason,
+    },
+
+    #[error("harness reply did not commit: {outcome}")]
+    HarnessReplyNotCommitted { outcome: String },
+
+    #[error("unexpected harness frame: {got}")]
+    UnexpectedHarnessFrame { got: String },
+
+    #[error("unexpected harness reply: {got}")]
+    UnexpectedHarnessReply { got: String },
+
+    #[error("harness model resolver is not configured")]
+    HarnessResolverNotConfigured,
+
+    #[error("harness model resolution operation was unimplemented: {operation}")]
+    HarnessResolutionUnimplemented { operation: String },
+
     #[error("operation dispatch: {0}")]
     OperationDispatch(#[from] signal_frame::OperationDispatchError),
 

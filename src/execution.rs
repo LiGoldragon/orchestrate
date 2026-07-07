@@ -3,6 +3,7 @@ use meta_signal_orchestrate::schema::lib as meta_schema;
 use signal_frame::{
     BatchFailureReason, CommitStatus, NonEmpty, Reply, RetryClassification, SubReply,
 };
+use signal_harness as harness_contract;
 use signal_orchestrate as ordinary_contract;
 use signal_orchestrate::schema::lib as ordinary_schema;
 
@@ -403,6 +404,10 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
             ordinary_contract::OrchestrateRequest::RunWorkflow(request) => {
                 WorkflowRunner::fixture()?.run(request)?
+            }
+            ordinary_contract::OrchestrateRequest::RunResolvedWorkflow(request) => {
+                WorkflowRunner::from_process_harness()?
+                    .run_resolved_workflow(request, self.service.tables())?
             }
             ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(observation) => {
                 WorkflowRunner::fixture()?.open_observation(observation)?
@@ -1185,6 +1190,408 @@ impl ProjectInto<ordinary_contract::WorkflowRunRequest> for ordinary_schema::Wor
     }
 }
 
+impl ProjectInto<ordinary_schema::NamedModel> for harness_contract::NamedModel {
+    fn project_into(self) -> Result<ordinary_schema::NamedModel> {
+        Ok(ordinary_schema::NamedModel::new(self.as_str().to_string()))
+    }
+}
+
+impl ProjectInto<harness_contract::NamedModel> for ordinary_schema::NamedModel {
+    fn project_into(self) -> Result<harness_contract::NamedModel> {
+        Ok(harness_contract::NamedModel::new(self.into_payload()))
+    }
+}
+
+impl ProjectInto<ordinary_schema::CapabilityProfile> for harness_contract::CapabilityProfile {
+    fn project_into(self) -> Result<ordinary_schema::CapabilityProfile> {
+        Ok(ordinary_schema::CapabilityProfile::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<harness_contract::CapabilityProfile> for ordinary_schema::CapabilityProfile {
+    fn project_into(self) -> Result<harness_contract::CapabilityProfile> {
+        Ok(harness_contract::CapabilityProfile::new(
+            self.into_payload(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelSelector> for harness_contract::ModelSelector {
+    fn project_into(self) -> Result<ordinary_schema::ModelSelector> {
+        Ok(match self {
+            harness_contract::ModelSelector::Exact(model) => {
+                ordinary_schema::ModelSelector::Exact(model.project_into()?)
+            }
+            harness_contract::ModelSelector::CapabilityProfile(profile) => {
+                ordinary_schema::ModelSelector::CapabilityProfile(profile.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelSelector> for ordinary_schema::ModelSelector {
+    fn project_into(self) -> Result<harness_contract::ModelSelector> {
+        Ok(match self {
+            ordinary_schema::ModelSelector::Exact(model) => {
+                harness_contract::ModelSelector::Exact(model.project_into()?)
+            }
+            ordinary_schema::ModelSelector::CapabilityProfile(profile) => {
+                harness_contract::ModelSelector::CapabilityProfile(profile.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::EffortRequest> for harness_contract::EffortRequest {
+    fn project_into(self) -> Result<ordinary_schema::EffortRequest> {
+        Ok(match self {
+            harness_contract::EffortRequest::Minimal => ordinary_schema::EffortRequest::Minimal,
+            harness_contract::EffortRequest::Low => ordinary_schema::EffortRequest::Low,
+            harness_contract::EffortRequest::Medium => ordinary_schema::EffortRequest::Medium,
+            harness_contract::EffortRequest::High => ordinary_schema::EffortRequest::High,
+            harness_contract::EffortRequest::ExtraHigh => ordinary_schema::EffortRequest::ExtraHigh,
+            harness_contract::EffortRequest::Maximum => ordinary_schema::EffortRequest::Maximum,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::EffortRequest> for ordinary_schema::EffortRequest {
+    fn project_into(self) -> Result<harness_contract::EffortRequest> {
+        Ok(match self {
+            ordinary_schema::EffortRequest::Minimal => harness_contract::EffortRequest::Minimal,
+            ordinary_schema::EffortRequest::Low => harness_contract::EffortRequest::Low,
+            ordinary_schema::EffortRequest::Medium => harness_contract::EffortRequest::Medium,
+            ordinary_schema::EffortRequest::High => harness_contract::EffortRequest::High,
+            ordinary_schema::EffortRequest::ExtraHigh => harness_contract::EffortRequest::ExtraHigh,
+            ordinary_schema::EffortRequest::Maximum => harness_contract::EffortRequest::Maximum,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelRequest> for harness_contract::ModelRequest {
+    fn project_into(self) -> Result<ordinary_schema::ModelRequest> {
+        Ok(ordinary_schema::ModelRequest {
+            selector: self.selector.project_into()?,
+            effort: self.effort.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelRequest> for ordinary_schema::ModelRequest {
+    fn project_into(self) -> Result<harness_contract::ModelRequest> {
+        Ok(harness_contract::ModelRequest {
+            selector: self.selector.project_into()?,
+            effort: self.effort.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ClaudeSessionIdentifier>
+    for harness_contract::ClaudeSessionIdentifier
+{
+    fn project_into(self) -> Result<ordinary_schema::ClaudeSessionIdentifier> {
+        Ok(ordinary_schema::ClaudeSessionIdentifier::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<harness_contract::ClaudeSessionIdentifier>
+    for ordinary_schema::ClaudeSessionIdentifier
+{
+    fn project_into(self) -> Result<harness_contract::ClaudeSessionIdentifier> {
+        Ok(harness_contract::ClaudeSessionIdentifier::new(
+            self.into_payload(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::CodexContinuationIdentifier>
+    for harness_contract::CodexContinuationIdentifier
+{
+    fn project_into(self) -> Result<ordinary_schema::CodexContinuationIdentifier> {
+        Ok(ordinary_schema::CodexContinuationIdentifier::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<harness_contract::CodexContinuationIdentifier>
+    for ordinary_schema::CodexContinuationIdentifier
+{
+    fn project_into(self) -> Result<harness_contract::CodexContinuationIdentifier> {
+        Ok(harness_contract::CodexContinuationIdentifier::new(
+            self.into_payload(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::PiContinuationIdentifier>
+    for harness_contract::PiContinuationIdentifier
+{
+    fn project_into(self) -> Result<ordinary_schema::PiContinuationIdentifier> {
+        Ok(ordinary_schema::PiContinuationIdentifier::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<harness_contract::PiContinuationIdentifier>
+    for ordinary_schema::PiContinuationIdentifier
+{
+    fn project_into(self) -> Result<harness_contract::PiContinuationIdentifier> {
+        Ok(harness_contract::PiContinuationIdentifier::new(
+            self.into_payload(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ContinuationHandle> for harness_contract::ContinuationHandle {
+    fn project_into(self) -> Result<ordinary_schema::ContinuationHandle> {
+        Ok(match self {
+            harness_contract::ContinuationHandle::Claude(handle) => {
+                ordinary_schema::ContinuationHandle::Claude(handle.project_into()?)
+            }
+            harness_contract::ContinuationHandle::Codex(handle) => {
+                ordinary_schema::ContinuationHandle::Codex(handle.project_into()?)
+            }
+            harness_contract::ContinuationHandle::Pi(handle) => {
+                ordinary_schema::ContinuationHandle::Pi(handle.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ContinuationHandle> for ordinary_schema::ContinuationHandle {
+    fn project_into(self) -> Result<harness_contract::ContinuationHandle> {
+        Ok(match self {
+            ordinary_schema::ContinuationHandle::Claude(handle) => {
+                harness_contract::ContinuationHandle::Claude(handle.project_into()?)
+            }
+            ordinary_schema::ContinuationHandle::Codex(handle) => {
+                harness_contract::ContinuationHandle::Codex(handle.project_into()?)
+            }
+            ordinary_schema::ContinuationHandle::Pi(handle) => {
+                harness_contract::ContinuationHandle::Pi(handle.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ContinuationRequest> for harness_contract::ContinuationRequest {
+    fn project_into(self) -> Result<ordinary_schema::ContinuationRequest> {
+        Ok(match self {
+            harness_contract::ContinuationRequest::Fresh => {
+                ordinary_schema::ContinuationRequest::Fresh
+            }
+            harness_contract::ContinuationRequest::Prefer(handle) => {
+                ordinary_schema::ContinuationRequest::Prefer(handle.project_into()?)
+            }
+            harness_contract::ContinuationRequest::Require(handle) => {
+                ordinary_schema::ContinuationRequest::Require(handle.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ContinuationRequest> for ordinary_schema::ContinuationRequest {
+    fn project_into(self) -> Result<harness_contract::ContinuationRequest> {
+        Ok(match self {
+            ordinary_schema::ContinuationRequest::Fresh => {
+                harness_contract::ContinuationRequest::Fresh
+            }
+            ordinary_schema::ContinuationRequest::Prefer(handle) => {
+                harness_contract::ContinuationRequest::Prefer(handle.project_into()?)
+            }
+            ordinary_schema::ContinuationRequest::Require(handle) => {
+                harness_contract::ContinuationRequest::Require(handle.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelResolutionRequest>
+    for harness_contract::ModelResolutionRequest
+{
+    fn project_into(self) -> Result<ordinary_schema::ModelResolutionRequest> {
+        Ok(ordinary_schema::ModelResolutionRequest {
+            model: self.model.project_into()?,
+            continuation: self.continuation.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelResolutionRequest>
+    for ordinary_schema::ModelResolutionRequest
+{
+    fn project_into(self) -> Result<harness_contract::ModelResolutionRequest> {
+        Ok(harness_contract::ModelResolutionRequest {
+            model: self.model.project_into()?,
+            continuation: self.continuation.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::HarnessName> for harness_contract::HarnessName {
+    fn project_into(self) -> Result<ordinary_schema::HarnessName> {
+        Ok(ordinary_schema::HarnessName::new(self.as_str().to_string()))
+    }
+}
+
+impl ProjectInto<harness_contract::HarnessName> for ordinary_schema::HarnessName {
+    fn project_into(self) -> Result<harness_contract::HarnessName> {
+        Ok(harness_contract::HarnessName::new(self.into_payload()))
+    }
+}
+
+impl ProjectInto<ordinary_schema::ResolvedHarnessKind> for harness_contract::HarnessKind {
+    fn project_into(self) -> Result<ordinary_schema::ResolvedHarnessKind> {
+        Ok(match self {
+            harness_contract::HarnessKind::Codex => ordinary_schema::ResolvedHarnessKind::Codex,
+            harness_contract::HarnessKind::Claude => ordinary_schema::ResolvedHarnessKind::Claude,
+            harness_contract::HarnessKind::Pi => ordinary_schema::ResolvedHarnessKind::Pi,
+            harness_contract::HarnessKind::Fixture => ordinary_schema::ResolvedHarnessKind::Fixture,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::HarnessKind> for ordinary_schema::ResolvedHarnessKind {
+    fn project_into(self) -> Result<harness_contract::HarnessKind> {
+        Ok(match self {
+            ordinary_schema::ResolvedHarnessKind::Codex => harness_contract::HarnessKind::Codex,
+            ordinary_schema::ResolvedHarnessKind::Claude => harness_contract::HarnessKind::Claude,
+            ordinary_schema::ResolvedHarnessKind::Pi => harness_contract::HarnessKind::Pi,
+            ordinary_schema::ResolvedHarnessKind::Fixture => harness_contract::HarnessKind::Fixture,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelResolved> for harness_contract::ModelResolved {
+    fn project_into(self) -> Result<ordinary_schema::ModelResolved> {
+        Ok(ordinary_schema::ModelResolved {
+            harness: self.harness.project_into()?,
+            harness_kind: self.harness_kind.project_into()?,
+            model: self.model.project_into()?,
+            effort: self.effort.project_into()?,
+            continuation: self.continuation.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelResolved> for ordinary_schema::ModelResolved {
+    fn project_into(self) -> Result<harness_contract::ModelResolved> {
+        Ok(harness_contract::ModelResolved {
+            harness: self.harness.project_into()?,
+            harness_kind: self.harness_kind.project_into()?,
+            model: self.model.project_into()?,
+            effort: self.effort.project_into()?,
+            continuation: self.continuation.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelUnavailableReason>
+    for harness_contract::ModelUnavailableReason
+{
+    fn project_into(self) -> Result<ordinary_schema::ModelUnavailableReason> {
+        Ok(match self {
+            harness_contract::ModelUnavailableReason::NoConfiguredHarness => {
+                ordinary_schema::ModelUnavailableReason::NoConfiguredHarness
+            }
+            harness_contract::ModelUnavailableReason::ModelNotKnown => {
+                ordinary_schema::ModelUnavailableReason::ModelNotKnown
+            }
+            harness_contract::ModelUnavailableReason::EffortUnsupported => {
+                ordinary_schema::ModelUnavailableReason::EffortUnsupported
+            }
+            harness_contract::ModelUnavailableReason::CapabilityUnsupported => {
+                ordinary_schema::ModelUnavailableReason::CapabilityUnsupported
+            }
+            harness_contract::ModelUnavailableReason::ProviderUnavailable => {
+                ordinary_schema::ModelUnavailableReason::ProviderUnavailable
+            }
+            harness_contract::ModelUnavailableReason::ContinuationUnavailable => {
+                ordinary_schema::ModelUnavailableReason::ContinuationUnavailable
+            }
+            harness_contract::ModelUnavailableReason::AdapterConfigurationMissing => {
+                ordinary_schema::ModelUnavailableReason::AdapterConfigurationMissing
+            }
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelUnavailableReason>
+    for ordinary_schema::ModelUnavailableReason
+{
+    fn project_into(self) -> Result<harness_contract::ModelUnavailableReason> {
+        Ok(match self {
+            ordinary_schema::ModelUnavailableReason::NoConfiguredHarness => {
+                harness_contract::ModelUnavailableReason::NoConfiguredHarness
+            }
+            ordinary_schema::ModelUnavailableReason::ModelNotKnown => {
+                harness_contract::ModelUnavailableReason::ModelNotKnown
+            }
+            ordinary_schema::ModelUnavailableReason::EffortUnsupported => {
+                harness_contract::ModelUnavailableReason::EffortUnsupported
+            }
+            ordinary_schema::ModelUnavailableReason::CapabilityUnsupported => {
+                harness_contract::ModelUnavailableReason::CapabilityUnsupported
+            }
+            ordinary_schema::ModelUnavailableReason::ProviderUnavailable => {
+                harness_contract::ModelUnavailableReason::ProviderUnavailable
+            }
+            ordinary_schema::ModelUnavailableReason::ContinuationUnavailable => {
+                harness_contract::ModelUnavailableReason::ContinuationUnavailable
+            }
+            ordinary_schema::ModelUnavailableReason::AdapterConfigurationMissing => {
+                harness_contract::ModelUnavailableReason::AdapterConfigurationMissing
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ModelUnavailable> for harness_contract::ModelUnavailable {
+    fn project_into(self) -> Result<ordinary_schema::ModelUnavailable> {
+        Ok(ordinary_schema::ModelUnavailable {
+            request: self.request.project_into()?,
+            reason: self.reason.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<harness_contract::ModelUnavailable> for ordinary_schema::ModelUnavailable {
+    fn project_into(self) -> Result<harness_contract::ModelUnavailable> {
+        Ok(harness_contract::ModelUnavailable {
+            request: self.request.project_into()?,
+            reason: self.reason.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::ResolvedWorkflowRunRequest>
+    for ordinary_contract::ResolvedWorkflowRunRequest
+{
+    fn project_into(self) -> Result<ordinary_schema::ResolvedWorkflowRunRequest> {
+        Ok(ordinary_schema::ResolvedWorkflowRunRequest {
+            workflow_run: self.workflow_run.project_into()?,
+            model_resolution: self.model_resolution.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::ResolvedWorkflowRunRequest>
+    for ordinary_schema::ResolvedWorkflowRunRequest
+{
+    fn project_into(self) -> Result<ordinary_contract::ResolvedWorkflowRunRequest> {
+        Ok(ordinary_contract::ResolvedWorkflowRunRequest {
+            workflow_run: self.workflow_run.project_into()?,
+            model_resolution: self.model_resolution.project_into()?,
+        })
+    }
+}
+
 impl ProjectInto<ordinary_schema::WorkflowRunObservation>
     for ordinary_contract::WorkflowRunObservation
 {
@@ -1253,6 +1660,74 @@ impl ProjectInto<ordinary_contract::WorkflowRunAccepted> for ordinary_schema::Wo
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunAccepted> {
         Ok(ordinary_contract::WorkflowRunAccepted {
             handle: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowRunResolution>
+    for ordinary_contract::WorkflowRunResolution
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowRunResolution> {
+        Ok(ordinary_schema::WorkflowRunResolution {
+            handle: self.handle.project_into()?,
+            resolution: self.resolution.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowRunResolution>
+    for ordinary_schema::WorkflowRunResolution
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowRunResolution> {
+        Ok(ordinary_contract::WorkflowRunResolution {
+            handle: self.handle.project_into()?,
+            resolution: self.resolution.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowResolutionUnavailable>
+    for ordinary_contract::WorkflowResolutionUnavailable
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowResolutionUnavailable> {
+        Ok(ordinary_schema::WorkflowResolutionUnavailable {
+            handle: self.handle.project_into()?,
+            request: self.request.project_into()?,
+            unavailable: self.unavailable.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowResolutionUnavailable>
+    for ordinary_schema::WorkflowResolutionUnavailable
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowResolutionUnavailable> {
+        Ok(ordinary_contract::WorkflowResolutionUnavailable {
+            handle: self.handle.project_into()?,
+            request: self.request.project_into()?,
+            unavailable: self.unavailable.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorkflowResolvedReceiptProduced>
+    for ordinary_contract::WorkflowResolvedReceiptProduced
+{
+    fn project_into(self) -> Result<ordinary_schema::WorkflowResolvedReceiptProduced> {
+        Ok(ordinary_schema::WorkflowResolvedReceiptProduced {
+            run: self.run.project_into()?,
+            receipt: self.receipt.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorkflowResolvedReceiptProduced>
+    for ordinary_schema::WorkflowResolvedReceiptProduced
+{
+    fn project_into(self) -> Result<ordinary_contract::WorkflowResolvedReceiptProduced> {
+        Ok(ordinary_contract::WorkflowResolvedReceiptProduced {
+            run: self.run.project_into()?,
+            receipt: self.receipt.project_into()?,
         })
     }
 }
@@ -2246,6 +2721,9 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::RunWorkflow(payload) => {
                 ordinary_schema::Input::run_workflow(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::RunResolvedWorkflow(payload) => {
+                ordinary_schema::Input::run_resolved_workflow(payload.project_into()?)
+            }
             ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(payload) => {
                 ordinary_schema::Input::observe_workflow_run(payload.run.project_into()?)
             }
@@ -2287,6 +2765,9 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             }
             ordinary_schema::Input::RunWorkflow(payload) => {
                 ordinary_contract::OrchestrateRequest::RunWorkflow(payload.project_into()?)
+            }
+            ordinary_schema::Input::RunResolvedWorkflow(payload) => {
+                ordinary_contract::OrchestrateRequest::RunResolvedWorkflow(payload.project_into()?)
             }
             ordinary_schema::Input::ObserveWorkflowRun(payload) => {
                 ordinary_contract::OrchestrateRequest::ObserveWorkflowRun(payload.project_into()?)
@@ -2893,8 +3374,17 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::WorkflowRunAccepted(payload) => {
                 ordinary_schema::Output::workflow_run_accepted(payload.handle.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::WorkflowResolutionAccepted(payload) => {
+                ordinary_schema::Output::workflow_resolution_accepted(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowResolutionUnavailable(payload) => {
+                ordinary_schema::Output::workflow_resolution_unavailable(payload.project_into()?)
+            }
             ordinary_contract::OrchestrateReply::WorkflowReceiptProduced(payload) => {
                 ordinary_schema::Output::workflow_receipt_produced(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorkflowResolvedReceiptProduced(payload) => {
+                ordinary_schema::Output::workflow_resolved_receipt_produced(payload.project_into()?)
             }
             ordinary_contract::OrchestrateReply::WorkflowRunLogReported(payload) => {
                 ordinary_schema::Output::workflow_run_log_reported(payload.log.project_into()?)
@@ -2959,8 +3449,23 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             ordinary_schema::Output::WorkflowRunAccepted(payload) => {
                 ordinary_contract::OrchestrateReply::WorkflowRunAccepted(payload.project_into()?)
             }
+            ordinary_schema::Output::WorkflowResolutionAccepted(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowResolutionAccepted(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::WorkflowResolutionUnavailable(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowResolutionUnavailable(
+                    payload.project_into()?,
+                )
+            }
             ordinary_schema::Output::WorkflowReceiptProduced(payload) => {
                 ordinary_contract::OrchestrateReply::WorkflowReceiptProduced(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::WorkflowResolvedReceiptProduced(payload) => {
+                ordinary_contract::OrchestrateReply::WorkflowResolvedReceiptProduced(
                     payload.project_into()?,
                 )
             }

@@ -372,6 +372,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "meta-signal-harness"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-harness.git?branch=main#b3e45280b84525e6e607088468e2b6bda8e0ff6b"
+dependencies = [
+ "nota",
+ "rkyv",
+ "signal-frame",
+ "signal-harness",
+ "thiserror",
+]
+
+[[package]]
 name = "meta-signal-orchestrate"
 version = "0.4.0"
 source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#a8659aa4b9e06079ad92b5c3e004eedb2d29b8df"
@@ -455,6 +467,7 @@ name = "orchestrate"
 version = "0.4.1"
 dependencies = [
  "criome",
+ "meta-signal-harness",
  "meta-signal-orchestrate",
  "nota",
  "rkyv",
@@ -463,6 +476,7 @@ dependencies = [
  "sema-engine",
  "signal-criome",
  "signal-frame",
+ "signal-harness",
  "signal-orchestrate",
  "signal-sema",
  "signal-version-handover",
@@ -731,7 +745,7 @@ dependencies = [
 [[package]]
 name = "signal-frame"
 version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#bb86bef67e478ff52690a4dcceec8f22d2b005ad"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#fd7909d1497b7bb18751521387a1087cd9e7c91c"
 dependencies = [
  "nota",
  "paste",
@@ -743,7 +757,7 @@ dependencies = [
 [[package]]
 name = "signal-frame-macros"
 version = "0.1.1"
-source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#bb86bef67e478ff52690a4dcceec8f22d2b005ad"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?branch=main#fd7909d1497b7bb18751521387a1087cd9e7c91c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -751,16 +765,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-harness"
+version = "0.3.0"
+source = "git+https://github.com/LiGoldragon/signal-harness.git?branch=main#9d173f50aa74c937c11855e0e2dd3c359090b36f"
+dependencies = [
+ "nota",
+ "rkyv",
+ "signal-frame",
+ "signal-persona",
+ "thiserror",
+]
+
+[[package]]
 name = "signal-orchestrate"
 version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#b9cae88db7ac7e9f965643e73816482b32b67b6c"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#1a7b56851782458774beb35a6e438622a9ca36be"
 dependencies = [
  "nota",
  "rkyv",
  "schema-rust",
  "signal-criome",
  "signal-frame",
+ "signal-harness",
  "thiserror",
+]
+
+[[package]]
+name = "signal-persona"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/signal-persona.git?branch=main#2babf1314e2898d7bdbe75124e00f9129cfb8d43"
+dependencies = [
+ "nota",
+ "rkyv",
+ "schema-rust",
+ "signal-frame",
 ]
 
 [[package]]
@@ -946,7 +984,7 @@ dependencies = [
 [[package]]
 name = "triad-runtime"
 version = "0.6.1"
-source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#b34df30c56fcbc88266210167d2520d0996feca3"
+source = "git+https://github.com/LiGoldragon/triad-runtime.git?branch=main#895d2e6b9023b2d901fe1ab20e6f8f431c6113b7"
 dependencies = [
  "kameo",
  "rkyv",

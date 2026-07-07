@@ -58,12 +58,14 @@ pub use signal_orchestrate::{
     LaneRegistration, LaneResourceClaim, LaneStatus, LanesObserved, Observation, ObservationClosed,
     ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
     OrchestrateReply, OrchestrateRequest, PartialApplied, PurposeText, PushedState, RepositoryName,
-    Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName, RoleObservation, RoleRelease,
-    RoleToken, ScopeReason, ScopeReference, SessionIdentifier, SessionName, SessionsObserved,
-    TaskToken, TimestampNanos, WirePath, WorkflowReceiptProduced, WorkflowRunDigest,
+    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName,
+    RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
+    SessionName, SessionsObserved, TaskToken, TimestampNanos, WirePath, WorkflowReceiptProduced,
+    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
     WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
     WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    WorkflowRunRequest, WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
+    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus,
+    WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
@@ -71,9 +73,10 @@ pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
     OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredLaneRegistration,
-    StoredRepository, StoredRole, StoredWorktree,
+    StoredRepository, StoredRole, StoredWorkflowModelResolutionOutcome,
+    StoredWorkflowRunResolution, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
-pub use workflow::WorkflowRunner;
+pub use workflow::{HarnessModelResolver, WorkflowRunner};
 pub use worktree::WorktreeRegistry;
 pub use worktree_projection::WorktreeProjection;

@@ -11,11 +11,13 @@ use sema_engine::{
     Retraction, SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
     VersionedStoreName, VersioningPolicy,
 };
+use signal_harness::{ModelResolved, ModelUnavailable};
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
-    PartialApplied, PurposeText, PushedState, RepositoryName, Role, RoleName, ScopeReason,
-    ScopeReference, SessionIdentifier, TimestampNanos, WirePath, Worktree, WorktreeStatus,
+    PartialApplied, PurposeText, PushedState, RepositoryName, ResolvedWorkflowRunRequest, Role,
+    RoleName, ScopeReason, ScopeReference, SessionIdentifier, TimestampNanos, WirePath,
+    WorkflowRunHandle, Worktree, WorktreeStatus,
 };
 
 use crate::{Result, StoreLocation};
@@ -39,12 +41,10 @@ where
 {
 }
 
-// Bumped 4 -> 5 for lane-owned claims. Existing v4 stores kept ordinary
-// claim owners in the old role-shaped field; the operator path is to stop the
-// old daemon, keep the old sema store as a backup, start a fresh v5 store, and
-// register first-class session lanes through the meta lane lifecycle before
-// ordinary claims are accepted.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(5);
+// Bumped 5 -> 6 for workflow model-resolution attempts. Existing v5 stores
+// remain the lane-owned claim baseline; the new table records resolved or
+// unavailable harness model outcomes by workflow run handle.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(6);
 
 const CLAIMS: TableName = TableName::new("claims");
 const ROLES: TableName = TableName::new("roles");
@@ -57,6 +57,7 @@ const ACTIVITY_NEXT_SLOT_KEY: &str = "next";
 const DIVERGENCES: TableName = TableName::new("divergences");
 const DIVERGENCE_NEXT_SLOT: TableName = TableName::new("divergence_next_slot");
 const DIVERGENCE_NEXT_SLOT_KEY: &str = "next";
+const WORKFLOW_MODEL_RESOLUTIONS: TableName = TableName::new("workflow_model_resolutions");
 
 pub struct OrchestrateTables {
     engine: Engine,
@@ -69,6 +70,7 @@ pub struct OrchestrateTables {
     activity_next_slot: TableReference<u64>,
     divergences: TableReference<StoredDivergence>,
     divergence_next_slot: TableReference<u64>,
+    workflow_model_resolutions: TableReference<StoredWorkflowRunResolution>,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -134,6 +136,20 @@ pub struct StoredDivergence {
     pub stamped_at: TimestampNanos,
 }
 
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredWorkflowRunResolution {
+    pub handle: WorkflowRunHandle,
+    pub request: ResolvedWorkflowRunRequest,
+    pub outcome: StoredWorkflowModelResolutionOutcome,
+    pub stamped_at: TimestampNanos,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum StoredWorkflowModelResolutionOutcome {
+    Resolved(ModelResolved),
+    Unavailable(ModelUnavailable),
+}
+
 impl OrchestrateTables {
     pub fn open(store: &StoreLocation) -> Result<Self> {
         let mut engine = Engine::open(Self::engine_open(store))?;
@@ -153,6 +169,10 @@ impl OrchestrateTables {
             DIVERGENCE_NEXT_SLOT,
             "divergence-slot",
         ))?;
+        let workflow_model_resolutions = engine.register_table(Self::family_descriptor(
+            WORKFLOW_MODEL_RESOLUTIONS,
+            "workflow-model-resolution",
+        ))?;
         Ok(Self {
             engine,
             claims,
@@ -164,6 +184,7 @@ impl OrchestrateTables {
             activity_next_slot,
             divergences,
             divergence_next_slot,
+            workflow_model_resolutions,
         })
     }
 
@@ -488,6 +509,29 @@ impl OrchestrateTables {
         self.records(self.divergences)
     }
 
+    pub fn insert_workflow_model_resolution(
+        &self,
+        resolution: &StoredWorkflowRunResolution,
+    ) -> Result<()> {
+        self.upsert(
+            self.workflow_model_resolutions,
+            resolution.handle.run.as_str(),
+            resolution,
+        )?;
+        Ok(())
+    }
+
+    pub fn workflow_model_resolution_record(
+        &self,
+        handle: &WorkflowRunHandle,
+    ) -> Result<Option<StoredWorkflowRunResolution>> {
+        self.record(self.workflow_model_resolutions, handle.run.as_str())
+    }
+
+    pub fn workflow_model_resolution_records(&self) -> Result<Vec<StoredWorkflowRunResolution>> {
+        self.records(self.workflow_model_resolutions)
+    }
+
     pub fn current_timestamp(&self) -> Result<TimestampNanos> {
         StoreClock::system().timestamp()
     }
@@ -719,6 +763,36 @@ impl StoredDivergence {
         PartialApplied {
             succeeded: self.succeeded,
             failed: self.failed,
+        }
+    }
+}
+
+impl StoredWorkflowRunResolution {
+    pub fn resolved(
+        handle: WorkflowRunHandle,
+        request: ResolvedWorkflowRunRequest,
+        resolution: ModelResolved,
+        stamped_at: TimestampNanos,
+    ) -> Self {
+        Self {
+            handle,
+            request,
+            outcome: StoredWorkflowModelResolutionOutcome::Resolved(resolution),
+            stamped_at,
+        }
+    }
+
+    pub fn unavailable(
+        handle: WorkflowRunHandle,
+        request: ResolvedWorkflowRunRequest,
+        unavailable: ModelUnavailable,
+        stamped_at: TimestampNanos,
+    ) -> Self {
+        Self {
+            handle,
+            request,
+            outcome: StoredWorkflowModelResolutionOutcome::Unavailable(unavailable),
+            stamped_at,
         }
     }
 }

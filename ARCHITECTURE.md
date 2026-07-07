@@ -117,6 +117,19 @@ The daemon/CLI boundary did not change: each CLI remains a thin
 NOTA-to-Signal adapter for one contract tier, and the daemon remains
 the only process that opens `orchestrate.sema`.
 
+Workflow execution now has an additive resolved run path. Callers may submit a
+`RunResolvedWorkflow` request carrying a provider-neutral harness
+`ModelResolutionRequest`: exact model or capability/profile selector, effort,
+and a generic continuation policy (`Fresh`, `Prefer`, or `Require`).
+`orchestrate` sends that request to `harness` through the privileged
+`meta-signal-harness` `ResolveModel` operation, then stores the returned
+`ModelResolved` or `ModelUnavailable` in its sema table keyed by workflow run
+handle. The returned `ContinuationHandle` remains the harness contract's opaque
+enum payload; orchestrate stores and returns it without branching on Claude,
+Codex, or Pi continuation internals. Unavailability is surfaced as the typed
+workflow-resolution unavailable reply; this slice deliberately does not choose a
+fallback silently.
+
 ```mermaid
 flowchart TB
     mind["mind<br/>state + policy truth"]
