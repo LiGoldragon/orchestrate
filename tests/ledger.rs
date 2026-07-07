@@ -11,8 +11,7 @@ use orchestrate::{
     RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionClearRequest,
     SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
     StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos, WirePath,
-    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunRequest,
-    WorkflowRunner,
+    WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -413,7 +412,8 @@ fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
 }
 
 #[test]
-fn resolved_workflow_exact_model_calls_harness_and_stores_opaque_continuation() {
+fn resolved_workflow_exact_model_returns_resolution_without_receipt_and_stores_opaque_continuation()
+{
     let (_temporary, tables) = workflow_resolution_tables("orchestrate-exact-model");
     let requested = ResolvedWorkflowRunRequest {
         workflow_run: workflow_resolution_run_request(),
@@ -443,12 +443,8 @@ fn resolved_workflow_exact_model_calls_harness_and_stores_opaque_continuation() 
         resolver.captured_requests(),
         vec![requested.model_resolution.clone()]
     );
-    let OrchestrateReply::WorkflowResolvedReceiptProduced(WorkflowResolvedReceiptProduced {
-        run,
-        ..
-    }) = reply
-    else {
-        panic!("expected resolved workflow receipt, got {reply:?}");
+    let OrchestrateReply::WorkflowResolutionAccepted(run) = reply else {
+        panic!("expected workflow resolution acceptance without receipt, got {reply:?}");
     };
     assert_eq!(run.resolution, resolved);
     let stored = tables
@@ -459,6 +455,78 @@ fn resolved_workflow_exact_model_calls_harness_and_stores_opaque_continuation() 
     assert_eq!(
         stored.outcome,
         StoredWorkflowModelResolutionOutcome::Resolved(resolved)
+    );
+}
+
+#[test]
+fn resolved_workflow_model_resolution_identity_prevents_same_workflow_storage_collision() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-resolution-collision");
+    let workflow_run = workflow_resolution_run_request();
+    let exact_request = ResolvedWorkflowRunRequest {
+        workflow_run: workflow_run.clone(),
+        model_resolution: ModelResolutionRequest {
+            model: ModelRequest {
+                selector: ModelSelector::Exact(NamedModel::new("gpt-5-codex")),
+                effort: EffortRequest::High,
+            },
+            continuation: ContinuationRequest::Fresh,
+        },
+    };
+    let profile_request = ResolvedWorkflowRunRequest {
+        workflow_run,
+        model_resolution: ModelResolutionRequest {
+            model: ModelRequest {
+                selector: ModelSelector::CapabilityProfile(CapabilityProfile::new("orchestrator")),
+                effort: EffortRequest::Maximum,
+            },
+            continuation: ContinuationRequest::Prefer(ContinuationHandle::Codex(
+                CodexContinuationIdentifier::new("codex-turn-preferred"),
+            )),
+        },
+    };
+    let resolved = ModelResolved {
+        harness: HarnessName::new("codex-main"),
+        harness_kind: ResolvedHarnessKind::Codex,
+        model: NamedModel::new("gpt-5-codex"),
+        effort: EffortRequest::High,
+        continuation: ContinuationHandle::Codex(CodexContinuationIdentifier::new("codex-turn-9")),
+    };
+    let runner = WorkflowRunner::new(RecordingModelResolver::new(
+        MetaHarnessReply::ModelResolved(resolved),
+    ))
+    .expect("runner");
+
+    let first_reply = runner
+        .run_resolved_workflow(exact_request.clone(), &tables)
+        .expect("first resolved workflow run");
+    let second_reply = runner
+        .run_resolved_workflow(profile_request.clone(), &tables)
+        .expect("second resolved workflow run");
+
+    let OrchestrateReply::WorkflowResolutionAccepted(first_run) = first_reply else {
+        panic!("expected first workflow resolution acceptance, got {first_reply:?}");
+    };
+    let OrchestrateReply::WorkflowResolutionAccepted(second_run) = second_reply else {
+        panic!("expected second workflow resolution acceptance, got {second_reply:?}");
+    };
+    assert_ne!(
+        first_run.handle, second_run.handle,
+        "different model-resolution requests for the same workflow must have distinct run handles"
+    );
+
+    let records = tables
+        .workflow_model_resolution_records()
+        .expect("stored workflow model resolutions");
+    assert_eq!(records.len(), 2, "resolution attempts must not overwrite");
+    assert!(
+        records
+            .iter()
+            .any(|record| record.handle == first_run.handle && record.request == exact_request)
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.handle == second_run.handle && record.request == profile_request)
     );
 }
 

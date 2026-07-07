@@ -36,6 +36,9 @@ pub enum Error {
     #[error("harness model resolution operation was unimplemented: {operation}")]
     HarnessResolutionUnimplemented { operation: String },
 
+    #[error("workflow model resolution archive encode failed: {message}")]
+    WorkflowResolutionArchiveEncode { message: String },
+
     #[error("operation dispatch: {0}")]
     OperationDispatch(#[from] signal_frame::OperationDispatchError),
 

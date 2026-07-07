@@ -123,12 +123,14 @@ Workflow execution now has an additive resolved run path. Callers may submit a
 and a generic continuation policy (`Fresh`, `Prefer`, or `Require`).
 `orchestrate` sends that request to `harness` through the privileged
 `meta-signal-harness` `ResolveModel` operation, then stores the returned
-`ModelResolved` or `ModelUnavailable` in its sema table keyed by workflow run
-handle. The returned `ContinuationHandle` remains the harness contract's opaque
-enum payload; orchestrate stores and returns it without branching on Claude,
-Codex, or Pi continuation internals. Unavailability is surfaced as the typed
+`ModelResolved` or `ModelUnavailable` in its sema table keyed by a resolved
+workflow run handle that includes the model-resolution request identity. The
+returned `ContinuationHandle` remains the harness contract's opaque enum
+payload; orchestrate stores and returns it without branching on Claude, Codex,
+or Pi continuation internals. Unavailability is surfaced as the typed
 workflow-resolution unavailable reply; this slice deliberately does not choose a
-fallback silently.
+fallback silently. Model resolution acceptance is a resolution state, not an
+authorized workflow receipt.
 
 ```mermaid
 flowchart TB

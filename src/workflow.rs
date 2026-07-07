@@ -6,7 +6,7 @@ use meta_signal_harness::{
     ModelResolutionRequest,
 };
 use signal_criome::{
-    EvaluationDecision, OperationDigest, WorkflowProvenanceDigest, WorkflowReceipt,
+    EvaluationDecision, ObjectDigest, OperationDigest, WorkflowProvenanceDigest, WorkflowReceipt,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, SessionEpoch, SubReply,
@@ -14,10 +14,10 @@ use signal_frame::{
 use signal_orchestrate::{
     HostName, ModelAttestation, ModelName, OrchestrateReply, ProviderName,
     ResolvedWorkflowRunRequest, ScopeReason, StepLog, StepOutcome, WorkflowReceiptProduced,
-    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
-    WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
-    WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, WorkflowStepName,
+    WorkflowResolutionUnavailable, WorkflowRunDigest, WorkflowRunHandle, WorkflowRunLog,
+    WorkflowRunLogReported, WorkflowRunObservation, WorkflowRunObservationClosed,
+    WorkflowRunObservationOpened, WorkflowRunObservationToken, WorkflowRunRequest,
+    WorkflowRunResolution, WorkflowRunSnapshot, WorkflowStepName,
 };
 use triad_runtime::{FrameBody as RuntimeFrameBody, LengthPrefixedCodec};
 
@@ -48,6 +48,59 @@ pub struct FixtureModelResolver {
 pub struct MetaHarnessResolver {
     socket_path: PathBuf,
     codec: LengthPrefixedCodec,
+}
+
+struct WorkflowRunIdentity {
+    workflow_digest: String,
+    operation_digest: String,
+    contract_digest: String,
+    model_resolution_digest: Option<String>,
+}
+
+impl WorkflowRunIdentity {
+    fn workflow(request: &WorkflowRunRequest) -> Self {
+        Self {
+            workflow_digest: request.workflow.object_digest().as_str().to_string(),
+            operation_digest: request.operation.digest.as_str().to_string(),
+            contract_digest: request.contract.object_digest().as_str().to_string(),
+            model_resolution_digest: None,
+        }
+    }
+
+    fn resolved(request: &ResolvedWorkflowRunRequest) -> Result<Self> {
+        let model_resolution_bytes =
+            rkyv::to_bytes::<rkyv::rancor::Error>(&request.model_resolution)
+                .map_err(|error| Error::WorkflowResolutionArchiveEncode {
+                    message: error.to_string(),
+                })?
+                .to_vec();
+        let model_resolution_digest = ObjectDigest::from_bytes(&model_resolution_bytes)
+            .as_str()
+            .to_string();
+        Ok(Self {
+            model_resolution_digest: Some(model_resolution_digest),
+            ..Self::workflow(&request.workflow_run)
+        })
+    }
+
+    fn handle(&self) -> Result<WorkflowRunHandle> {
+        let run = match &self.model_resolution_digest {
+            Some(model_resolution_digest) => format!(
+                "workflow-run-{}-{}-{}-{}",
+                self.workflow_digest,
+                self.operation_digest,
+                self.contract_digest,
+                model_resolution_digest
+            ),
+            None => format!(
+                "workflow-run-{}-{}-{}",
+                self.workflow_digest, self.operation_digest, self.contract_digest
+            ),
+        };
+        Ok(WorkflowRunHandle {
+            run: WorkflowRunDigest::from_wire_token(run)?,
+        })
+    }
 }
 
 impl WorkflowRunner<FixtureModelResolver> {
@@ -93,7 +146,7 @@ where
         request: ResolvedWorkflowRunRequest,
         tables: &OrchestrateTables,
     ) -> Result<OrchestrateReply> {
-        let handle = self.handle_for(&request.workflow_run)?;
+        let handle = self.resolved_handle_for(&request)?;
         let reply = self
             .resolver
             .resolve_model(request.model_resolution.clone())?;
@@ -108,10 +161,7 @@ where
                 );
                 tables.insert_workflow_model_resolution(&stored)?;
                 let run = WorkflowRunResolution { handle, resolution };
-                let receipt = self.receipt_for(&request.workflow_run, &run.handle);
-                Ok(OrchestrateReply::WorkflowResolvedReceiptProduced(
-                    WorkflowResolvedReceiptProduced { run, receipt },
-                ))
+                Ok(OrchestrateReply::WorkflowResolutionAccepted(run))
             }
             MetaHarnessReply::ModelUnavailable(unavailable) => {
                 let stored = StoredWorkflowRunResolution::unavailable(
@@ -172,15 +222,14 @@ where
     }
 
     fn handle_for(&self, request: &WorkflowRunRequest) -> Result<WorkflowRunHandle> {
-        let run = format!(
-            "workflow-run-{}-{}-{}",
-            request.workflow.object_digest().as_str(),
-            request.operation.digest.as_str(),
-            request.contract.object_digest().as_str()
-        );
-        Ok(WorkflowRunHandle {
-            run: WorkflowRunDigest::from_wire_token(run)?,
-        })
+        WorkflowRunIdentity::workflow(request).handle()
+    }
+
+    fn resolved_handle_for(
+        &self,
+        request: &ResolvedWorkflowRunRequest,
+    ) -> Result<WorkflowRunHandle> {
+        WorkflowRunIdentity::resolved(request)?.handle()
     }
 
     fn receipt_for(

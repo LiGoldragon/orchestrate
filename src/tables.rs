@@ -43,7 +43,8 @@ where
 
 // Bumped 5 -> 6 for workflow model-resolution attempts. Existing v5 stores
 // remain the lane-owned claim baseline; the new table records resolved or
-// unavailable harness model outcomes by workflow run handle.
+// unavailable harness model outcomes by resolved workflow run handle. That handle
+// includes the model-resolution request identity for the resolved workflow path.
 const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(6);
 
 const CLAIMS: TableName = TableName::new("claims");
