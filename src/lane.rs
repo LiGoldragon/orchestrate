@@ -217,7 +217,7 @@ impl<'tables> LaneRegistry<'tables> {
         let resource_claims = claims
             .iter()
             .filter(|claim| claim.lane == registration.assignment.lane)
-            .map(StoredClaim::resource_claim)
+            .map(|claim| claim.resource_claim_at(observed_at))
             .collect();
         Ok(LaneProjection {
             age: registration.age_at(observed_at),

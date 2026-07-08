@@ -666,6 +666,11 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
     );
     assert_eq!(operator_lane.resource_claims.len(), 1);
     assert_eq!(operator_lane.resource_claims[0].scope, scope);
+    assert_eq!(
+        operator_lane.resource_claims[0].claimed_at.value()
+            + operator_lane.resource_claims[0].age.value(),
+        operator_lane.observed_at.value()
+    );
 
     let handoff = fixture
         .handle(orchestrate::OrchestrateRequest::Handoff(RoleHandoff {
@@ -689,6 +694,8 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
         .find(|status| status.role.as_wire_token() == "designer")
         .expect("designer status");
     assert_eq!(designer_status.claims[0].scope, scope);
+    assert!(designer_status.claims[0].claimed_at.value() > 0);
+    assert!(designer_status.claims[0].age.value() > 0);
 
     let operator_scope = path("/git/github.com/LiGoldragon/orchestrate-operator-followup");
     let operator_claim = fixture

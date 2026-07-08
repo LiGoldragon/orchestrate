@@ -175,6 +175,7 @@ impl<'tables> ClaimLedger<'tables> {
     pub fn observe(&self) -> Result<OrchestrateReply> {
         let entries = self.tables.claim_records()?;
         let lane_records = self.tables.lane_records()?;
+        let observed_at = self.tables.current_timestamp()?;
         let recent_activity = Self::recent_activity(
             self.tables.activity_records()?,
             Self::ROLE_OBSERVATION_ACTIVITY_LIMIT,
@@ -184,7 +185,7 @@ impl<'tables> ClaimLedger<'tables> {
         let roles = role_records
             .into_iter()
             .map(|role| RoleStatus {
-                claims: Self::claims_for_role(&entries, &lane_records, &role.role),
+                claims: Self::claims_for_role(&entries, &lane_records, &role.role, observed_at),
                 role: role.role,
                 harness: role.harness,
             })
@@ -287,6 +288,7 @@ impl<'tables> ClaimLedger<'tables> {
         entries: &[StoredClaim],
         lanes: &[StoredLaneRegistration],
         role: &RoleName,
+        observed_at: signal_orchestrate::TimestampNanos,
     ) -> Vec<ClaimEntry> {
         let role_lanes = lanes
             .iter()
@@ -304,6 +306,8 @@ impl<'tables> ClaimLedger<'tables> {
             .map(|entry| ClaimEntry {
                 scope: entry.scope.clone(),
                 reason: entry.reason.clone(),
+                claimed_at: entry.claimed_at,
+                age: entry.age_at(observed_at),
             })
             .collect()
     }

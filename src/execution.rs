@@ -2944,6 +2944,8 @@ impl ProjectInto<ordinary_schema::ClaimEntry> for ordinary_contract::ClaimEntry 
         Ok(ordinary_schema::ClaimEntry {
             scope: self.scope.project_into()?,
             reason: self.reason.project_into()?,
+            claimed_at: self.claimed_at.project_into()?,
+            age: self.age.project_into()?,
         })
     }
 }
@@ -2953,6 +2955,8 @@ impl ProjectInto<ordinary_contract::ClaimEntry> for ordinary_schema::ClaimEntry 
         Ok(ordinary_contract::ClaimEntry {
             scope: self.scope.project_into()?,
             reason: self.reason.project_into()?,
+            claimed_at: self.claimed_at.project_into()?,
+            age: self.age.project_into()?,
         })
     }
 }
@@ -3057,6 +3061,7 @@ impl ProjectInto<ordinary_schema::LaneResourceClaim> for ordinary_contract::Lane
             scope: self.scope.project_into()?,
             reason: self.reason.project_into()?,
             claimed_at: self.claimed_at.project_into()?,
+            age: self.age.project_into()?,
         })
     }
 }
@@ -3067,6 +3072,7 @@ impl ProjectInto<ordinary_contract::LaneResourceClaim> for ordinary_schema::Lane
             scope: self.scope.project_into()?,
             reason: self.reason.project_into()?,
             claimed_at: self.claimed_at.project_into()?,
+            age: self.age.project_into()?,
         })
     }
 }

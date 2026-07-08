@@ -817,11 +817,12 @@ impl StoredClaim {
         ClaimKey::new(&self.lane, &self.scope).into_string()
     }
 
-    pub fn resource_claim(&self) -> LaneResourceClaim {
+    pub fn resource_claim_at(&self, observed_at: TimestampNanos) -> LaneResourceClaim {
         LaneResourceClaim {
             scope: self.scope.clone(),
             reason: self.reason.clone(),
             claimed_at: self.claimed_at,
+            age: self.age_at(observed_at),
         }
     }
 
@@ -1132,8 +1133,9 @@ mod tests {
             .expect("claim");
         assert_eq!(stored.claimed_at, TimestampNanos::new(200));
         assert_eq!(stored.age_at(TimestampNanos::new(275)).value(), 75);
-        let resource = stored.resource_claim();
+        let resource = stored.resource_claim_at(TimestampNanos::new(275));
         assert_eq!(resource.claimed_at, TimestampNanos::new(200));
+        assert_eq!(resource.age.value(), 75);
         assert_eq!(resource.reason, claim.reason);
     }
 }
