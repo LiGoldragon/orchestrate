@@ -78,6 +78,9 @@ pub enum Error {
     #[error("sema engine: {0}")]
     SemaEngine(#[from] sema_engine::Error),
 
+    #[error("store migration: {message}")]
+    StoreMigration { message: String },
+
     #[error("orchestrate service sequence lock was poisoned")]
     ServiceSequencePoisoned,
 

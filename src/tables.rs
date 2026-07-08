@@ -46,6 +46,8 @@ where
 // unavailable harness model outcomes by resolved workflow run handle. That handle
 // includes the model-resolution request identity for the resolved workflow path.
 const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(6);
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS: SchemaVersion =
+    SchemaVersion::new(5);
 
 const CLAIMS: TableName = TableName::new("claims");
 const ROLES: TableName = TableName::new("roles");
@@ -59,6 +61,8 @@ const DIVERGENCES: TableName = TableName::new("divergences");
 const DIVERGENCE_NEXT_SLOT: TableName = TableName::new("divergence_next_slot");
 const DIVERGENCE_NEXT_SLOT_KEY: &str = "next";
 const WORKFLOW_MODEL_RESOLUTIONS: TableName = TableName::new("workflow_model_resolutions");
+const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
+const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
 
 pub struct OrchestrateTables {
     engine: Engine,
@@ -153,26 +157,40 @@ pub enum StoredWorkflowModelResolutionOutcome {
 
 impl OrchestrateTables {
     pub fn open(store: &StoreLocation) -> Result<Self> {
+        match Self::open_current(store) {
+            Ok(tables) => Ok(tables),
+            Err(error) => OrchestrateStoreMigration::new(store).open_after_migration(error),
+        }
+    }
+
+    fn open_current(store: &StoreLocation) -> Result<Self> {
         let mut engine = Engine::open(Self::engine_open(store))?;
-        let claims = engine.register_table(Self::family_descriptor(CLAIMS, "claim"))?;
-        let roles = engine.register_table(Self::family_descriptor(ROLES, "role"))?;
-        let lane_registry =
-            engine.register_table(Self::family_descriptor(LANE_REGISTRY, "lane-registry"))?;
+        let claims = engine.register_table(Self::stable_family_descriptor(CLAIMS, "claim"))?;
+        let roles = engine.register_table(Self::stable_family_descriptor(ROLES, "role"))?;
+        let lane_registry = engine.register_table(Self::stable_family_descriptor(
+            LANE_REGISTRY,
+            "lane-registry",
+        ))?;
         let repositories =
-            engine.register_table(Self::family_descriptor(REPOSITORIES, "repository"))?;
-        let worktrees = engine.register_table(Self::family_descriptor(WORKTREES, "worktree"))?;
-        let activities = engine.register_table(Self::family_descriptor(ACTIVITIES, "activity"))?;
-        let activity_next_slot =
-            engine.register_table(Self::family_descriptor(ACTIVITY_NEXT_SLOT, "activity-slot"))?;
+            engine.register_table(Self::stable_family_descriptor(REPOSITORIES, "repository"))?;
+        let worktrees =
+            engine.register_table(Self::stable_family_descriptor(WORKTREES, "worktree"))?;
+        let activities =
+            engine.register_table(Self::stable_family_descriptor(ACTIVITIES, "activity"))?;
+        let activity_next_slot = engine.register_table(Self::stable_family_descriptor(
+            ACTIVITY_NEXT_SLOT,
+            "activity-slot",
+        ))?;
         let divergences =
-            engine.register_table(Self::family_descriptor(DIVERGENCES, "divergence"))?;
-        let divergence_next_slot = engine.register_table(Self::family_descriptor(
+            engine.register_table(Self::stable_family_descriptor(DIVERGENCES, "divergence"))?;
+        let divergence_next_slot = engine.register_table(Self::stable_family_descriptor(
             DIVERGENCE_NEXT_SLOT,
             "divergence-slot",
         ))?;
         let workflow_model_resolutions = engine.register_table(Self::family_descriptor(
             WORKFLOW_MODEL_RESOLUTIONS,
             "workflow-model-resolution",
+            ORCHESTRATE_SCHEMA_VERSION,
         ))?;
         Ok(Self {
             engine,
@@ -198,17 +216,26 @@ impl OrchestrateTables {
         VersioningPolicy::new(VersionedStoreName::new("orchestrate"))
     }
 
+    fn stable_family_descriptor<RecordValue>(
+        table: TableName,
+        family: &str,
+    ) -> TableDescriptor<RecordValue> {
+        Self::family_descriptor(
+            table,
+            family,
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
+        )
+    }
+
     fn family_descriptor<RecordValue>(
         table: TableName,
         family: &str,
+        version: SchemaVersion,
     ) -> TableDescriptor<RecordValue> {
         TableDescriptor::new(
             table,
             FamilyName::new(family),
-            SchemaHash::for_label(format!(
-                "orchestrate-{family}-v{}",
-                ORCHESTRATE_SCHEMA_VERSION.value()
-            )),
+            SchemaHash::for_label(format!("orchestrate-{family}-v{}", version.value())),
         )
     }
 
@@ -994,6 +1021,77 @@ impl StoreClock {
     }
 }
 
+struct OrchestrateStoreMigration<'store> {
+    store: &'store StoreLocation,
+}
+
+impl<'store> OrchestrateStoreMigration<'store> {
+    fn new(store: &'store StoreLocation) -> Self {
+        Self { store }
+    }
+
+    fn open_after_migration(&self, error: crate::Error) -> Result<OrchestrateTables> {
+        if self.is_workflow_resolution_schema_migration(&error) {
+            self.stamp_workflow_resolution_schema_version()?;
+            OrchestrateTables::open_current(self.store)
+        } else {
+            Err(error)
+        }
+    }
+
+    fn is_workflow_resolution_schema_migration(&self, error: &crate::Error) -> bool {
+        matches!(
+            error,
+            crate::Error::SemaEngine(sema_engine::Error::Sema(
+                sema_engine::StorageKernelError::SchemaVersionMismatch { expected, found }
+            )) if *expected == ORCHESTRATE_SCHEMA_VERSION
+                && *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
+        )
+    }
+
+    fn stamp_workflow_resolution_schema_version(&self) -> Result<()> {
+        let storage = sema::Sema::open_with_schema(
+            self.store.as_path(),
+            &sema::Schema {
+                version: ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
+            },
+        )?;
+        drop(storage);
+        let database = redb::Database::create(self.store.as_path()).map_err(|source| {
+            crate::Error::StoreMigration {
+                message: source.to_string(),
+            }
+        })?;
+        let transaction =
+            database
+                .begin_write()
+                .map_err(|source| crate::Error::StoreMigration {
+                    message: source.to_string(),
+                })?;
+        {
+            let mut table = transaction.open_table(SEMA_META).map_err(|source| {
+                crate::Error::StoreMigration {
+                    message: source.to_string(),
+                }
+            })?;
+            table
+                .insert(
+                    SEMA_SCHEMA_VERSION_KEY,
+                    ORCHESTRATE_SCHEMA_VERSION.value() as u64,
+                )
+                .map_err(|source| crate::Error::StoreMigration {
+                    message: source.to_string(),
+                })?;
+        }
+        transaction
+            .commit()
+            .map_err(|source| crate::Error::StoreMigration {
+                message: source.to_string(),
+            })?;
+        Ok(())
+    }
+}
+
 struct ClaimKey {
     lane: String,
     scope: String,
@@ -1105,6 +1203,28 @@ mod tests {
             tables
                 .session_lane_records(&found.assignment.session)
                 .expect("cleared session lanes")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn version_five_store_migrates_for_workflow_model_resolution_table() {
+        let temporary = TemporaryStore::new("orchestrate-v5-to-v6-migration");
+        sema::Sema::open_with_schema(
+            temporary.path.as_path(),
+            &sema::Schema {
+                version: ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
+            },
+        )
+        .expect("v5 store opens");
+
+        let tables = OrchestrateTables::open(&temporary.location()).expect("migrated tables open");
+
+        assert!(tables.claim_records().expect("claims").is_empty());
+        assert!(
+            tables
+                .workflow_model_resolution_records()
+                .expect("new workflow table reads")
                 .is_empty()
         );
     }
