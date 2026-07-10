@@ -1528,11 +1528,15 @@ fn activity_path_prefix_matches_path_boundaries() {
 }
 
 #[test]
-fn register_agent_and_topic_observations_round_trip_through_orchestrator_storage() {
+fn register_agent_against_empty_topic_tree_fails_closed() {
     let mut fixture = Fixture::new("orchestrator-agent-registration");
-    let topic_path = OrchestratorTopicPath::from_wire_token("catch-all").expect("topic path");
+    let topic_path = OrchestratorTopicPath::from_wire_token("engineering").expect("topic path");
 
-    let reply = fixture
+    // The topic tree starts empty: with the catch-all seed removed and the
+    // topic judge shelved, there is no live path that creates a topic, so an
+    // explicit registration against any topic is rejected as unknown. The
+    // rejection carries the (empty) available topics.
+    let explicit = fixture
         .handle(OrchestrateRequest::RegisterAgent(
             OrchestratorAgentRegistration {
                 session: session("OrchestratorAgentRegistration"),
@@ -1542,32 +1546,25 @@ fn register_agent_and_topic_observations_round_trip_through_orchestrator_storage
                 topic_selection: TopicSelection::Explicit(vec![topic_path.clone()]),
             },
         ))
-        .expect("register agent");
-    let OrchestrateReply::AgentRegistered(registered) = reply else {
-        panic!("expected agent registration reply");
+        .expect("explicit registration reply");
+    let OrchestrateReply::AgentRegistrationRejected(rejected) = explicit else {
+        panic!("explicit registration against an empty topic tree must be rejected");
     };
-    assert_eq!(registered.assigned_topics.len(), 1);
+    assert_eq!(
+        rejected.reason,
+        orchestrate::AgentRegistrationRejectionReason::UnknownTopic
+    );
+    assert!(rejected.available_topics.is_empty());
 
+    // Observation projects an empty topic tree and an empty agent directory:
+    // the rejected registration seated no agent.
     let topics = fixture
         .handle(OrchestrateRequest::Observe(Observation::Topics))
         .expect("observe topics");
     let OrchestrateReply::TopicTree(topics) = topics else {
         panic!("expected topic tree");
     };
-    assert!(topics.topics.iter().any(|topic| topic.path == topic_path));
-
-    let detail = fixture
-        .handle(OrchestrateRequest::Observe(Observation::Topic(
-            topic_path.clone(),
-        )))
-        .expect("observe topic");
-    let OrchestrateReply::TopicDetail(detail) = detail else {
-        panic!("expected topic detail");
-    };
-    assert_eq!(
-        detail.member_agent_identifiers,
-        vec![registered.agent_identifier]
-    );
+    assert!(topics.topics.is_empty());
 
     let directory = fixture
         .handle(OrchestrateRequest::Observe(Observation::Agents))
@@ -1575,7 +1572,7 @@ fn register_agent_and_topic_observations_round_trip_through_orchestrator_storage
     let OrchestrateReply::AgentDirectory(directory) = directory else {
         panic!("expected agent directory");
     };
-    assert_eq!(directory.agents.len(), 1);
+    assert!(directory.agents.is_empty());
 
     let automatic = fixture
         .handle(OrchestrateRequest::RegisterAgent(
@@ -1595,4 +1592,5 @@ fn register_agent_and_topic_observations_round_trip_through_orchestrator_storage
         rejected.reason,
         orchestrate::AgentRegistrationRejectionReason::JudgeUnavailable
     );
+    assert!(rejected.available_topics.is_empty());
 }

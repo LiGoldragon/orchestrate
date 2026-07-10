@@ -49,7 +49,8 @@ where
 // worktree tables at v5, workflow model resolutions at v6, orchestrator-seat
 // tables at v7) so bumping the store version never disturbs an older table's
 // family hash. Migration forward is purely additive: an older store gains the
-// empty new tables and the seeded catch-all topic.
+// empty new tables. The orchestrator topic tree starts empty; there is no
+// seeded topic.
 const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(7);
 const ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT: SchemaVersion = SchemaVersion::new(6);
 // Bumped 5 -> 6 for workflow model-resolution attempts. Existing v5 stores
@@ -77,10 +78,6 @@ const ORCHESTRATOR_TOPIC_MEMBERSHIP: TableName = TableName::new("orchestrator_to
 const ORCHESTRATOR_TRIAGE_AUDIT: TableName = TableName::new("orchestrator_triage_audit");
 const ORCHESTRATOR_TRIAGE_NEXT_SLOT: TableName = TableName::new("orchestrator_triage_next_slot");
 const ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY: &str = "next";
-// The catch-all topic is the coordinator's home and escalation target, not a
-// fallback seat for ordinary registration. Seeded once at store bootstrap.
-const CATCH_ALL_TOPIC_PATH: &str = "catch-all";
-const CATCH_ALL_TOPIC_NAME: &str = "Catch-all";
 const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
 const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -216,14 +213,13 @@ pub enum StoredAgentEndpointKind {
 
 /// One topic in the orchestrator topic tree. Flattens the wire
 /// [`OrchestratorTopic`] (`path`, `name`, `parent`) and adds the storage-owned
-/// `seeded` marker and `created_at` stamp. `seeded` is true only for the
-/// catch-all topic bootstrapped at store open.
+/// `created_at` stamp. The topic tree starts empty; topics are created
+/// explicitly, never seeded at store open.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredOrchestratorTopic {
     pub path: OrchestratorTopicPath,
     pub name: TopicName,
     pub parent: Option<OrchestratorTopicPath>,
-    pub seeded: bool,
     pub created_at: TimestampNanos,
 }
 
@@ -298,7 +294,6 @@ impl OrchestrateTables {
             Ok(tables) => tables,
             Err(error) => OrchestrateStoreMigration::new(store).open_after_migration(error)?,
         };
-        tables.seed_catch_all_topic()?;
         Ok(tables)
     }
 
@@ -801,31 +796,16 @@ impl OrchestrateTables {
         path: OrchestratorTopicPath,
         name: TopicName,
         parent: Option<OrchestratorTopicPath>,
-        seeded: bool,
     ) -> Result<StoredOrchestratorTopic> {
         let created_at = self.current_timestamp()?;
         let topic = StoredOrchestratorTopic {
             path,
             name,
             parent,
-            seeded,
             created_at,
         };
         self.upsert(self.orchestrator_topics, topic.path.as_str(), &topic)?;
         Ok(topic)
-    }
-
-    /// Seed the catch-all topic once at store bootstrap. Idempotent: re-opening
-    /// the store leaves the single seeded row untouched rather than duplicating
-    /// it.
-    pub fn seed_catch_all_topic(&self) -> Result<()> {
-        let path = OrchestratorTopicPath::from_wire_token(CATCH_ALL_TOPIC_PATH)?;
-        if self.orchestrator_topic_record(&path)?.is_some() {
-            return Ok(());
-        }
-        let name = TopicName::from_text(CATCH_ALL_TOPIC_NAME)?;
-        self.insert_orchestrator_topic(path, name, None, true)?;
-        Ok(())
     }
 
     pub fn orchestrator_topic_membership_records(
@@ -1188,7 +1168,7 @@ impl StoredWorkflowRunResolution {
 
 impl StoredOrchestratorTopic {
     /// Project back to the wire [`OrchestratorTopic`], dropping the
-    /// storage-owned `seeded`/`created_at` fields the wire form does not carry.
+    /// storage-owned `created_at` stamp the wire form does not carry.
     pub fn into_orchestrator_topic(self) -> OrchestratorTopic {
         OrchestratorTopic {
             path: self.path,
@@ -1746,25 +1726,24 @@ mod tests {
     }
 
     #[test]
-    fn catch_all_topic_seed_is_idempotent_across_reopen() {
-        let temporary = TemporaryStore::new("orchestrate-catch-all-seed");
-        {
-            let tables = OrchestrateTables::open(&temporary.location()).expect("first open");
-            let topics = tables.orchestrator_topic_records().expect("topics");
-            assert_eq!(topics.len(), 1);
-            assert!(topics[0].seeded);
-            assert!(topics[0].parent.is_none());
-            assert_eq!(topics[0].path.as_str(), CATCH_ALL_TOPIC_PATH);
-            assert_eq!(topics[0].name.as_str(), CATCH_ALL_TOPIC_NAME);
-        }
+    fn orchestrator_topic_tree_starts_empty() {
+        let temporary = TemporaryStore::new("orchestrate-empty-topic-tree");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("first open");
+        assert!(
+            tables
+                .orchestrator_topic_records()
+                .expect("topics")
+                .is_empty(),
+            "a fresh store seeds no topic; the tree starts empty"
+        );
+        drop(tables);
         let reopened = OrchestrateTables::open(&temporary.location()).expect("reopen");
-        assert_eq!(
+        assert!(
             reopened
                 .orchestrator_topic_records()
                 .expect("topics after reopen")
-                .len(),
-            1,
-            "reopening the store must not duplicate the catch-all seed"
+                .is_empty(),
+            "reopening the store must not seed a topic"
         );
     }
 
@@ -1773,12 +1752,18 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-topics-membership");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
 
+        let root = tables
+            .insert_orchestrator_topic(
+                OrchestratorTopicPath::from_wire_token("engineering").expect("root path"),
+                TopicName::from_text("Engineering").expect("root name"),
+                None,
+            )
+            .expect("insert root topic");
         let topic = tables
             .insert_orchestrator_topic(
                 OrchestratorTopicPath::from_wire_token("storage").expect("path"),
                 TopicName::from_text("Storage layer").expect("name"),
-                Some(OrchestratorTopicPath::from_wire_token(CATCH_ALL_TOPIC_PATH).expect("parent")),
-                false,
+                Some(root.path.clone()),
             )
             .expect("insert topic");
         let stored = tables
@@ -1786,7 +1771,7 @@ mod tests {
             .expect("read topic")
             .expect("topic present");
         assert_eq!(stored, topic);
-        assert!(!stored.seeded);
+        assert_eq!(stored.parent, Some(root.path.clone()));
         assert_eq!(
             stored.clone().into_orchestrator_topic().name.as_str(),
             "Storage layer"
@@ -1885,9 +1870,13 @@ mod tests {
                 .expect("triage")
                 .is_empty()
         );
-        let topics = tables.orchestrator_topic_records().expect("topics");
-        assert_eq!(topics.len(), 1, "migration seeds the catch-all topic");
-        assert!(topics[0].seeded);
+        assert!(
+            tables
+                .orchestrator_topic_records()
+                .expect("topics")
+                .is_empty(),
+            "migration seeds no topic; the topic tree starts empty"
+        );
         // Pre-existing table families remain readable and untouched.
         assert!(tables.claim_records().expect("claims").is_empty());
         assert!(
