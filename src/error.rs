@@ -153,4 +153,12 @@ pub enum Error {
 
     #[error("worktree not found for archive transition: {path}")]
     WorktreeNotFound { path: String },
+
+    #[error(
+        "orchestrator agent identifier space is exhausted between {minimum} and {maximum} characters"
+    )]
+    OrchestratorAgentIdentifierExhausted { minimum: usize, maximum: usize },
+
+    #[error("orchestrator agent identifier randomness failed: {message}")]
+    OrchestratorAgentIdentifierRandomness { message: String },
 }

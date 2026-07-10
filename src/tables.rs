@@ -15,11 +15,13 @@ use signal_harness::{ModelResolved, ModelUnavailable};
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
-    PartialApplied, PurposeText, PushedState, RepositoryName, ResolvedWorkflowRunRequest, Role,
-    RoleName, ScopeReason, ScopeReference, SessionIdentifier, TimestampNanos, WirePath,
-    WorkflowRunHandle, Worktree, WorktreeStatus,
+    MissionDescription, OrchestratorAgentIdentifier, OrchestratorAgentStatus, OrchestratorTopic,
+    OrchestratorTopicPath, PartialApplied, PurposeText, PushedState, RepositoryName,
+    ResolvedWorkflowRunRequest, Role, RoleName, ScopeReason, ScopeReference, SessionIdentifier,
+    TimestampNanos, TopicName, WirePath, WorkflowRunHandle, Worktree, WorktreeStatus,
 };
 
+use crate::orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 use crate::{Result, StoreLocation};
 
 trait OrchestrateStoredValue: sema_engine::EngineStoredValue
@@ -41,11 +43,19 @@ where
 {
 }
 
+// Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
+// topic membership, and triage audit log. Each table's family schema hash is
+// pinned to the version at which it was introduced (stable claim/role/lane/
+// worktree tables at v5, workflow model resolutions at v6, orchestrator-seat
+// tables at v7) so bumping the store version never disturbs an older table's
+// family hash. Migration forward is purely additive: an older store gains the
+// empty new tables and the seeded catch-all topic.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(7);
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT: SchemaVersion = SchemaVersion::new(6);
 // Bumped 5 -> 6 for workflow model-resolution attempts. Existing v5 stores
 // remain the lane-owned claim baseline; the new table records resolved or
 // unavailable harness model outcomes by resolved workflow run handle. That handle
 // includes the model-resolution request identity for the resolved workflow path.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(6);
 const ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS: SchemaVersion =
     SchemaVersion::new(5);
 
@@ -61,6 +71,16 @@ const DIVERGENCES: TableName = TableName::new("divergences");
 const DIVERGENCE_NEXT_SLOT: TableName = TableName::new("divergence_next_slot");
 const DIVERGENCE_NEXT_SLOT_KEY: &str = "next";
 const WORKFLOW_MODEL_RESOLUTIONS: TableName = TableName::new("workflow_model_resolutions");
+const ORCHESTRATOR_AGENTS: TableName = TableName::new("orchestrator_agents");
+const ORCHESTRATOR_TOPICS: TableName = TableName::new("orchestrator_topics");
+const ORCHESTRATOR_TOPIC_MEMBERSHIP: TableName = TableName::new("orchestrator_topic_membership");
+const ORCHESTRATOR_TRIAGE_AUDIT: TableName = TableName::new("orchestrator_triage_audit");
+const ORCHESTRATOR_TRIAGE_NEXT_SLOT: TableName = TableName::new("orchestrator_triage_next_slot");
+const ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY: &str = "next";
+// The catch-all topic is the coordinator's home and escalation target, not a
+// fallback seat for ordinary registration. Seeded once at store bootstrap.
+const CATCH_ALL_TOPIC_PATH: &str = "catch-all";
+const CATCH_ALL_TOPIC_NAME: &str = "Catch-all";
 const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
 const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -76,6 +96,11 @@ pub struct OrchestrateTables {
     divergences: TableReference<StoredDivergence>,
     divergence_next_slot: TableReference<u64>,
     workflow_model_resolutions: TableReference<StoredWorkflowRunResolution>,
+    orchestrator_agents: TableReference<StoredOrchestratorAgent>,
+    orchestrator_topics: TableReference<StoredOrchestratorTopic>,
+    orchestrator_topic_membership: TableReference<StoredOrchestratorTopicMembership>,
+    orchestrator_triage_audit: TableReference<StoredOrchestratorTriageRecord>,
+    orchestrator_triage_next_slot: TableReference<u64>,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -155,12 +180,126 @@ pub enum StoredWorkflowModelResolutionOutcome {
     Unavailable(ModelUnavailable),
 }
 
+/// One registered agent, keyed by its minted [`OrchestratorAgentIdentifier`].
+/// `reachability` is populated later by the discovery lane; it is `None` at
+/// registration because reachability is discovered, never caller-declared.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredOrchestratorAgent {
+    pub agent_identifier: OrchestratorAgentIdentifier,
+    pub session: SessionIdentifier,
+    pub mission: MissionDescription,
+    pub harness: HarnessKind,
+    pub reachability: Option<StoredAgentReachability>,
+    pub registered_at: TimestampNanos,
+    pub status: OrchestratorAgentStatus,
+}
+
+/// Where and how a registered agent is reached, discovered at registration by
+/// the discovery lane. `harness_pid` plus `harness_start_time` together
+/// disambiguate a recycled process identifier: a pid alone is not stable across
+/// a harness restart, so the start time pins the exact process generation.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredAgentReachability {
+    pub endpoint_kind: StoredAgentEndpointKind,
+    pub target: String,
+    pub harness_pid: u32,
+    pub harness_start_time: u64,
+}
+
+/// How a reachability `target` is interpreted: a terminal cell located by its
+/// session directory, or a harness process located by peer credentials.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredAgentEndpointKind {
+    TerminalCell,
+    HarnessProcess,
+}
+
+/// One topic in the orchestrator topic tree. Flattens the wire
+/// [`OrchestratorTopic`] (`path`, `name`, `parent`) and adds the storage-owned
+/// `seeded` marker and `created_at` stamp. `seeded` is true only for the
+/// catch-all topic bootstrapped at store open.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredOrchestratorTopic {
+    pub path: OrchestratorTopicPath,
+    pub name: TopicName,
+    pub parent: Option<OrchestratorTopicPath>,
+    pub seeded: bool,
+    pub created_at: TimestampNanos,
+}
+
+/// One agent seated on one topic, keyed `agent_identifier|topic`.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredOrchestratorTopicMembership {
+    pub agent_identifier: OrchestratorAgentIdentifier,
+    pub topic: OrchestratorTopicPath,
+    pub joined_at: TimestampNanos,
+}
+
+/// One slotted triage-audit row: the store's append-only record of how a
+/// message addressed to the orchestrator was triaged. Slots and timestamps are
+/// store-minted, mirroring [`StoredActivity`].
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredOrchestratorTriageRecord {
+    pub slot: u64,
+    pub sender: OrchestratorAgentIdentifier,
+    pub incoming_kind: StoredOrchestratorMessageKind,
+    pub verdict: StoredTriageVerdict,
+    pub stamped_at: TimestampNanos,
+}
+
+/// The storage-side projection of a semantic message kind. The authoritative
+/// vocabulary lives in the (separately built, not-yet-integrated)
+/// `signal-orchestrator-message` crate; this projection lets the triage audit
+/// persist the kind before that crate is a dependency. Keep it in step with the
+/// `OrchestratorMessageKind` contract when that crate integrates.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredOrchestratorMessageKind {
+    Guidance(StoredGuidanceMagnitude),
+    Interruption,
+    Report,
+}
+
+/// The magnitude carried by a `Guidance` message, storage-side projection.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredGuidanceMagnitude {
+    Soft,
+    Standard,
+    Hard,
+}
+
+/// The store's closed record of a triage verdict. Spawning is deliberately
+/// inexpressible — there is no spawn or new-session variant. `Route` carries the
+/// resolved recipients and the optional retyped kind; `Reject` carries the
+/// typed reason.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum StoredTriageVerdict {
+    Route {
+        recipients: Vec<OrchestratorAgentIdentifier>,
+        retyped: Option<StoredOrchestratorMessageKind>,
+    },
+    Escalate,
+    Reject {
+        reason: StoredTriageRejectionReason,
+    },
+}
+
+/// Why a triage rejected a message, storage-side projection of the
+/// `signal-orchestrator-judge` triage rejection reasons.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTriageRejectionReason {
+    NoEligibleRecipient,
+    SenderNotRegistered,
+    MalformedPayload,
+}
+
 impl OrchestrateTables {
     pub fn open(store: &StoreLocation) -> Result<Self> {
-        match Self::open_current(store) {
-            Ok(tables) => Ok(tables),
-            Err(error) => OrchestrateStoreMigration::new(store).open_after_migration(error),
-        }
+        let tables = match Self::open_current(store) {
+            Ok(tables) => tables,
+            Err(error) => OrchestrateStoreMigration::new(store).open_after_migration(error)?,
+        };
+        tables.seed_catch_all_topic()?;
+        Ok(tables)
     }
 
     fn open_current(store: &StoreLocation) -> Result<Self> {
@@ -190,6 +329,31 @@ impl OrchestrateTables {
         let workflow_model_resolutions = engine.register_table(Self::family_descriptor(
             WORKFLOW_MODEL_RESOLUTIONS,
             "workflow-model-resolution",
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT,
+        ))?;
+        let orchestrator_agents = engine.register_table(Self::family_descriptor(
+            ORCHESTRATOR_AGENTS,
+            "orchestrator-agent",
+            ORCHESTRATE_SCHEMA_VERSION,
+        ))?;
+        let orchestrator_topics = engine.register_table(Self::family_descriptor(
+            ORCHESTRATOR_TOPICS,
+            "orchestrator-topic",
+            ORCHESTRATE_SCHEMA_VERSION,
+        ))?;
+        let orchestrator_topic_membership = engine.register_table(Self::family_descriptor(
+            ORCHESTRATOR_TOPIC_MEMBERSHIP,
+            "orchestrator-topic-membership",
+            ORCHESTRATE_SCHEMA_VERSION,
+        ))?;
+        let orchestrator_triage_audit = engine.register_table(Self::family_descriptor(
+            ORCHESTRATOR_TRIAGE_AUDIT,
+            "orchestrator-triage",
+            ORCHESTRATE_SCHEMA_VERSION,
+        ))?;
+        let orchestrator_triage_next_slot = engine.register_table(Self::family_descriptor(
+            ORCHESTRATOR_TRIAGE_NEXT_SLOT,
+            "orchestrator-triage-slot",
             ORCHESTRATE_SCHEMA_VERSION,
         ))?;
         Ok(Self {
@@ -204,6 +368,11 @@ impl OrchestrateTables {
             divergences,
             divergence_next_slot,
             workflow_model_resolutions,
+            orchestrator_agents,
+            orchestrator_topics,
+            orchestrator_topic_membership,
+            orchestrator_triage_audit,
+            orchestrator_triage_next_slot,
         })
     }
 
@@ -560,6 +729,198 @@ impl OrchestrateTables {
         self.records(self.workflow_model_resolutions)
     }
 
+    pub fn orchestrator_agent_records(&self) -> Result<Vec<StoredOrchestratorAgent>> {
+        self.records(self.orchestrator_agents)
+    }
+
+    pub fn orchestrator_agent_record(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<Option<StoredOrchestratorAgent>> {
+        self.record(self.orchestrator_agents, agent_identifier.as_str())
+    }
+
+    /// Mint a fresh identity against the live registry key set. The store owns
+    /// minting; callers never supply an identifier.
+    pub fn mint_orchestrator_agent_identifier(&self) -> Result<OrchestratorAgentIdentifier> {
+        let used = self
+            .orchestrator_agent_records()?
+            .into_iter()
+            .map(|agent| agent.agent_identifier.as_str().to_string());
+        OrchestratorAgentIdentifierMint::from_identifiers(used).next_identifier()
+    }
+
+    /// Mint an identity, stamp the registration time, and seat the agent as
+    /// `Active` with no reachability yet (the discovery lane fills that in).
+    pub fn register_orchestrator_agent(
+        &self,
+        session: SessionIdentifier,
+        mission: MissionDescription,
+        harness: HarnessKind,
+    ) -> Result<StoredOrchestratorAgent> {
+        let agent_identifier = self.mint_orchestrator_agent_identifier()?;
+        let registered_at = self.current_timestamp()?;
+        let agent = StoredOrchestratorAgent {
+            agent_identifier,
+            session,
+            mission,
+            harness,
+            reachability: None,
+            registered_at,
+            status: OrchestratorAgentStatus::Active,
+        };
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(agent)
+    }
+
+    /// Upsert an agent by its identifier. The discovery lane uses this to attach
+    /// discovered reachability, and status transitions use it to retire.
+    pub fn insert_orchestrator_agent(&self, agent: &StoredOrchestratorAgent) -> Result<()> {
+        self.upsert(
+            self.orchestrator_agents,
+            agent.agent_identifier.as_str(),
+            agent,
+        )?;
+        Ok(())
+    }
+
+    pub fn orchestrator_topic_records(&self) -> Result<Vec<StoredOrchestratorTopic>> {
+        self.records(self.orchestrator_topics)
+    }
+
+    pub fn orchestrator_topic_record(
+        &self,
+        path: &OrchestratorTopicPath,
+    ) -> Result<Option<StoredOrchestratorTopic>> {
+        self.record(self.orchestrator_topics, path.as_str())
+    }
+
+    /// Create (or overwrite) a topic keyed by its path, stamping `created_at`.
+    pub fn insert_orchestrator_topic(
+        &self,
+        path: OrchestratorTopicPath,
+        name: TopicName,
+        parent: Option<OrchestratorTopicPath>,
+        seeded: bool,
+    ) -> Result<StoredOrchestratorTopic> {
+        let created_at = self.current_timestamp()?;
+        let topic = StoredOrchestratorTopic {
+            path,
+            name,
+            parent,
+            seeded,
+            created_at,
+        };
+        self.upsert(self.orchestrator_topics, topic.path.as_str(), &topic)?;
+        Ok(topic)
+    }
+
+    /// Seed the catch-all topic once at store bootstrap. Idempotent: re-opening
+    /// the store leaves the single seeded row untouched rather than duplicating
+    /// it.
+    pub fn seed_catch_all_topic(&self) -> Result<()> {
+        let path = OrchestratorTopicPath::from_wire_token(CATCH_ALL_TOPIC_PATH)?;
+        if self.orchestrator_topic_record(&path)?.is_some() {
+            return Ok(());
+        }
+        let name = TopicName::from_text(CATCH_ALL_TOPIC_NAME)?;
+        self.insert_orchestrator_topic(path, name, None, true)?;
+        Ok(())
+    }
+
+    pub fn orchestrator_topic_membership_records(
+        &self,
+    ) -> Result<Vec<StoredOrchestratorTopicMembership>> {
+        self.records(self.orchestrator_topic_membership)
+    }
+
+    /// Seat an agent on a topic, stamping `joined_at`. Keyed
+    /// `agent_identifier|topic`, so re-seating updates the existing row.
+    pub fn seat_agent_on_topic(
+        &self,
+        agent_identifier: OrchestratorAgentIdentifier,
+        topic: OrchestratorTopicPath,
+    ) -> Result<StoredOrchestratorTopicMembership> {
+        let joined_at = self.current_timestamp()?;
+        let membership = StoredOrchestratorTopicMembership {
+            agent_identifier,
+            topic,
+            joined_at,
+        };
+        self.upsert(
+            self.orchestrator_topic_membership,
+            membership.key().as_str(),
+            &membership,
+        )?;
+        Ok(membership)
+    }
+
+    pub fn topic_member_identifiers(
+        &self,
+        topic: &OrchestratorTopicPath,
+    ) -> Result<Vec<OrchestratorAgentIdentifier>> {
+        Ok(self
+            .orchestrator_topic_membership_records()?
+            .into_iter()
+            .filter(|membership| membership.topic == *topic)
+            .map(|membership| membership.agent_identifier)
+            .collect())
+    }
+
+    pub fn agent_topic_paths(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<Vec<OrchestratorTopicPath>> {
+        Ok(self
+            .orchestrator_topic_membership_records()?
+            .into_iter()
+            .filter(|membership| membership.agent_identifier == *agent_identifier)
+            .map(|membership| membership.topic)
+            .collect())
+    }
+
+    /// Append one triage-audit row, minting the slot and timestamp.
+    pub fn append_orchestrator_triage_record(
+        &self,
+        sender: OrchestratorAgentIdentifier,
+        incoming_kind: StoredOrchestratorMessageKind,
+        verdict: StoredTriageVerdict,
+    ) -> Result<StoredOrchestratorTriageRecord> {
+        let slot = self.next_orchestrator_triage_slot()?;
+        let stamped_at = self.current_timestamp()?;
+        let record = StoredOrchestratorTriageRecord {
+            slot: slot.value(),
+            sender,
+            incoming_kind,
+            verdict,
+            stamped_at,
+        };
+        self.upsert(self.orchestrator_triage_audit, &slot.key(), &record)?;
+        self.upsert(
+            self.orchestrator_triage_next_slot,
+            ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY,
+            &slot.next_value(),
+        )?;
+        Ok(record)
+    }
+
+    pub fn orchestrator_triage_records(&self) -> Result<Vec<StoredOrchestratorTriageRecord>> {
+        self.records(self.orchestrator_triage_audit)
+    }
+
+    fn next_orchestrator_triage_slot(&self) -> Result<ActivitySlot> {
+        let stored = self.record(
+            self.orchestrator_triage_next_slot,
+            ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY,
+        )?;
+        match stored {
+            Some(next_slot) => Ok(ActivitySlot::new(next_slot)),
+            None => Ok(ActivitySlot::after_triage_records(
+                &self.orchestrator_triage_records()?,
+            )),
+        }
+    }
+
     pub fn current_timestamp(&self) -> Result<TimestampNanos> {
         StoreClock::system().timestamp()
     }
@@ -825,6 +1186,44 @@ impl StoredWorkflowRunResolution {
     }
 }
 
+impl StoredOrchestratorTopic {
+    /// Project back to the wire [`OrchestratorTopic`], dropping the
+    /// storage-owned `seeded`/`created_at` fields the wire form does not carry.
+    pub fn into_orchestrator_topic(self) -> OrchestratorTopic {
+        OrchestratorTopic {
+            path: self.path,
+            name: self.name,
+            parent: self.parent,
+        }
+    }
+}
+
+impl StoredOrchestratorTopicMembership {
+    fn key(&self) -> String {
+        TopicMembershipKey::new(&self.agent_identifier, &self.topic).into_string()
+    }
+}
+
+/// Composite redb key `agent_identifier|topic` for the topic-membership table —
+/// the identity of a [`StoredOrchestratorTopicMembership`].
+struct TopicMembershipKey {
+    agent_identifier: String,
+    topic: String,
+}
+
+impl TopicMembershipKey {
+    fn new(agent_identifier: &OrchestratorAgentIdentifier, topic: &OrchestratorTopicPath) -> Self {
+        Self {
+            agent_identifier: agent_identifier.as_str().to_string(),
+            topic: topic.as_str().to_string(),
+        }
+    }
+
+    fn into_string(self) -> String {
+        format!("{}|{}", self.agent_identifier, self.topic)
+    }
+}
+
 impl StoredClaim {
     pub fn new(
         lane: LaneIdentifier,
@@ -990,6 +1389,15 @@ impl ActivitySlot {
         Self { value }
     }
 
+    fn after_triage_records(records: &[StoredOrchestratorTriageRecord]) -> Self {
+        let value = records
+            .iter()
+            .map(|record| record.slot)
+            .max()
+            .map_or(0, |slot| slot + 1);
+        Self { value }
+    }
+
     fn value(&self) -> u64 {
         self.value
     }
@@ -1031,30 +1439,38 @@ impl<'store> OrchestrateStoreMigration<'store> {
     }
 
     fn open_after_migration(&self, error: crate::Error) -> Result<OrchestrateTables> {
-        if self.is_workflow_resolution_schema_migration(&error) {
-            self.stamp_workflow_resolution_schema_version()?;
-            OrchestrateTables::open_current(self.store)
-        } else {
-            Err(error)
+        match self.migratable_found_version(&error) {
+            Some(found) => {
+                self.stamp_current_schema_version(found)?;
+                OrchestrateTables::open_current(self.store)
+            }
+            None => Err(error),
         }
     }
 
-    fn is_workflow_resolution_schema_migration(&self, error: &crate::Error) -> bool {
-        matches!(
-            error,
+    /// A store mismatch is a forward-additive migration when the store is at a
+    /// known prior version (v5 claim baseline or v6 workflow-resolution
+    /// baseline) and this build expects the current version. Every intervening
+    /// table is additive and created empty on open, so a v5 store may migrate
+    /// straight to the current version without an intermediate stop.
+    fn migratable_found_version(&self, error: &crate::Error) -> Option<SchemaVersion> {
+        match error {
             crate::Error::SemaEngine(sema_engine::Error::Sema(
-                sema_engine::StorageKernelError::SchemaVersionMismatch { expected, found }
+                sema_engine::StorageKernelError::SchemaVersionMismatch { expected, found },
             )) if *expected == ORCHESTRATE_SCHEMA_VERSION
-                && *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
-        )
+                && (*found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
+                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT) =>
+            {
+                Some(*found)
+            }
+            _ => None,
+        }
     }
 
-    fn stamp_workflow_resolution_schema_version(&self) -> Result<()> {
+    fn stamp_current_schema_version(&self, found: SchemaVersion) -> Result<()> {
         let storage = sema::Sema::open_with_schema(
             self.store.as_path(),
-            &sema::Schema {
-                version: ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
-            },
+            &sema::Schema { version: found },
         )?;
         drop(storage);
         let database = redb::Database::create(self.store.as_path()).map_err(|source| {
@@ -1257,5 +1673,270 @@ mod tests {
         assert_eq!(resource.claimed_at, TimestampNanos::new(200));
         assert_eq!(resource.age.value(), 75);
         assert_eq!(resource.reason, claim.reason);
+    }
+
+    fn test_session() -> SessionIdentifier {
+        SessionIdentifier::from_camel_case_name("AgentCoordination").expect("session")
+    }
+
+    fn test_mission() -> MissionDescription {
+        MissionDescription::from_text("map the orchestrator storage layer").expect("mission")
+    }
+
+    #[test]
+    fn orchestrator_agents_round_trip_with_store_minted_unique_identifiers() {
+        let temporary = TemporaryStore::new("orchestrate-agent-registry");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+
+        let mut minted = std::collections::BTreeSet::new();
+        for _ in 0..16 {
+            let agent = tables
+                .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+                .expect("register agent");
+            assert_eq!(agent.status, OrchestratorAgentStatus::Active);
+            assert!(agent.reachability.is_none());
+            assert!(
+                minted.insert(agent.agent_identifier.as_str().to_string()),
+                "store minted a duplicate identifier {}",
+                agent.agent_identifier.as_str()
+            );
+            let stored = tables
+                .orchestrator_agent_record(&agent.agent_identifier)
+                .expect("read agent")
+                .expect("agent present");
+            assert_eq!(stored, agent);
+        }
+        assert_eq!(
+            tables.orchestrator_agent_records().expect("agents").len(),
+            16
+        );
+    }
+
+    #[test]
+    fn agent_reachability_round_trips_when_the_discovery_lane_attaches_it() {
+        let temporary = TemporaryStore::new("orchestrate-agent-reachability");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        let agent = tables
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex)
+            .expect("register agent");
+
+        let discovered = StoredOrchestratorAgent {
+            reachability: Some(StoredAgentReachability {
+                endpoint_kind: StoredAgentEndpointKind::TerminalCell,
+                target: "terminal-cell-7".to_string(),
+                harness_pid: 4242,
+                harness_start_time: 99_887_766,
+            }),
+            ..agent.clone()
+        };
+        tables
+            .insert_orchestrator_agent(&discovered)
+            .expect("attach reachability");
+
+        let stored = tables
+            .orchestrator_agent_record(&agent.agent_identifier)
+            .expect("read agent")
+            .expect("agent present");
+        assert_eq!(stored, discovered);
+        let reachability = stored.reachability.expect("reachability present");
+        assert_eq!(reachability.endpoint_kind, StoredAgentEndpointKind::TerminalCell);
+        assert_eq!(reachability.harness_pid, 4242);
+        assert_eq!(reachability.harness_start_time, 99_887_766);
+    }
+
+    #[test]
+    fn catch_all_topic_seed_is_idempotent_across_reopen() {
+        let temporary = TemporaryStore::new("orchestrate-catch-all-seed");
+        {
+            let tables = OrchestrateTables::open(&temporary.location()).expect("first open");
+            let topics = tables.orchestrator_topic_records().expect("topics");
+            assert_eq!(topics.len(), 1);
+            assert!(topics[0].seeded);
+            assert!(topics[0].parent.is_none());
+            assert_eq!(topics[0].path.as_str(), CATCH_ALL_TOPIC_PATH);
+            assert_eq!(topics[0].name.as_str(), CATCH_ALL_TOPIC_NAME);
+        }
+        let reopened = OrchestrateTables::open(&temporary.location()).expect("reopen");
+        assert_eq!(
+            reopened
+                .orchestrator_topic_records()
+                .expect("topics after reopen")
+                .len(),
+            1,
+            "reopening the store must not duplicate the catch-all seed"
+        );
+    }
+
+    #[test]
+    fn orchestrator_topics_and_membership_round_trip() {
+        let temporary = TemporaryStore::new("orchestrate-topics-membership");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+
+        let topic = tables
+            .insert_orchestrator_topic(
+                OrchestratorTopicPath::from_wire_token("storage").expect("path"),
+                TopicName::from_text("Storage layer").expect("name"),
+                Some(OrchestratorTopicPath::from_wire_token(CATCH_ALL_TOPIC_PATH).expect("parent")),
+                false,
+            )
+            .expect("insert topic");
+        let stored = tables
+            .orchestrator_topic_record(&topic.path)
+            .expect("read topic")
+            .expect("topic present");
+        assert_eq!(stored, topic);
+        assert!(!stored.seeded);
+        assert_eq!(
+            stored.clone().into_orchestrator_topic().name.as_str(),
+            "Storage layer"
+        );
+
+        let agent = tables
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+            .expect("register agent");
+        tables
+            .seat_agent_on_topic(agent.agent_identifier.clone(), topic.path.clone())
+            .expect("seat agent");
+
+        assert_eq!(
+            tables
+                .topic_member_identifiers(&topic.path)
+                .expect("members"),
+            vec![agent.agent_identifier.clone()]
+        );
+        assert_eq!(
+            tables
+                .agent_topic_paths(&agent.agent_identifier)
+                .expect("agent topics"),
+            vec![topic.path]
+        );
+    }
+
+    #[test]
+    fn triage_audit_appends_slotted_records_and_round_trips_verdicts() {
+        let temporary = TemporaryStore::new("orchestrate-triage-audit");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        let sender = tables
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+            .expect("register sender");
+        let recipient = tables
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex)
+            .expect("register recipient");
+
+        let routed = tables
+            .append_orchestrator_triage_record(
+                sender.agent_identifier.clone(),
+                StoredOrchestratorMessageKind::Guidance(StoredGuidanceMagnitude::Standard),
+                StoredTriageVerdict::Route {
+                    recipients: vec![recipient.agent_identifier.clone()],
+                    retyped: Some(StoredOrchestratorMessageKind::Interruption),
+                },
+            )
+            .expect("append routed verdict");
+        let rejected = tables
+            .append_orchestrator_triage_record(
+                sender.agent_identifier.clone(),
+                StoredOrchestratorMessageKind::Report,
+                StoredTriageVerdict::Reject {
+                    reason: StoredTriageRejectionReason::SenderNotRegistered,
+                },
+            )
+            .expect("append rejected verdict");
+
+        assert_eq!(routed.slot, 0);
+        assert_eq!(rejected.slot, 1);
+        let records = tables.orchestrator_triage_records().expect("triage records");
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().any(|record| *record == routed));
+        assert!(records.iter().any(|record| *record == rejected));
+    }
+
+    #[test]
+    fn version_six_store_migrates_and_gains_orchestrator_seat_tables() {
+        let temporary = TemporaryStore::new("orchestrate-v6-to-v7-migration");
+        sema::Sema::open_with_schema(
+            temporary.path.as_path(),
+            &sema::Schema {
+                version: ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT,
+            },
+        )
+        .expect("v6 store opens");
+
+        let tables = OrchestrateTables::open(&temporary.location()).expect("migrated tables open");
+
+        assert!(tables.orchestrator_agent_records().expect("agents").is_empty());
+        assert!(
+            tables
+                .orchestrator_topic_membership_records()
+                .expect("membership")
+                .is_empty()
+        );
+        assert!(
+            tables
+                .orchestrator_triage_records()
+                .expect("triage")
+                .is_empty()
+        );
+        let topics = tables.orchestrator_topic_records().expect("topics");
+        assert_eq!(topics.len(), 1, "migration seeds the catch-all topic");
+        assert!(topics[0].seeded);
+        // Pre-existing table families remain readable and untouched.
+        assert!(tables.claim_records().expect("claims").is_empty());
+        assert!(
+            tables
+                .workflow_model_resolution_records()
+                .expect("workflow resolutions")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn migration_preserves_existing_rows_forward_from_the_seat_baseline() {
+        let temporary = TemporaryStore::new("orchestrate-migration-preserves-rows");
+        let claim = StoredClaim::new(
+            LaneIdentifier::from_wire_token("designer").expect("lane"),
+            ScopeReference::Path(
+                WirePath::from_absolute_path("/tmp/orchestrate-migrate").expect("path"),
+            ),
+            ScopeReason::from_text("owns migration preservation test").expect("reason"),
+            TimestampNanos::new(200),
+        );
+        {
+            let tables =
+                OrchestrateTables::open(&temporary.location()).expect("current store opens");
+            tables
+                .replace_all_claims(std::slice::from_ref(&claim))
+                .expect("insert claim");
+        }
+
+        stamp_meta_schema_version(
+            temporary.path.as_path(),
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT,
+        );
+
+        let migrated =
+            OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
+        let claims = migrated.claim_records().expect("claims after migration");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].claimed_at, TimestampNanos::new(200));
+        assert_eq!(claims[0].lane, claim.lane);
+        assert!(
+            migrated
+                .orchestrator_agent_records()
+                .expect("agents")
+                .is_empty()
+        );
+    }
+
+    fn stamp_meta_schema_version(path: &std::path::Path, version: SchemaVersion) {
+        let database = redb::Database::create(path).expect("open store database");
+        let transaction = database.begin_write().expect("begin write");
+        {
+            let mut table = transaction.open_table(SEMA_META).expect("open meta table");
+            table
+                .insert(SEMA_SCHEMA_VERSION_KEY, version.value() as u64)
+                .expect("stamp schema version");
+        }
+        transaction.commit().expect("commit meta stamp");
     }
 }

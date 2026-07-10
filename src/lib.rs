@@ -11,6 +11,7 @@ pub mod layout;
 pub mod legacy_lock_import;
 pub mod location;
 pub mod lock_projection;
+pub mod orchestrator_agent_identifier;
 pub mod repository;
 pub mod role;
 #[allow(clippy::large_enum_variant)]
@@ -41,6 +42,7 @@ pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
+pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange,
     LaneAuthoritySet, LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired,
@@ -72,8 +74,11 @@ pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, Transpo
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
-    OrchestrateTables, StoredActivity, StoredClaim, StoredDivergence, StoredLaneRegistration,
-    StoredRepository, StoredRole, StoredWorkflowModelResolutionOutcome,
+    OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,
+    StoredClaim, StoredDivergence, StoredGuidanceMagnitude, StoredLaneRegistration,
+    StoredOrchestratorAgent, StoredOrchestratorMessageKind, StoredOrchestratorTopic,
+    StoredOrchestratorTopicMembership, StoredOrchestratorTriageRecord, StoredRepository, StoredRole,
+    StoredTriageRejectionReason, StoredTriageVerdict, StoredWorkflowModelResolutionOutcome,
     StoredWorkflowRunResolution, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;

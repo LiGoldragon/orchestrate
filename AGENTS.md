@@ -15,3 +15,6 @@ deepening the transitional BEADS dependency.
 - No polling. Orchestration status is pushed through explicit writes and future
   Persona messages.
 - Durable orchestration state uses `sema-engine` over the redb + rkyv substrate.
+- Naming: the component is being renamed Orchestrate → Orchestrator. The rename
+  proceeds incrementally as code is touched — new and edited surfaces adopt
+  `Orchestrator`; there is no separate big-bang rename sweep.
