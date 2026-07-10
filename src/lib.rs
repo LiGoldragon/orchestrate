@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod agent_reachability;
 pub mod claim;
 pub mod configuration;
 pub mod daemon;
@@ -27,6 +28,10 @@ pub mod worktree;
 pub mod worktree_projection;
 
 pub use activity::ActivityLedger;
+pub use agent_reachability::{
+    AgentReachabilityDiscovery, AncestorProcess, ProcessAncestryWalk, ProcessStat,
+    TerminalCellSessionIndex, TerminalCellSessionRecord,
+};
 pub use claim::{ClaimLedger, ClaimState};
 pub use configuration::{ConfigurationError, DaemonConfiguration};
 pub use daemon::{OrchestrateDaemon, OrchestrateDaemonError};
@@ -64,11 +69,12 @@ pub use signal_orchestrate::{
     PurposeText, PushedState, RepositoryName, ResolvedWorkflowRunRequest, Role, RoleClaim,
     RoleHandoff, RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason,
     ScopeReference, SessionIdentifier, SessionName, SessionsObserved, TaskToken, TimestampNanos,
-    TopicName, TopicSelection, WirePath, WorkflowReceiptProduced, WorkflowResolutionUnavailable,
-    WorkflowResolvedReceiptProduced, WorkflowRunDigest, WorkflowRunHandle, WorkflowRunLog,
-    WorkflowRunLogReported, WorkflowRunObservation, WorkflowRunObservationClosed,
-    WorkflowRunObservationOpened, WorkflowRunObservationToken, WorkflowRunRequest,
-    WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
+    TopicAssignmentSource, TopicName, TopicSelection, WirePath, WorkflowReceiptProduced,
+    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
+    WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
+    WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
+    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus,
+    WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};

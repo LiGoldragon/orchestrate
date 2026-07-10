@@ -102,9 +102,21 @@ impl ComponentDaemon for OrchestrateDaemon {
     async fn handle_working_input<'connection>(
         engine: &'connection mut Self::Engine,
         input: Input,
-        _connection: &'connection ConnectionContext,
+        connection: &'connection ConnectionContext,
     ) -> Result<Output, Self::Error> {
-        Ok(engine.handle_signal_input(input).await?)
+        // The registering peer's kernel-vouched pid (SO_PEERCRED) is the seed
+        // for reachability discovery. A Unix-socket peer carries it; a TCP peer
+        // does not, so registration then lands without reachability. The pid is
+        // a positive kernel value; a non-positive credential is treated as
+        // absent rather than coerced.
+        let caller_process_id = connection
+            .unix_credentials()
+            .map(triad_runtime::UnixCredentials::process_id)
+            .filter(|process_id| *process_id > 0)
+            .map(|process_id| process_id as u32);
+        Ok(engine
+            .handle_signal_input_from_caller(input, caller_process_id)
+            .await?)
     }
 
     /// Serve one owner-only meta connection: decode a meta `Input` off the

@@ -9,8 +9,8 @@ use signal_orchestrate::schema::lib as ordinary_schema;
 
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
-    ActivityLedger, ClaimLedger, Error, LaneRegistry, OrchestrateService, RepositoryRegistry,
-    Result, RoleRegistry, WorkflowRunner, WorktreeRegistry,
+    ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, LaneRegistry,
+    OrchestrateService, RepositoryRegistry, Result, RoleRegistry, WorkflowRunner, WorktreeRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,30 @@ impl OrchestrateService {
         &mut self,
         input: ordinary_schema::Input,
     ) -> Result<ordinary_schema::Output> {
+        self.handle_signal_input_from_caller(input, None).await
+    }
+
+    /// Drive one ordinary working `Input`, carrying the peer's kernel-vouched
+    /// process identifier so the registration handler can discover the caller's
+    /// reachability. The daemon boundary supplies the pid from the accepted
+    /// connection's credentials; the pid is recorded for the duration of this
+    /// one request and cleared before returning, correct because the actor
+    /// mailbox serialises requests.
+    pub async fn handle_signal_input_from_caller(
+        &mut self,
+        input: ordinary_schema::Input,
+        caller_process_id: Option<u32>,
+    ) -> Result<ordinary_schema::Output> {
+        self.set_pending_caller_process_id(caller_process_id);
+        let output = self.drive_ordinary_signal_input(input).await;
+        self.set_pending_caller_process_id(None);
+        output
+    }
+
+    async fn drive_ordinary_signal_input(
+        &mut self,
+        input: ordinary_schema::Input,
+    ) -> Result<ordinary_schema::Output> {
         let signal_input = nexus_schema::SignalInput::ordinary_input(input);
         let output = match OrchestrateRequestExecution::drive_nexus(self, signal_input).await {
             Ok(nexus_schema::SignalOutput::OrdinaryOutput(output)) => Ok(output),
@@ -61,11 +85,11 @@ impl OrchestrateService {
         // malformed-frame failures still propagate and fail closed.
         match output {
             Ok(output) => Ok(output),
-            Err(error) if error.is_caller_rejection() => Ok(
-                ordinary_schema::Output::partial_applied(
+            Err(error) if error.is_caller_rejection() => {
+                Ok(ordinary_schema::Output::partial_applied(
                     SchemaFailure::from_error(&error).partial_applied(),
-                ),
-            ),
+                ))
+            }
             Err(error) => Err(error),
         }
     }
@@ -4767,53 +4791,54 @@ impl OrchestrateSemaEngine<'_> {
     }
 
     fn register_orchestrator_agent(
-        &self,
+        &mut self,
         registration: ordinary_contract::OrchestratorAgentRegistration,
     ) -> Result<ordinary_contract::OrchestrateReply> {
-        let available_topics = self.orchestrator_topics()?;
+        // Automatic seating defers to the topic judge, which is shelved this
+        // phase: it fails closed with `JudgeUnavailable`, carrying the current
+        // topic list so the caller can retry with an explicit selection. There
+        // is no catch-all fallback seat.
         let selected_paths = match registration.topic_selection {
             ordinary_contract::TopicSelection::Automatic => {
                 return Ok(ordinary_contract::OrchestrateReply::AgentRegistrationRejected(
                     ordinary_contract::AgentRegistrationRejected {
                         reason: ordinary_contract::AgentRegistrationRejectionReason::JudgeUnavailable,
-                        available_topics,
+                        available_topics: self.orchestrator_topics()?,
                     },
                 ));
             }
             ordinary_contract::TopicSelection::Explicit(paths) => paths,
         };
-        if selected_paths
-            .iter()
-            .any(|path| !available_topics.iter().any(|topic| topic.path == *path))
-        {
-            return Ok(
-                ordinary_contract::OrchestrateReply::AgentRegistrationRejected(
-                    ordinary_contract::AgentRegistrationRejected {
-                        reason: ordinary_contract::AgentRegistrationRejectionReason::UnknownTopic,
-                        available_topics,
-                    },
-                ),
-            );
-        }
-        let assigned_topics = selected_paths
-            .into_iter()
-            .filter_map(|path| {
-                available_topics
-                    .iter()
-                    .find(|topic| topic.path == path)
-                    .cloned()
-            })
-            .collect::<Vec<_>>();
+        // Explicit registration lets the agent author its own topics: every
+        // topic implied by a selected path is created (parents first), an
+        // existing topic is joined rather than duplicated, and the agent is
+        // seated on the leaf it named. `UnknownTopic` is therefore unreachable
+        // from this path — the reason is reserved for the future judge path
+        // that may validate a reuse-topic the model named — so no selection is
+        // rejected for naming an absent topic.
         let agent = self.service.tables().register_orchestrator_agent(
             registration.session,
             registration.mission,
             registration.harness,
         )?;
-        for topic in &assigned_topics {
-            self.service
-                .tables()
-                .seat_agent_on_topic(agent.agent_identifier.clone(), topic.path.clone())?;
+        let mut assigned_topics = Vec::new();
+        for path in selected_paths {
+            let mut seated_leaf = None;
+            for topic in path.lineage()? {
+                seated_leaf = Some(self.service.tables().ensure_orchestrator_topic(
+                    topic.path,
+                    topic.name,
+                    topic.parent,
+                )?);
+            }
+            if let Some(leaf) = seated_leaf {
+                self.service
+                    .tables()
+                    .seat_agent_on_topic(agent.agent_identifier.clone(), leaf.path.clone())?;
+                assigned_topics.push(leaf.into_orchestrator_topic());
+            }
         }
+        self.discover_agent_reachability(&agent.agent_identifier)?;
         Ok(ordinary_contract::OrchestrateReply::AgentRegistered(
             ordinary_contract::AgentRegistered {
                 agent_identifier: agent.agent_identifier,
@@ -4821,6 +4846,30 @@ impl OrchestrateSemaEngine<'_> {
                 assignment_source: ordinary_contract::TopicAssignmentSource::Explicit,
             },
         ))
+    }
+
+    /// Discover and persist the registering agent's reachability from the peer's
+    /// kernel-vouched pid: walk the caller's `/proc` ancestry and match it
+    /// against the terminal-cell session index, attaching the endpoint on a
+    /// match. A direct contract-level caller supplies no pid, and no match
+    /// leaves the agent registered without reachability — its identity and
+    /// topics are valid regardless, and delivery parks until an endpoint exists.
+    fn discover_agent_reachability(
+        &mut self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+    ) -> Result<()> {
+        let Some(caller_process_id) = self.service.take_pending_caller_process_id() else {
+            return Ok(());
+        };
+        let Some(reachability) =
+            AgentReachabilityDiscovery::from_process_environment().discover(caller_process_id)
+        else {
+            return Ok(());
+        };
+        self.service
+            .tables()
+            .attach_agent_reachability(agent_identifier, reachability)?;
+        Ok(())
     }
 
     fn observe_orchestrator_topic(

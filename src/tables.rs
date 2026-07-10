@@ -768,6 +768,23 @@ impl OrchestrateTables {
         Ok(agent)
     }
 
+    /// Attach discovered reachability to an already-registered agent, returning
+    /// the updated row. `None` when the identifier is absent (the agent was
+    /// never registered). Reachability is discovered at registration; this is
+    /// the write that records a match against a terminal-cell session.
+    pub fn attach_agent_reachability(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+        reachability: StoredAgentReachability,
+    ) -> Result<Option<StoredOrchestratorAgent>> {
+        let Some(mut agent) = self.orchestrator_agent_record(agent_identifier)? else {
+            return Ok(None);
+        };
+        agent.reachability = Some(reachability);
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(Some(agent))
+    }
+
     /// Upsert an agent by its identifier. The discovery lane uses this to attach
     /// discovered reachability, and status transitions use it to retire.
     pub fn insert_orchestrator_agent(&self, agent: &StoredOrchestratorAgent) -> Result<()> {
@@ -788,6 +805,23 @@ impl OrchestrateTables {
         path: &OrchestratorTopicPath,
     ) -> Result<Option<StoredOrchestratorTopic>> {
         self.record(self.orchestrator_topics, path.as_str())
+    }
+
+    /// Create a topic only if its path is absent, returning the stored row
+    /// either way. Explicit registration creates every topic in a selected
+    /// path's lineage; a topic that already exists is joined, never
+    /// overwritten, so its original name, parent, and `created_at` stand and no
+    /// duplicate row is minted.
+    pub fn ensure_orchestrator_topic(
+        &self,
+        path: OrchestratorTopicPath,
+        name: TopicName,
+        parent: Option<OrchestratorTopicPath>,
+    ) -> Result<StoredOrchestratorTopic> {
+        match self.orchestrator_topic_record(&path)? {
+            Some(existing) => Ok(existing),
+            None => self.insert_orchestrator_topic(path, name, parent),
+        }
     }
 
     /// Create (or overwrite) a topic keyed by its path, stamping `created_at`.

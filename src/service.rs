@@ -29,6 +29,13 @@ pub struct OrchestrateService {
     next_observation_token: u64,
     handover: HandoverState,
     public_sockets: PublicSocketRetirement,
+    /// The kernel-vouched process identifier of the peer whose working request
+    /// is currently in flight, when the daemon boundary supplied it. The actor
+    /// mailbox serialises requests, so exactly one working request is ever in
+    /// flight; the registration handler reads this to discover the caller's
+    /// reachability. Direct contract-level callers (tests) leave it `None`, so
+    /// registration simply lands without reachability.
+    pending_caller_process_id: Option<u32>,
 }
 
 impl OrchestrateService {
@@ -47,7 +54,22 @@ impl OrchestrateService {
             next_observation_token: 1,
             handover: HandoverState::Active,
             public_sockets: PublicSocketRetirement::none(),
+            pending_caller_process_id: None,
         })
+    }
+
+    /// Record the peer process identifier for the working request about to be
+    /// driven, so the registration handler can discover its reachability. The
+    /// daemon boundary sets this from the accepted connection's kernel-vouched
+    /// credentials; it is cleared once the request completes.
+    pub fn set_pending_caller_process_id(&mut self, process_id: Option<u32>) {
+        self.pending_caller_process_id = process_id;
+    }
+
+    /// Take the pending caller process identifier, clearing it. Called once by
+    /// the registration handler.
+    pub(crate) fn take_pending_caller_process_id(&mut self) -> Option<u32> {
+        self.pending_caller_process_id.take()
     }
 
     /// Register the ordinary and meta socket paths the engine retires once a
