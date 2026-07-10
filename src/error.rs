@@ -162,3 +162,22 @@ pub enum Error {
     #[error("orchestrator agent identifier randomness failed: {message}")]
     OrchestratorAgentIdentifierRandomness { message: String },
 }
+
+impl Error {
+    /// Whether this error is the engine's rejection of a well-formed request the
+    /// caller can act on — an invalid domain value (e.g. a session identifier
+    /// that is not CamelCase alphanumeric) or a claim against an unregistered
+    /// lane — as opposed to an infrastructure failure or malformed-frame garbage
+    /// that decoded leniently into a request shape.
+    ///
+    /// The signal wire boundary routes caller rejections through the typed reply
+    /// channel so the reason is diagnosable at the call site, while
+    /// infrastructure and malformed-frame failures fail closed by dropping the
+    /// connection — misrouted or corrupt protocol traffic earns no reply.
+    pub fn is_caller_rejection(&self) -> bool {
+        matches!(
+            self,
+            Error::SignalOrchestrate(_) | Error::LaneNotRegistered { .. }
+        )
+    }
+}

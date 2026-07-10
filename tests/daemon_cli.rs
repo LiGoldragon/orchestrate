@@ -517,6 +517,57 @@ fn cli_unregistered_lane_claim_returns_structured_error_output() {
 }
 
 #[test]
+fn cli_invalid_session_name_registration_returns_structured_error_output() {
+    let fixture = DaemonFixture::start("orchestrate-cli-invalid-session-name");
+
+    // A hyphenated session identifier is not CamelCase alphanumeric, so the
+    // engine rejects it. The rejection must ride the meta reply channel as a
+    // typed `PartialApplied` rather than drop the frame with an opaque
+    // client-side transport error (bead primary-jf0n).
+    let output = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
+        "os-deployment-doctrine",
+        "OrchestrateTypedRejection",
+        schema_role_vector(&["RustAuditor"]),
+    )));
+    assert!(
+        output.status.success(),
+        "invalid session name must not fail at transport layer: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("transport error"),
+        "invalid session name must not drop the frame: {stderr}"
+    );
+
+    let reply: MetaSchemaOutput = decode_nota(&output.stdout);
+    let MetaSchemaOutput::PartialApplied(partial) = reply else {
+        panic!("expected structured partial failure, got {reply:?}");
+    };
+    let failure = partial
+        .application_failures
+        .payload()
+        .first()
+        .expect("partial failure detail");
+    assert!(
+        failure
+            .scope_reason
+            .payload()
+            .contains("session identifier must be CamelCase alphanumeric"),
+        "rejection must name the CamelCase rule at the call site, got: {}",
+        failure.scope_reason.payload()
+    );
+    assert!(
+        failure
+            .scope_reason
+            .payload()
+            .contains("os-deployment-doctrine"),
+        "rejection must name the offending identifier, got: {}",
+        failure.scope_reason.payload()
+    );
+}
+
+#[test]
 fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
     let fixture = DaemonFixture::start("orchestrate-cli-observe-lanes");
 

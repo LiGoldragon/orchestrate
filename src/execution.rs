@@ -45,17 +45,27 @@ impl OrchestrateService {
         input: ordinary_schema::Input,
     ) -> Result<ordinary_schema::Output> {
         let signal_input = nexus_schema::SignalInput::ordinary_input(input);
-        match OrchestrateRequestExecution::drive_nexus(self, signal_input).await {
+        let output = match OrchestrateRequestExecution::drive_nexus(self, signal_input).await {
             Ok(nexus_schema::SignalOutput::OrdinaryOutput(output)) => Ok(output),
             Ok(nexus_schema::SignalOutput::MetaOutput(_)) => Err(Error::NexusReplyTierMismatch {
                 expected: "ordinary",
                 actual: "meta",
             }),
-            Err(error @ Error::LaneNotRegistered { .. }) => {
-                Ok(ordinary_schema::Output::partial_applied(
+            Err(error) => Err(error),
+        };
+        // A caller rejection (an invalid domain value in a well-formed request)
+        // rides the typed reply channel carrying its reason: the daemon spine
+        // turns an `Err` return into a silent connection drop, so a rejection
+        // such as a non-CamelCase session name or an unregistered-lane claim
+        // must reply to stay diagnosable at the call site. Infrastructure and
+        // malformed-frame failures still propagate and fail closed.
+        match output {
+            Ok(output) => Ok(output),
+            Err(error) if error.is_caller_rejection() => Ok(
+                ordinary_schema::Output::partial_applied(
                     SchemaFailure::from_error(&error).partial_applied(),
-                ))
-            }
+                ),
+            ),
             Err(error) => Err(error),
         }
     }
@@ -67,12 +77,28 @@ impl OrchestrateService {
         input: meta_schema::Input,
     ) -> Result<meta_schema::Output> {
         let signal_input = nexus_schema::SignalInput::meta_input(input);
-        match MetaRequestExecution::drive_nexus(self, signal_input).await? {
-            nexus_schema::SignalOutput::MetaOutput(output) => Ok(output),
-            nexus_schema::SignalOutput::OrdinaryOutput(_) => Err(Error::NexusReplyTierMismatch {
-                expected: "meta",
-                actual: "ordinary",
-            }),
+        let output = match MetaRequestExecution::drive_nexus(self, signal_input).await {
+            Ok(nexus_schema::SignalOutput::MetaOutput(output)) => Ok(output),
+            Ok(nexus_schema::SignalOutput::OrdinaryOutput(_)) => {
+                Err(Error::NexusReplyTierMismatch {
+                    expected: "meta",
+                    actual: "ordinary",
+                })
+            }
+            Err(error) => Err(error),
+        };
+        // Same wire-boundary rule as the ordinary tier: a caller rejection (e.g.
+        // an invalid session/lane identifier) returns a typed `PartialApplied`
+        // reply carrying its reason rather than propagating an `Err` the daemon
+        // would drop as an opaque transport failure. Malformed frames that
+        // decode leniently into a garbage request surface as infrastructure
+        // failures and still fail closed.
+        match output {
+            Ok(output) => Ok(output),
+            Err(error) if error.is_caller_rejection() => Ok(meta_schema::Output::partial_applied(
+                SchemaFailure::from_error(&error).partial_applied(),
+            )),
+            Err(error) => Err(error),
         }
     }
 }
