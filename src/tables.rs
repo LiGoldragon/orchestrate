@@ -1468,10 +1468,8 @@ impl<'store> OrchestrateStoreMigration<'store> {
     }
 
     fn stamp_current_schema_version(&self, found: SchemaVersion) -> Result<()> {
-        let storage = sema::Sema::open_with_schema(
-            self.store.as_path(),
-            &sema::Schema { version: found },
-        )?;
+        let storage =
+            sema::Sema::open_with_schema(self.store.as_path(), &sema::Schema { version: found })?;
         drop(storage);
         let database = redb::Database::create(self.store.as_path()).map_err(|source| {
             crate::Error::StoreMigration {
@@ -1739,7 +1737,10 @@ mod tests {
             .expect("agent present");
         assert_eq!(stored, discovered);
         let reachability = stored.reachability.expect("reachability present");
-        assert_eq!(reachability.endpoint_kind, StoredAgentEndpointKind::TerminalCell);
+        assert_eq!(
+            reachability.endpoint_kind,
+            StoredAgentEndpointKind::TerminalCell
+        );
         assert_eq!(reachability.harness_pid, 4242);
         assert_eq!(reachability.harness_start_time, 99_887_766);
     }
@@ -1845,10 +1846,12 @@ mod tests {
 
         assert_eq!(routed.slot, 0);
         assert_eq!(rejected.slot, 1);
-        let records = tables.orchestrator_triage_records().expect("triage records");
+        let records = tables
+            .orchestrator_triage_records()
+            .expect("triage records");
         assert_eq!(records.len(), 2);
-        assert!(records.iter().any(|record| *record == routed));
-        assert!(records.iter().any(|record| *record == rejected));
+        assert!(records.contains(&routed));
+        assert!(records.contains(&rejected));
     }
 
     #[test]
@@ -1864,7 +1867,12 @@ mod tests {
 
         let tables = OrchestrateTables::open(&temporary.location()).expect("migrated tables open");
 
-        assert!(tables.orchestrator_agent_records().expect("agents").is_empty());
+        assert!(
+            tables
+                .orchestrator_agent_records()
+                .expect("agents")
+                .is_empty()
+        );
         assert!(
             tables
                 .orchestrator_topic_membership_records()

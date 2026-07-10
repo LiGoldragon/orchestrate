@@ -16,7 +16,7 @@
   ReadActivity {}
 
   SemaReadOutput [(RolesRead RoleSnapshot) (LanesRead LanesObserved) (ActivityRead ActivityList) (ReadMiss ReadMiss)]
-  ReadMiss { reason.ReadMissReason }
+  ReadMiss { ReadMissReason }
   ReadMissReason [NotFound NotBuiltYet]
 
   SemaWriteInput [(ApplyOrdinary ApplyOrdinary) (ApplyMeta ApplyMeta)]
@@ -24,6 +24,6 @@
   ApplyMeta MetaInput
 
   SemaWriteOutput [(OrdinaryApplied OrdinaryOutput) (MetaApplied MetaOutput) (WriteRejected WriteRejected)]
-  WriteRejected { reason.WriteRejectionReason }
+  WriteRejected { WriteRejectionReason }
   WriteRejectionReason [Conflict InvalidOperation DependencyUnavailable NotBuiltYet]
 }

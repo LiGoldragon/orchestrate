@@ -4,14 +4,14 @@ use orchestrate::{
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
     HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails,
     LaneIdentifier, LaneOwner, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
-    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
-    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
-    OrchestrateService, OrchestrateTables, PartialApplied, RefreshRepositoryIndexOrder,
-    ResolvedWorkflowRunRequest, RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff,
-    RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionClearRequest,
-    SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
-    StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos, WirePath,
-    WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
+    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
+    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
+    PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
+    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
+    ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
+    StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
+    TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -280,9 +280,9 @@ fn workflow_resolution_run_request() -> WorkflowRunRequest {
     WorkflowRunRequest {
         workflow: WorkflowDigest::from_bytes(b"resolved workflow"),
         operation: AuthorizedObjectReference {
-            component: ComponentKind::Spirit,
-            digest: operation.object_digest().clone(),
-            kind: AuthorizedObjectKind::Head,
+            component_kind: ComponentKind::Spirit,
+            object_digest: operation.object_digest().clone(),
+            authorized_object_kind: AuthorizedObjectKind::Head,
         },
         contract: ContractDigest::from_bytes(b"resolved workflow contract"),
     }
@@ -305,11 +305,11 @@ fn signed_time_evidence(operation: OperationDigest) -> (Evidence, criome::langua
     let stamp = AttestedMoment::new(
         proposition,
         vec![TimeSignature {
-            signer: timekeeper_identity.clone(),
-            envelope: SignatureEnvelope {
-                scheme: SignatureScheme::Bls12_381MinPk,
-                public_key: timekeeper.public_key(),
-                signature: timekeeper.sign(&statement),
+            identity: timekeeper_identity.clone(),
+            signature_envelope: SignatureEnvelope {
+                signature_scheme: SignatureScheme::Bls12_381MinPk,
+                bls_public_key: timekeeper.public_key(),
+                bls_signature: timekeeper.sign(&statement),
             },
         }],
     );
@@ -368,15 +368,15 @@ fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
     let workflow = WorkflowDigest::from_bytes(b"fixture workflow");
     let operation = OperationDigest::from_bytes(b"spirit guarded head");
     let contract = Contract::root(Rule::workflow(WorkflowGuard {
-        workflow: workflow.clone(),
-        executor: Identity::host("orchestrate".to_string()),
+        workflow_digest: workflow.clone(),
+        identity: Identity::host("orchestrate".to_string()),
     }));
     let mut contracts = criome::language::ContractStore::new();
     let contract_digest = contracts.admit(contract).expect("admit workflow contract");
     let object = AuthorizedObjectReference {
-        component: ComponentKind::Spirit,
-        digest: operation.object_digest().clone(),
-        kind: AuthorizedObjectKind::Head,
+        component_kind: ComponentKind::Spirit,
+        object_digest: operation.object_digest().clone(),
+        authorized_object_kind: AuthorizedObjectKind::Head,
     };
     let (evidence, registry) = signed_time_evidence(operation.clone());
 
@@ -398,9 +398,12 @@ fn workflow_fixture_receipt_authorizes_criome_workflow_guard() {
     let OrchestrateReply::WorkflowReceiptProduced(produced) = reply else {
         panic!("expected workflow receipt, got {reply:?}");
     };
-    assert_eq!(produced.receipt.workflow, workflow);
-    assert_eq!(produced.receipt.operation, operation);
-    assert_eq!(produced.receipt.outcome, EvaluationDecision::Authorized);
+    assert_eq!(produced.receipt.workflow_digest, workflow);
+    assert_eq!(produced.receipt.operation_digest, operation);
+    assert_eq!(
+        produced.receipt.evaluation_decision,
+        EvaluationDecision::Authorized
+    );
 
     let authorized_evidence = evidence.with_workflow_receipts(vec![produced.receipt]);
     assert_eq!(
@@ -1522,4 +1525,74 @@ fn activity_path_prefix_matches_path_boundaries() {
 
     assert_eq!(list.records.len(), 1);
     assert_eq!(list.records[0].scope, persona_scope);
+}
+
+#[test]
+fn register_agent_and_topic_observations_round_trip_through_orchestrator_storage() {
+    let mut fixture = Fixture::new("orchestrator-agent-registration");
+    let topic_path = OrchestratorTopicPath::from_wire_token("catch-all").expect("topic path");
+
+    let reply = fixture
+        .handle(OrchestrateRequest::RegisterAgent(
+            OrchestratorAgentRegistration {
+                session: session("OrchestratorAgentRegistration"),
+                mission: MissionDescription::from_text("maintain the explicit engineering topic")
+                    .expect("mission"),
+                harness: HarnessKind::Codex,
+                topic_selection: TopicSelection::Explicit(vec![topic_path.clone()]),
+            },
+        ))
+        .expect("register agent");
+    let OrchestrateReply::AgentRegistered(registered) = reply else {
+        panic!("expected agent registration reply");
+    };
+    assert_eq!(registered.assigned_topics.len(), 1);
+
+    let topics = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Topics))
+        .expect("observe topics");
+    let OrchestrateReply::TopicTree(topics) = topics else {
+        panic!("expected topic tree");
+    };
+    assert!(topics.topics.iter().any(|topic| topic.path == topic_path));
+
+    let detail = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Topic(
+            topic_path.clone(),
+        )))
+        .expect("observe topic");
+    let OrchestrateReply::TopicDetail(detail) = detail else {
+        panic!("expected topic detail");
+    };
+    assert_eq!(
+        detail.member_agent_identifiers,
+        vec![registered.agent_identifier]
+    );
+
+    let directory = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Agents))
+        .expect("observe agents");
+    let OrchestrateReply::AgentDirectory(directory) = directory else {
+        panic!("expected agent directory");
+    };
+    assert_eq!(directory.agents.len(), 1);
+
+    let automatic = fixture
+        .handle(OrchestrateRequest::RegisterAgent(
+            OrchestratorAgentRegistration {
+                session: session("OrchestratorAutomaticRegistration"),
+                mission: MissionDescription::from_text("requires the topic judge")
+                    .expect("mission"),
+                harness: HarnessKind::Codex,
+                topic_selection: TopicSelection::Automatic,
+            },
+        ))
+        .expect("automatic registration reply");
+    let OrchestrateReply::AgentRegistrationRejected(rejected) = automatic else {
+        panic!("automatic registration must fail closed without the topic judge");
+    };
+    assert_eq!(
+        rejected.reason,
+        orchestrate::AgentRegistrationRejectionReason::JudgeUnavailable
+    );
 }

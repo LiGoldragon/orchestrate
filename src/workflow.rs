@@ -61,7 +61,7 @@ impl WorkflowRunIdentity {
     fn workflow(request: &WorkflowRunRequest) -> Self {
         Self {
             workflow_digest: request.workflow.object_digest().as_str().to_string(),
-            operation_digest: request.operation.digest.as_str().to_string(),
+            operation_digest: request.operation.object_digest.as_str().to_string(),
             contract_digest: request.contract.object_digest().as_str().to_string(),
             model_resolution_digest: None,
         }
@@ -238,10 +238,12 @@ where
         handle: &WorkflowRunHandle,
     ) -> WorkflowReceipt {
         WorkflowReceipt {
-            workflow: request.workflow.clone(),
-            operation: OperationDigest::new(request.operation.digest.clone()),
-            outcome: EvaluationDecision::Authorized,
-            provenance: WorkflowProvenanceDigest::from_bytes(handle.run.as_str().as_bytes()),
+            workflow_digest: request.workflow.clone(),
+            operation_digest: OperationDigest::new(request.operation.object_digest.clone()),
+            evaluation_decision: EvaluationDecision::Authorized,
+            workflow_provenance_digest: WorkflowProvenanceDigest::from_bytes(
+                handle.run.as_str().as_bytes(),
+            ),
         }
     }
 
@@ -254,7 +256,7 @@ where
                     provider: self.provider.clone(),
                     model: self.model.clone(),
                     host: self.host.clone(),
-                    call: OperationDigest::new(request.operation.digest.clone()),
+                    call: OperationDigest::new(request.operation.object_digest.clone()),
                 },
                 outcome: StepOutcome::Produced(EvaluationDecision::Authorized),
             }],

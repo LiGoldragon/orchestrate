@@ -162,9 +162,7 @@ mod tests {
 
     fn single_character_codes() -> Vec<String> {
         (0..CODE_RADIX)
-            .map(|value| {
-                OrchestratorAgentIdentifierCodeRange::new(1, 1).code_from_value(value)
-            })
+            .map(|value| OrchestratorAgentIdentifierCodeRange::new(1, 1).code_from_value(value))
             .collect()
     }
 

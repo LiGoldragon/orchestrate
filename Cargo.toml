@@ -67,7 +67,7 @@ thiserror                   = "2"
 tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }
 
 [build-dependencies]
-schema-rust = { git = "https://github.com/LiGoldragon/schema-rust.git", branch = "main" }
+schema-rust = { git = "https://github.com/LiGoldragon/schema-rust.git", rev = "255823ab3d0d6c5cab26e26a8b1d60c63c52c7b4" }
 
 [dev-dependencies]
 criome = { git = "https://github.com/LiGoldragon/criome.git", branch = "main" }

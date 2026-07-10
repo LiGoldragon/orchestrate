@@ -42,7 +42,6 @@ pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
-pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange,
     LaneAuthoritySet, LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired,
@@ -50,24 +49,26 @@ pub use meta_signal_orchestrate::{
     RefreshRepositoryIndexOrder, RefreshWorktreeIndexOrder, RegisterWorktree, RetireRoleOrder,
     Retirement, SessionClearRequest, SessionCleared, WorktreeIndexRefreshed, WorktreeRegistered,
 };
+pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
-    ApplicationFailureReason, ApplicationSuccess, BranchName, DownstreamComponent, DurationNanos,
-    HarnessKind, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneName, LaneOwner,
-    LaneRegistration, LaneResourceClaim, LaneStatus, LanesObserved, Observation, ObservationClosed,
-    ObservationEvent, ObservationOpened, ObservationSubscription, ObservationToken, OperationKind,
-    OrchestrateReply, OrchestrateRequest, PartialApplied, PurposeText, PushedState, RepositoryName,
-    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName,
-    RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
-    SessionName, SessionsObserved, TaskToken, TimestampNanos, WirePath, WorkflowReceiptProduced,
-    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
-    WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
-    WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus,
-    WorktreesObserved,
+    ActivityFilter, ActivityQuery, ActivitySubmission, AgentRegistrationRejectionReason,
+    ApplicationFailure, ApplicationFailureReason, ApplicationSuccess, BranchName,
+    DownstreamComponent, DurationNanos, HarnessKind, LaneAssignment, LaneAuthority, LaneDetails,
+    LaneIdentifier, LaneName, LaneOwner, LaneRegistration, LaneResourceClaim, LaneStatus,
+    LanesObserved, MissionDescription, Observation, ObservationClosed, ObservationEvent,
+    ObservationOpened, ObservationSubscription, ObservationToken, OperationKind, OrchestrateReply,
+    OrchestrateRequest, OrchestratorAgentRegistration, OrchestratorTopicPath, PartialApplied,
+    PurposeText, PushedState, RepositoryName, ResolvedWorkflowRunRequest, Role, RoleClaim,
+    RoleHandoff, RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason,
+    ScopeReference, SessionIdentifier, SessionName, SessionsObserved, TaskToken, TimestampNanos,
+    TopicName, TopicSelection, WirePath, WorkflowReceiptProduced, WorkflowResolutionUnavailable,
+    WorkflowResolvedReceiptProduced, WorkflowRunDigest, WorkflowRunHandle, WorkflowRunLog,
+    WorkflowRunLogReported, WorkflowRunObservation, WorkflowRunObservationClosed,
+    WorkflowRunObservationOpened, WorkflowRunObservationToken, WorkflowRunRequest,
+    WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus, WorktreesObserved,
 };
 #[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
@@ -77,9 +78,9 @@ pub use tables::{
     OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,
     StoredClaim, StoredDivergence, StoredGuidanceMagnitude, StoredLaneRegistration,
     StoredOrchestratorAgent, StoredOrchestratorMessageKind, StoredOrchestratorTopic,
-    StoredOrchestratorTopicMembership, StoredOrchestratorTriageRecord, StoredRepository, StoredRole,
-    StoredTriageRejectionReason, StoredTriageVerdict, StoredWorkflowModelResolutionOutcome,
-    StoredWorkflowRunResolution, StoredWorktree,
+    StoredOrchestratorTopicMembership, StoredOrchestratorTriageRecord, StoredRepository,
+    StoredRole, StoredTriageRejectionReason, StoredTriageVerdict,
+    StoredWorkflowModelResolutionOutcome, StoredWorkflowRunResolution, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
 pub use workflow::{HarnessModelResolver, WorkflowRunner};

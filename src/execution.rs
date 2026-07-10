@@ -396,6 +396,17 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Worktrees,
             ) => WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?,
+            ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Topics,
+            ) => ordinary_contract::OrchestrateReply::TopicTree(ordinary_contract::TopicTree {
+                topics: self.orchestrator_topics()?,
+            }),
+            ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Topic(path),
+            ) => self.observe_orchestrator_topic(path)?,
+            ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Agents,
+            ) => self.observe_orchestrator_agents()?,
             ordinary_contract::OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(self.service.tables()).submit(submission)?
             }
@@ -426,6 +437,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 ordinary_contract::OrchestrateReply::ObservationClosed(
                     ordinary_contract::ObservationClosed { token },
                 )
+            }
+            ordinary_contract::OrchestrateRequest::RegisterAgent(registration) => {
+                self.register_orchestrator_agent(registration)?
             }
         };
         Ok(reply)
@@ -655,11 +669,11 @@ impl SchemaFailure {
 
     fn partial_applied(self) -> ordinary_schema::PartialApplied {
         ordinary_schema::PartialApplied {
-            succeeded: Vec::new().into(),
-            failed: vec![ordinary_schema::ApplicationFailure {
-                component: ordinary_schema::DownstreamComponent::System,
-                reason: ordinary_schema::ApplicationFailureReason::Unknown,
-                detail: self.detail,
+            application_successes: Vec::new().into(),
+            application_failures: vec![ordinary_schema::ApplicationFailure {
+                downstream_component: ordinary_schema::DownstreamComponent::System,
+                application_failure_reason: ordinary_schema::ApplicationFailureReason::Unknown,
+                scope_reason: self.detail,
             }]
             .into(),
         }
@@ -1012,9 +1026,9 @@ impl ProjectInto<ordinary_schema::AuthorizedObjectReference>
 {
     fn project_into(self) -> Result<ordinary_schema::AuthorizedObjectReference> {
         Ok(ordinary_schema::AuthorizedObjectReference {
-            component: self.component.project_into()?,
-            digest: self.digest.project_into()?,
-            kind: self.kind.project_into()?,
+            component_kind: self.component_kind.project_into()?,
+            object_digest: self.object_digest.project_into()?,
+            authorized_object_kind: self.authorized_object_kind.project_into()?,
         })
     }
 }
@@ -1024,9 +1038,9 @@ impl ProjectInto<signal_criome::AuthorizedObjectReference>
 {
     fn project_into(self) -> Result<signal_criome::AuthorizedObjectReference> {
         Ok(signal_criome::AuthorizedObjectReference {
-            component: self.component.project_into()?,
-            digest: self.digest.project_into()?,
-            kind: self.kind.project_into()?,
+            component_kind: self.component_kind.project_into()?,
+            object_digest: self.object_digest.project_into()?,
+            authorized_object_kind: self.authorized_object_kind.project_into()?,
         })
     }
 }
@@ -1151,10 +1165,10 @@ impl ProjectInto<signal_criome::EvaluationDecision> for ordinary_schema::Evaluat
 impl ProjectInto<ordinary_schema::WorkflowReceipt> for signal_criome::WorkflowReceipt {
     fn project_into(self) -> Result<ordinary_schema::WorkflowReceipt> {
         Ok(ordinary_schema::WorkflowReceipt {
-            workflow: self.workflow.project_into()?,
-            operation: self.operation.project_into()?,
-            outcome: self.outcome.project_into()?,
-            provenance: self.provenance.project_into()?,
+            workflow_digest: self.workflow_digest.project_into()?,
+            operation_digest: self.operation_digest.project_into()?,
+            evaluation_decision: self.evaluation_decision.project_into()?,
+            workflow_provenance_digest: self.workflow_provenance_digest.project_into()?,
         })
     }
 }
@@ -1162,10 +1176,10 @@ impl ProjectInto<ordinary_schema::WorkflowReceipt> for signal_criome::WorkflowRe
 impl ProjectInto<signal_criome::WorkflowReceipt> for ordinary_schema::WorkflowReceipt {
     fn project_into(self) -> Result<signal_criome::WorkflowReceipt> {
         Ok(signal_criome::WorkflowReceipt {
-            workflow: self.workflow.project_into()?,
-            operation: self.operation.project_into()?,
-            outcome: self.outcome.project_into()?,
-            provenance: self.provenance.project_into()?,
+            workflow_digest: self.workflow_digest.project_into()?,
+            operation_digest: self.operation_digest.project_into()?,
+            evaluation_decision: self.evaluation_decision.project_into()?,
+            workflow_provenance_digest: self.workflow_provenance_digest.project_into()?,
         })
     }
 }
@@ -1173,9 +1187,9 @@ impl ProjectInto<signal_criome::WorkflowReceipt> for ordinary_schema::WorkflowRe
 impl ProjectInto<ordinary_schema::WorkflowRunRequest> for ordinary_contract::WorkflowRunRequest {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunRequest> {
         Ok(ordinary_schema::WorkflowRunRequest {
-            workflow: self.workflow.project_into()?,
-            operation: self.operation.project_into()?,
-            contract: self.contract.project_into()?,
+            workflow_digest: self.workflow.project_into()?,
+            authorized_object_reference: self.operation.project_into()?,
+            contract_digest: self.contract.project_into()?,
         })
     }
 }
@@ -1183,9 +1197,9 @@ impl ProjectInto<ordinary_schema::WorkflowRunRequest> for ordinary_contract::Wor
 impl ProjectInto<ordinary_contract::WorkflowRunRequest> for ordinary_schema::WorkflowRunRequest {
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunRequest> {
         Ok(ordinary_contract::WorkflowRunRequest {
-            workflow: self.workflow.project_into()?,
-            operation: self.operation.project_into()?,
-            contract: self.contract.project_into()?,
+            workflow: self.workflow_digest.project_into()?,
+            operation: self.authorized_object_reference.project_into()?,
+            contract: self.contract_digest.project_into()?,
         })
     }
 }
@@ -1273,8 +1287,8 @@ impl ProjectInto<harness_contract::EffortRequest> for ordinary_schema::EffortReq
 impl ProjectInto<ordinary_schema::ModelRequest> for harness_contract::ModelRequest {
     fn project_into(self) -> Result<ordinary_schema::ModelRequest> {
         Ok(ordinary_schema::ModelRequest {
-            selector: self.selector.project_into()?,
-            effort: self.effort.project_into()?,
+            model_selector: self.selector.project_into()?,
+            effort_request: self.effort.project_into()?,
         })
     }
 }
@@ -1282,8 +1296,8 @@ impl ProjectInto<ordinary_schema::ModelRequest> for harness_contract::ModelReque
 impl ProjectInto<harness_contract::ModelRequest> for ordinary_schema::ModelRequest {
     fn project_into(self) -> Result<harness_contract::ModelRequest> {
         Ok(harness_contract::ModelRequest {
-            selector: self.selector.project_into()?,
-            effort: self.effort.project_into()?,
+            selector: self.model_selector.project_into()?,
+            effort: self.effort_request.project_into()?,
         })
     }
 }
@@ -1417,8 +1431,8 @@ impl ProjectInto<ordinary_schema::ModelResolutionRequest>
 {
     fn project_into(self) -> Result<ordinary_schema::ModelResolutionRequest> {
         Ok(ordinary_schema::ModelResolutionRequest {
-            model: self.model.project_into()?,
-            continuation: self.continuation.project_into()?,
+            model_request: self.model.project_into()?,
+            continuation_request: self.continuation.project_into()?,
         })
     }
 }
@@ -1428,8 +1442,8 @@ impl ProjectInto<harness_contract::ModelResolutionRequest>
 {
     fn project_into(self) -> Result<harness_contract::ModelResolutionRequest> {
         Ok(harness_contract::ModelResolutionRequest {
-            model: self.model.project_into()?,
-            continuation: self.continuation.project_into()?,
+            model: self.model_request.project_into()?,
+            continuation: self.continuation_request.project_into()?,
         })
     }
 }
@@ -1471,11 +1485,11 @@ impl ProjectInto<harness_contract::HarnessKind> for ordinary_schema::ResolvedHar
 impl ProjectInto<ordinary_schema::ModelResolved> for harness_contract::ModelResolved {
     fn project_into(self) -> Result<ordinary_schema::ModelResolved> {
         Ok(ordinary_schema::ModelResolved {
-            harness: self.harness.project_into()?,
-            harness_kind: self.harness_kind.project_into()?,
-            model: self.model.project_into()?,
-            effort: self.effort.project_into()?,
-            continuation: self.continuation.project_into()?,
+            harness_name: self.harness.project_into()?,
+            resolved_harness_kind: self.harness_kind.project_into()?,
+            named_model: self.model.project_into()?,
+            effort_request: self.effort.project_into()?,
+            continuation_handle: self.continuation.project_into()?,
         })
     }
 }
@@ -1483,11 +1497,11 @@ impl ProjectInto<ordinary_schema::ModelResolved> for harness_contract::ModelReso
 impl ProjectInto<harness_contract::ModelResolved> for ordinary_schema::ModelResolved {
     fn project_into(self) -> Result<harness_contract::ModelResolved> {
         Ok(harness_contract::ModelResolved {
-            harness: self.harness.project_into()?,
-            harness_kind: self.harness_kind.project_into()?,
-            model: self.model.project_into()?,
-            effort: self.effort.project_into()?,
-            continuation: self.continuation.project_into()?,
+            harness: self.harness_name.project_into()?,
+            harness_kind: self.resolved_harness_kind.project_into()?,
+            model: self.named_model.project_into()?,
+            effort: self.effort_request.project_into()?,
+            continuation: self.continuation_handle.project_into()?,
         })
     }
 }
@@ -1555,8 +1569,8 @@ impl ProjectInto<harness_contract::ModelUnavailableReason>
 impl ProjectInto<ordinary_schema::ModelUnavailable> for harness_contract::ModelUnavailable {
     fn project_into(self) -> Result<ordinary_schema::ModelUnavailable> {
         Ok(ordinary_schema::ModelUnavailable {
-            request: self.request.project_into()?,
-            reason: self.reason.project_into()?,
+            model_resolution_request: self.request.project_into()?,
+            model_unavailable_reason: self.reason.project_into()?,
         })
     }
 }
@@ -1564,8 +1578,8 @@ impl ProjectInto<ordinary_schema::ModelUnavailable> for harness_contract::ModelU
 impl ProjectInto<harness_contract::ModelUnavailable> for ordinary_schema::ModelUnavailable {
     fn project_into(self) -> Result<harness_contract::ModelUnavailable> {
         Ok(harness_contract::ModelUnavailable {
-            request: self.request.project_into()?,
-            reason: self.reason.project_into()?,
+            request: self.model_resolution_request.project_into()?,
+            reason: self.model_unavailable_reason.project_into()?,
         })
     }
 }
@@ -1575,8 +1589,8 @@ impl ProjectInto<ordinary_schema::ResolvedWorkflowRunRequest>
 {
     fn project_into(self) -> Result<ordinary_schema::ResolvedWorkflowRunRequest> {
         Ok(ordinary_schema::ResolvedWorkflowRunRequest {
-            workflow_run: self.workflow_run.project_into()?,
-            model_resolution: self.model_resolution.project_into()?,
+            workflow_run_request: self.workflow_run.project_into()?,
+            model_resolution_request: self.model_resolution.project_into()?,
         })
     }
 }
@@ -1586,8 +1600,8 @@ impl ProjectInto<ordinary_contract::ResolvedWorkflowRunRequest>
 {
     fn project_into(self) -> Result<ordinary_contract::ResolvedWorkflowRunRequest> {
         Ok(ordinary_contract::ResolvedWorkflowRunRequest {
-            workflow_run: self.workflow_run.project_into()?,
-            model_resolution: self.model_resolution.project_into()?,
+            workflow_run: self.workflow_run_request.project_into()?,
+            model_resolution: self.model_resolution_request.project_into()?,
         })
     }
 }
@@ -1669,8 +1683,8 @@ impl ProjectInto<ordinary_schema::WorkflowRunResolution>
 {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunResolution> {
         Ok(ordinary_schema::WorkflowRunResolution {
-            handle: self.handle.project_into()?,
-            resolution: self.resolution.project_into()?,
+            workflow_run_handle: self.handle.project_into()?,
+            model_resolved: self.resolution.project_into()?,
         })
     }
 }
@@ -1680,8 +1694,8 @@ impl ProjectInto<ordinary_contract::WorkflowRunResolution>
 {
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunResolution> {
         Ok(ordinary_contract::WorkflowRunResolution {
-            handle: self.handle.project_into()?,
-            resolution: self.resolution.project_into()?,
+            handle: self.workflow_run_handle.project_into()?,
+            resolution: self.model_resolved.project_into()?,
         })
     }
 }
@@ -1691,9 +1705,9 @@ impl ProjectInto<ordinary_schema::WorkflowResolutionUnavailable>
 {
     fn project_into(self) -> Result<ordinary_schema::WorkflowResolutionUnavailable> {
         Ok(ordinary_schema::WorkflowResolutionUnavailable {
-            handle: self.handle.project_into()?,
-            request: self.request.project_into()?,
-            unavailable: self.unavailable.project_into()?,
+            workflow_run_handle: self.handle.project_into()?,
+            resolved_workflow_run_request: self.request.project_into()?,
+            model_unavailable: self.unavailable.project_into()?,
         })
     }
 }
@@ -1703,9 +1717,9 @@ impl ProjectInto<ordinary_contract::WorkflowResolutionUnavailable>
 {
     fn project_into(self) -> Result<ordinary_contract::WorkflowResolutionUnavailable> {
         Ok(ordinary_contract::WorkflowResolutionUnavailable {
-            handle: self.handle.project_into()?,
-            request: self.request.project_into()?,
-            unavailable: self.unavailable.project_into()?,
+            handle: self.workflow_run_handle.project_into()?,
+            request: self.resolved_workflow_run_request.project_into()?,
+            unavailable: self.model_unavailable.project_into()?,
         })
     }
 }
@@ -1715,8 +1729,8 @@ impl ProjectInto<ordinary_schema::WorkflowResolvedReceiptProduced>
 {
     fn project_into(self) -> Result<ordinary_schema::WorkflowResolvedReceiptProduced> {
         Ok(ordinary_schema::WorkflowResolvedReceiptProduced {
-            run: self.run.project_into()?,
-            receipt: self.receipt.project_into()?,
+            workflow_run_resolution: self.run.project_into()?,
+            workflow_receipt: self.receipt.project_into()?,
         })
     }
 }
@@ -1726,8 +1740,8 @@ impl ProjectInto<ordinary_contract::WorkflowResolvedReceiptProduced>
 {
     fn project_into(self) -> Result<ordinary_contract::WorkflowResolvedReceiptProduced> {
         Ok(ordinary_contract::WorkflowResolvedReceiptProduced {
-            run: self.run.project_into()?,
-            receipt: self.receipt.project_into()?,
+            run: self.workflow_run_resolution.project_into()?,
+            receipt: self.workflow_receipt.project_into()?,
         })
     }
 }
@@ -1737,8 +1751,8 @@ impl ProjectInto<ordinary_schema::WorkflowReceiptProduced>
 {
     fn project_into(self) -> Result<ordinary_schema::WorkflowReceiptProduced> {
         Ok(ordinary_schema::WorkflowReceiptProduced {
-            handle: self.handle.project_into()?,
-            receipt: self.receipt.project_into()?,
+            workflow_run_handle: self.handle.project_into()?,
+            workflow_receipt: self.receipt.project_into()?,
         })
     }
 }
@@ -1748,8 +1762,8 @@ impl ProjectInto<ordinary_contract::WorkflowReceiptProduced>
 {
     fn project_into(self) -> Result<ordinary_contract::WorkflowReceiptProduced> {
         Ok(ordinary_contract::WorkflowReceiptProduced {
-            handle: self.handle.project_into()?,
-            receipt: self.receipt.project_into()?,
+            handle: self.workflow_run_handle.project_into()?,
+            receipt: self.workflow_receipt.project_into()?,
         })
     }
 }
@@ -1777,8 +1791,8 @@ impl ProjectInto<ordinary_contract::WorkflowRunLogReported>
 impl ProjectInto<ordinary_schema::WorkflowRunLog> for ordinary_contract::WorkflowRunLog {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunLog> {
         Ok(ordinary_schema::WorkflowRunLog {
-            run: self.run.project_into()?,
-            step_logs: self.step_logs.project_into()?,
+            workflow_run_digest: self.run.project_into()?,
+            step_log_vector: self.step_logs.project_into()?,
         })
     }
 }
@@ -1786,8 +1800,8 @@ impl ProjectInto<ordinary_schema::WorkflowRunLog> for ordinary_contract::Workflo
 impl ProjectInto<ordinary_contract::WorkflowRunLog> for ordinary_schema::WorkflowRunLog {
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunLog> {
         Ok(ordinary_contract::WorkflowRunLog {
-            run: self.run.project_into()?,
-            step_logs: self.step_logs.project_into()?,
+            run: self.workflow_run_digest.project_into()?,
+            step_logs: self.step_log_vector.project_into()?,
         })
     }
 }
@@ -1795,9 +1809,9 @@ impl ProjectInto<ordinary_contract::WorkflowRunLog> for ordinary_schema::Workflo
 impl ProjectInto<ordinary_schema::StepLog> for ordinary_contract::StepLog {
     fn project_into(self) -> Result<ordinary_schema::StepLog> {
         Ok(ordinary_schema::StepLog {
-            step: self.step.project_into()?,
-            attestation: self.attestation.project_into()?,
-            outcome: self.outcome.project_into()?,
+            workflow_step_name: self.step.project_into()?,
+            model_attestation: self.attestation.project_into()?,
+            step_outcome: self.outcome.project_into()?,
         })
     }
 }
@@ -1805,9 +1819,9 @@ impl ProjectInto<ordinary_schema::StepLog> for ordinary_contract::StepLog {
 impl ProjectInto<ordinary_contract::StepLog> for ordinary_schema::StepLog {
     fn project_into(self) -> Result<ordinary_contract::StepLog> {
         Ok(ordinary_contract::StepLog {
-            step: self.step.project_into()?,
-            attestation: self.attestation.project_into()?,
-            outcome: self.outcome.project_into()?,
+            step: self.workflow_step_name.project_into()?,
+            attestation: self.model_attestation.project_into()?,
+            outcome: self.step_outcome.project_into()?,
         })
     }
 }
@@ -1815,10 +1829,10 @@ impl ProjectInto<ordinary_contract::StepLog> for ordinary_schema::StepLog {
 impl ProjectInto<ordinary_schema::ModelAttestation> for ordinary_contract::ModelAttestation {
     fn project_into(self) -> Result<ordinary_schema::ModelAttestation> {
         Ok(ordinary_schema::ModelAttestation {
-            provider: self.provider.project_into()?,
-            model: self.model.project_into()?,
-            host: self.host.project_into()?,
-            call: self.call.project_into()?,
+            provider_name: self.provider.project_into()?,
+            model_name: self.model.project_into()?,
+            host_name: self.host.project_into()?,
+            operation_digest: self.call.project_into()?,
         })
     }
 }
@@ -1826,10 +1840,10 @@ impl ProjectInto<ordinary_schema::ModelAttestation> for ordinary_contract::Model
 impl ProjectInto<ordinary_contract::ModelAttestation> for ordinary_schema::ModelAttestation {
     fn project_into(self) -> Result<ordinary_contract::ModelAttestation> {
         Ok(ordinary_contract::ModelAttestation {
-            provider: self.provider.project_into()?,
-            model: self.model.project_into()?,
-            host: self.host.project_into()?,
-            call: self.call.project_into()?,
+            provider: self.provider_name.project_into()?,
+            model: self.model_name.project_into()?,
+            host: self.host_name.project_into()?,
+            call: self.operation_digest.project_into()?,
         })
     }
 }
@@ -1863,9 +1877,12 @@ impl ProjectInto<ordinary_contract::StepOutcome> for ordinary_schema::StepOutcom
 impl ProjectInto<ordinary_schema::WorkflowRunSnapshot> for ordinary_contract::WorkflowRunSnapshot {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunSnapshot> {
         Ok(ordinary_schema::WorkflowRunSnapshot {
-            handle: self.handle.project_into()?,
-            latest_log: self.latest_log.map(ProjectInto::project_into).transpose()?,
-            receipt: self.receipt.map(ProjectInto::project_into).transpose()?,
+            workflow_run_handle: self.handle.project_into()?,
+            optional_workflow_run_log: self
+                .latest_log
+                .map(ProjectInto::project_into)
+                .transpose()?,
+            optional_workflow_receipt: self.receipt.map(ProjectInto::project_into).transpose()?,
         })
     }
 }
@@ -1873,9 +1890,15 @@ impl ProjectInto<ordinary_schema::WorkflowRunSnapshot> for ordinary_contract::Wo
 impl ProjectInto<ordinary_contract::WorkflowRunSnapshot> for ordinary_schema::WorkflowRunSnapshot {
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunSnapshot> {
         Ok(ordinary_contract::WorkflowRunSnapshot {
-            handle: self.handle.project_into()?,
-            latest_log: self.latest_log.map(ProjectInto::project_into).transpose()?,
-            receipt: self.receipt.map(ProjectInto::project_into).transpose()?,
+            handle: self.workflow_run_handle.project_into()?,
+            latest_log: self
+                .optional_workflow_run_log
+                .map(ProjectInto::project_into)
+                .transpose()?,
+            receipt: self
+                .optional_workflow_receipt
+                .map(ProjectInto::project_into)
+                .transpose()?,
         })
     }
 }
@@ -1885,8 +1908,8 @@ impl ProjectInto<ordinary_schema::WorkflowRunObservationOpened>
 {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunObservationOpened> {
         Ok(ordinary_schema::WorkflowRunObservationOpened {
-            token: self.token.project_into()?,
-            snapshot: self.snapshot.project_into()?,
+            workflow_run_observation_token: self.token.project_into()?,
+            workflow_run_snapshot: self.snapshot.project_into()?,
         })
     }
 }
@@ -1896,8 +1919,8 @@ impl ProjectInto<ordinary_contract::WorkflowRunObservationOpened>
 {
     fn project_into(self) -> Result<ordinary_contract::WorkflowRunObservationOpened> {
         Ok(ordinary_contract::WorkflowRunObservationOpened {
-            token: self.token.project_into()?,
-            snapshot: self.snapshot.project_into()?,
+            token: self.workflow_run_observation_token.project_into()?,
+            snapshot: self.workflow_run_snapshot.project_into()?,
         })
     }
 }
@@ -2112,7 +2135,7 @@ impl ProjectInto<ordinary_schema::LaneOwner> for ordinary_contract::LaneOwner {
     fn project_into(self) -> Result<ordinary_schema::LaneOwner> {
         Ok(ordinary_schema::LaneOwner {
             role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            lane_authority: self.authority.project_into()?,
         })
     }
 }
@@ -2121,7 +2144,7 @@ impl ProjectInto<ordinary_contract::LaneOwner> for ordinary_schema::LaneOwner {
     fn project_into(self) -> Result<ordinary_contract::LaneOwner> {
         Ok(ordinary_contract::LaneOwner {
             role: self.role.project_into()?,
-            authority: self.authority.project_into()?,
+            authority: self.lane_authority.project_into()?,
         })
     }
 }
@@ -2129,10 +2152,10 @@ impl ProjectInto<ordinary_contract::LaneOwner> for ordinary_schema::LaneOwner {
 impl ProjectInto<ordinary_schema::LaneAssignment> for ordinary_contract::LaneAssignment {
     fn project_into(self) -> Result<ordinary_schema::LaneAssignment> {
         Ok(ordinary_schema::LaneAssignment {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            owner: self.owner.project_into()?,
-            details: self.details.project_into()?,
+            session_identifier: self.session.project_into()?,
+            lane_identifier: self.lane.project_into()?,
+            lane_owner: self.owner.project_into()?,
+            lane_details: self.details.project_into()?,
         })
     }
 }
@@ -2140,10 +2163,10 @@ impl ProjectInto<ordinary_schema::LaneAssignment> for ordinary_contract::LaneAss
 impl ProjectInto<ordinary_contract::LaneAssignment> for ordinary_schema::LaneAssignment {
     fn project_into(self) -> Result<ordinary_contract::LaneAssignment> {
         Ok(ordinary_contract::LaneAssignment {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            owner: self.owner.project_into()?,
-            details: self.details.project_into()?,
+            session: self.session_identifier.project_into()?,
+            lane: self.lane_identifier.project_into()?,
+            owner: self.lane_owner.project_into()?,
+            details: self.lane_details.project_into()?,
         })
     }
 }
@@ -2151,9 +2174,9 @@ impl ProjectInto<ordinary_contract::LaneAssignment> for ordinary_schema::LaneAss
 impl ProjectInto<ordinary_schema::LaneRegistration> for ordinary_contract::LaneRegistration {
     fn project_into(self) -> Result<ordinary_schema::LaneRegistration> {
         Ok(ordinary_schema::LaneRegistration {
-            assignment: self.assignment.project_into()?,
-            registered_at: self.registered_at.project_into()?,
-            status: self.status.project_into()?,
+            lane_assignment: self.assignment.project_into()?,
+            timestamp_nanos: self.registered_at.project_into()?,
+            lane_status: self.status.project_into()?,
         })
     }
 }
@@ -2161,9 +2184,9 @@ impl ProjectInto<ordinary_schema::LaneRegistration> for ordinary_contract::LaneR
 impl ProjectInto<ordinary_contract::LaneRegistration> for ordinary_schema::LaneRegistration {
     fn project_into(self) -> Result<ordinary_contract::LaneRegistration> {
         Ok(ordinary_contract::LaneRegistration {
-            assignment: self.assignment.project_into()?,
-            registered_at: self.registered_at.project_into()?,
-            status: self.status.project_into()?,
+            assignment: self.lane_assignment.project_into()?,
+            registered_at: self.timestamp_nanos.project_into()?,
+            status: self.lane_status.project_into()?,
         })
     }
 }
@@ -2340,9 +2363,9 @@ impl ProjectInto<ordinary_contract::ObservationToken> for ordinary_schema::Obser
 impl ProjectInto<ordinary_schema::RoleClaim> for ordinary_contract::RoleClaim {
     fn project_into(self) -> Result<ordinary_schema::RoleClaim> {
         Ok(ordinary_schema::RoleClaim {
-            role: self.role.project_into()?,
-            scopes: self.scopes.project_into()?,
-            reason: self.reason.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_references: self.scopes.project_into()?,
+            scope_reason: self.reason.project_into()?,
         })
     }
 }
@@ -2350,9 +2373,9 @@ impl ProjectInto<ordinary_schema::RoleClaim> for ordinary_contract::RoleClaim {
 impl ProjectInto<ordinary_contract::RoleClaim> for ordinary_schema::RoleClaim {
     fn project_into(self) -> Result<ordinary_contract::RoleClaim> {
         Ok(ordinary_contract::RoleClaim {
-            role: self.role.project_into()?,
-            scopes: self.scopes.project_into()?,
-            reason: self.reason.project_into()?,
+            role: self.role_name.project_into()?,
+            scopes: self.scope_references.project_into()?,
+            reason: self.scope_reason.project_into()?,
         })
     }
 }
@@ -2376,8 +2399,8 @@ impl ProjectInto<ordinary_schema::RoleHandoff> for ordinary_contract::RoleHandof
         Ok(ordinary_schema::RoleHandoff {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            scopes: self.scopes.project_into()?,
-            reason: self.reason.project_into()?,
+            scope_references: self.scopes.project_into()?,
+            scope_reason: self.reason.project_into()?,
         })
     }
 }
@@ -2387,8 +2410,8 @@ impl ProjectInto<ordinary_contract::RoleHandoff> for ordinary_schema::RoleHandof
         Ok(ordinary_contract::RoleHandoff {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            scopes: self.scopes.project_into()?,
-            reason: self.reason.project_into()?,
+            scopes: self.scope_references.project_into()?,
+            reason: self.scope_reason.project_into()?,
         })
     }
 }
@@ -2403,6 +2426,11 @@ impl ProjectInto<ordinary_schema::Observation> for ordinary_contract::Observatio
             }
             ordinary_contract::Observation::Lanes => ordinary_schema::Observation::Lanes,
             ordinary_contract::Observation::Worktrees => ordinary_schema::Observation::Worktrees,
+            ordinary_contract::Observation::Topics => ordinary_schema::Observation::Topics,
+            ordinary_contract::Observation::Topic(path) => {
+                ordinary_schema::Observation::Topic(path.project_into()?)
+            }
+            ordinary_contract::Observation::Agents => ordinary_schema::Observation::Agents,
         })
     }
 }
@@ -2417,6 +2445,11 @@ impl ProjectInto<ordinary_contract::Observation> for ordinary_schema::Observatio
             }
             ordinary_schema::Observation::Lanes => ordinary_contract::Observation::Lanes,
             ordinary_schema::Observation::Worktrees => ordinary_contract::Observation::Worktrees,
+            ordinary_schema::Observation::Topics => ordinary_contract::Observation::Topics,
+            ordinary_schema::Observation::Topic(path) => {
+                ordinary_contract::Observation::Topic(path.project_into()?)
+            }
+            ordinary_schema::Observation::Agents => ordinary_contract::Observation::Agents,
         })
     }
 }
@@ -2560,13 +2593,13 @@ impl ProjectInto<ordinary_contract::PushedState> for ordinary_schema::PushedStat
 impl ProjectInto<ordinary_schema::Worktree> for ordinary_contract::Worktree {
     fn project_into(self) -> Result<ordinary_schema::Worktree> {
         Ok(ordinary_schema::Worktree {
-            repository: self.repository.project_into()?,
-            branch: self.branch.project_into()?,
-            path: self.path.project_into()?,
-            owning_lane: self.owning_lane.project_into()?,
-            status: self.status.project_into()?,
-            purpose: self.purpose.project_into()?,
-            last_activity: self.last_activity.project_into()?,
+            repository_name: self.repository.project_into()?,
+            branch_name: self.branch.project_into()?,
+            wire_path: self.path.project_into()?,
+            lane_name: self.owning_lane.project_into()?,
+            worktree_status: self.status.project_into()?,
+            purpose_text: self.purpose.project_into()?,
+            timestamp_nanos: self.last_activity.project_into()?,
             pushed_state: self.pushed_state.project_into()?,
         })
     }
@@ -2575,13 +2608,13 @@ impl ProjectInto<ordinary_schema::Worktree> for ordinary_contract::Worktree {
 impl ProjectInto<ordinary_contract::Worktree> for ordinary_schema::Worktree {
     fn project_into(self) -> Result<ordinary_contract::Worktree> {
         Ok(ordinary_contract::Worktree {
-            repository: self.repository.project_into()?,
-            branch: self.branch.project_into()?,
-            path: self.path.project_into()?,
-            owning_lane: self.owning_lane.project_into()?,
-            status: self.status.project_into()?,
-            purpose: self.purpose.project_into()?,
-            last_activity: self.last_activity.project_into()?,
+            repository: self.repository_name.project_into()?,
+            branch: self.branch_name.project_into()?,
+            path: self.wire_path.project_into()?,
+            owning_lane: self.lane_name.project_into()?,
+            status: self.worktree_status.project_into()?,
+            purpose: self.purpose_text.project_into()?,
+            last_activity: self.timestamp_nanos.project_into()?,
             pushed_state: self.pushed_state.project_into()?,
         })
     }
@@ -2606,9 +2639,9 @@ impl ProjectInto<ordinary_contract::WorktreesObserved> for ordinary_schema::Work
 impl ProjectInto<ordinary_schema::ActivitySubmission> for ordinary_contract::ActivitySubmission {
     fn project_into(self) -> Result<ordinary_schema::ActivitySubmission> {
         Ok(ordinary_schema::ActivitySubmission {
-            role: self.role.project_into()?,
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_reference: self.scope.project_into()?,
+            scope_reason: self.reason.project_into()?,
         })
     }
 }
@@ -2616,9 +2649,9 @@ impl ProjectInto<ordinary_schema::ActivitySubmission> for ordinary_contract::Act
 impl ProjectInto<ordinary_contract::ActivitySubmission> for ordinary_schema::ActivitySubmission {
     fn project_into(self) -> Result<ordinary_contract::ActivitySubmission> {
         Ok(ordinary_contract::ActivitySubmission {
-            role: self.role.project_into()?,
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
+            role: self.role_name.project_into()?,
+            scope: self.scope_reference.project_into()?,
+            reason: self.scope_reason.project_into()?,
         })
     }
 }
@@ -2626,8 +2659,8 @@ impl ProjectInto<ordinary_contract::ActivitySubmission> for ordinary_schema::Act
 impl ProjectInto<ordinary_schema::ActivityQuery> for ordinary_contract::ActivityQuery {
     fn project_into(self) -> Result<ordinary_schema::ActivityQuery> {
         Ok(ordinary_schema::ActivityQuery {
-            limit: u64::from(self.limit),
-            filters: self.filters.project_into()?,
+            integer: u64::from(self.limit),
+            activity_filters: self.filters.project_into()?,
         })
     }
 }
@@ -2635,10 +2668,10 @@ impl ProjectInto<ordinary_schema::ActivityQuery> for ordinary_contract::Activity
 impl ProjectInto<ordinary_contract::ActivityQuery> for ordinary_schema::ActivityQuery {
     fn project_into(self) -> Result<ordinary_contract::ActivityQuery> {
         Ok(ordinary_contract::ActivityQuery {
-            limit: u32::try_from(self.limit).map_err(|error| Error::SchemaBridge {
+            limit: u32::try_from(self.integer).map_err(|error| Error::SchemaBridge {
                 message: format!("activity query limit does not fit u32: {error}"),
             })?,
-            filters: self.filters.project_into()?,
+            filters: self.activity_filters.project_into()?,
         })
     }
 }
@@ -2738,6 +2771,9 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::Unwatch(payload) => {
                 ordinary_schema::Input::unwatch(payload.value())
             }
+            ordinary_contract::OrchestrateRequest::RegisterAgent(payload) => {
+                ordinary_schema::Input::register_agent(payload.project_into()?)
+            }
         })
     }
 }
@@ -2783,6 +2819,9 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             ordinary_schema::Input::Unwatch(payload) => {
                 ordinary_contract::OrchestrateRequest::Unwatch(payload.project_into()?)
             }
+            ordinary_schema::Input::RegisterAgent(payload) => {
+                ordinary_contract::OrchestrateRequest::RegisterAgent(payload.project_into()?)
+            }
         })
     }
 }
@@ -2790,8 +2829,8 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
 impl ProjectInto<ordinary_schema::ClaimAcceptance> for ordinary_contract::ClaimAcceptance {
     fn project_into(self) -> Result<ordinary_schema::ClaimAcceptance> {
         Ok(ordinary_schema::ClaimAcceptance {
-            role: self.role.project_into()?,
-            scopes: self.scopes.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_references: self.scopes.project_into()?,
         })
     }
 }
@@ -2799,8 +2838,8 @@ impl ProjectInto<ordinary_schema::ClaimAcceptance> for ordinary_contract::ClaimA
 impl ProjectInto<ordinary_contract::ClaimAcceptance> for ordinary_schema::ClaimAcceptance {
     fn project_into(self) -> Result<ordinary_contract::ClaimAcceptance> {
         Ok(ordinary_contract::ClaimAcceptance {
-            role: self.role.project_into()?,
-            scopes: self.scopes.project_into()?,
+            role: self.role_name.project_into()?,
+            scopes: self.scope_references.project_into()?,
         })
     }
 }
@@ -2808,9 +2847,9 @@ impl ProjectInto<ordinary_contract::ClaimAcceptance> for ordinary_schema::ClaimA
 impl ProjectInto<ordinary_schema::ScopeConflict> for ordinary_contract::ScopeConflict {
     fn project_into(self) -> Result<ordinary_schema::ScopeConflict> {
         Ok(ordinary_schema::ScopeConflict {
-            scope: self.scope.project_into()?,
-            held_by: self.held_by.project_into()?,
-            held_reason: self.held_reason.project_into()?,
+            scope_reference: self.scope.project_into()?,
+            role_name: self.held_by.project_into()?,
+            scope_reason: self.held_reason.project_into()?,
         })
     }
 }
@@ -2818,9 +2857,9 @@ impl ProjectInto<ordinary_schema::ScopeConflict> for ordinary_contract::ScopeCon
 impl ProjectInto<ordinary_contract::ScopeConflict> for ordinary_schema::ScopeConflict {
     fn project_into(self) -> Result<ordinary_contract::ScopeConflict> {
         Ok(ordinary_contract::ScopeConflict {
-            scope: self.scope.project_into()?,
-            held_by: self.held_by.project_into()?,
-            held_reason: self.held_reason.project_into()?,
+            scope: self.scope_reference.project_into()?,
+            held_by: self.role_name.project_into()?,
+            held_reason: self.scope_reason.project_into()?,
         })
     }
 }
@@ -2828,8 +2867,8 @@ impl ProjectInto<ordinary_contract::ScopeConflict> for ordinary_schema::ScopeCon
 impl ProjectInto<ordinary_schema::ClaimRejection> for ordinary_contract::ClaimRejection {
     fn project_into(self) -> Result<ordinary_schema::ClaimRejection> {
         Ok(ordinary_schema::ClaimRejection {
-            role: self.role.project_into()?,
-            conflicts: self.conflicts.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_conflicts: self.conflicts.project_into()?,
         })
     }
 }
@@ -2837,8 +2876,8 @@ impl ProjectInto<ordinary_schema::ClaimRejection> for ordinary_contract::ClaimRe
 impl ProjectInto<ordinary_contract::ClaimRejection> for ordinary_schema::ClaimRejection {
     fn project_into(self) -> Result<ordinary_contract::ClaimRejection> {
         Ok(ordinary_contract::ClaimRejection {
-            role: self.role.project_into()?,
-            conflicts: self.conflicts.project_into()?,
+            role: self.role_name.project_into()?,
+            conflicts: self.scope_conflicts.project_into()?,
         })
     }
 }
@@ -2848,8 +2887,8 @@ impl ProjectInto<ordinary_schema::ReleaseAcknowledgment>
 {
     fn project_into(self) -> Result<ordinary_schema::ReleaseAcknowledgment> {
         Ok(ordinary_schema::ReleaseAcknowledgment {
-            role: self.role.project_into()?,
-            released_scopes: self.released_scopes.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_references: self.released_scopes.project_into()?,
         })
     }
 }
@@ -2859,8 +2898,8 @@ impl ProjectInto<ordinary_contract::ReleaseAcknowledgment>
 {
     fn project_into(self) -> Result<ordinary_contract::ReleaseAcknowledgment> {
         Ok(ordinary_contract::ReleaseAcknowledgment {
-            role: self.role.project_into()?,
-            released_scopes: self.released_scopes.project_into()?,
+            role: self.role_name.project_into()?,
+            released_scopes: self.scope_references.project_into()?,
         })
     }
 }
@@ -2870,7 +2909,7 @@ impl ProjectInto<ordinary_schema::HandoffAcceptance> for ordinary_contract::Hand
         Ok(ordinary_schema::HandoffAcceptance {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            scopes: self.scopes.project_into()?,
+            scope_references: self.scopes.project_into()?,
         })
     }
 }
@@ -2880,7 +2919,7 @@ impl ProjectInto<ordinary_contract::HandoffAcceptance> for ordinary_schema::Hand
         Ok(ordinary_contract::HandoffAcceptance {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            scopes: self.scopes.project_into()?,
+            scopes: self.scope_references.project_into()?,
         })
     }
 }
@@ -2924,7 +2963,7 @@ impl ProjectInto<ordinary_schema::HandoffRejection> for ordinary_contract::Hando
         Ok(ordinary_schema::HandoffRejection {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            reason: self.reason.project_into()?,
+            handoff_rejection_reason: self.reason.project_into()?,
         })
     }
 }
@@ -2934,7 +2973,7 @@ impl ProjectInto<ordinary_contract::HandoffRejection> for ordinary_schema::Hando
         Ok(ordinary_contract::HandoffRejection {
             from: self.from.project_into()?,
             to: self.to.project_into()?,
-            reason: self.reason.project_into()?,
+            reason: self.handoff_rejection_reason.project_into()?,
         })
     }
 }
@@ -2942,10 +2981,10 @@ impl ProjectInto<ordinary_contract::HandoffRejection> for ordinary_schema::Hando
 impl ProjectInto<ordinary_schema::ClaimEntry> for ordinary_contract::ClaimEntry {
     fn project_into(self) -> Result<ordinary_schema::ClaimEntry> {
         Ok(ordinary_schema::ClaimEntry {
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            claimed_at: self.claimed_at.project_into()?,
-            age: self.age.project_into()?,
+            scope_reference: self.scope.project_into()?,
+            scope_reason: self.reason.project_into()?,
+            timestamp_nanos: self.claimed_at.project_into()?,
+            duration_nanos: self.age.project_into()?,
         })
     }
 }
@@ -2953,10 +2992,10 @@ impl ProjectInto<ordinary_schema::ClaimEntry> for ordinary_contract::ClaimEntry 
 impl ProjectInto<ordinary_contract::ClaimEntry> for ordinary_schema::ClaimEntry {
     fn project_into(self) -> Result<ordinary_contract::ClaimEntry> {
         Ok(ordinary_contract::ClaimEntry {
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            claimed_at: self.claimed_at.project_into()?,
-            age: self.age.project_into()?,
+            scope: self.scope_reference.project_into()?,
+            reason: self.scope_reason.project_into()?,
+            claimed_at: self.timestamp_nanos.project_into()?,
+            age: self.duration_nanos.project_into()?,
         })
     }
 }
@@ -2964,10 +3003,10 @@ impl ProjectInto<ordinary_contract::ClaimEntry> for ordinary_schema::ClaimEntry 
 impl ProjectInto<ordinary_schema::Activity> for ordinary_contract::Activity {
     fn project_into(self) -> Result<ordinary_schema::Activity> {
         Ok(ordinary_schema::Activity {
-            role: self.role.project_into()?,
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            stamped_at: self.stamped_at.project_into()?,
+            role_name: self.role.project_into()?,
+            scope_reference: self.scope.project_into()?,
+            scope_reason: self.reason.project_into()?,
+            timestamp_nanos: self.stamped_at.project_into()?,
         })
     }
 }
@@ -2975,10 +3014,10 @@ impl ProjectInto<ordinary_schema::Activity> for ordinary_contract::Activity {
 impl ProjectInto<ordinary_contract::Activity> for ordinary_schema::Activity {
     fn project_into(self) -> Result<ordinary_contract::Activity> {
         Ok(ordinary_contract::Activity {
-            role: self.role.project_into()?,
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            stamped_at: self.stamped_at.project_into()?,
+            role: self.role_name.project_into()?,
+            scope: self.scope_reference.project_into()?,
+            reason: self.scope_reason.project_into()?,
+            stamped_at: self.timestamp_nanos.project_into()?,
         })
     }
 }
@@ -2986,9 +3025,9 @@ impl ProjectInto<ordinary_contract::Activity> for ordinary_schema::Activity {
 impl ProjectInto<ordinary_schema::RoleStatus> for ordinary_contract::RoleStatus {
     fn project_into(self) -> Result<ordinary_schema::RoleStatus> {
         Ok(ordinary_schema::RoleStatus {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
-            claims: self.claims.project_into()?,
+            role_name: self.role.project_into()?,
+            harness_kind: self.harness.project_into()?,
+            claim_entries: self.claims.project_into()?,
         })
     }
 }
@@ -2996,9 +3035,9 @@ impl ProjectInto<ordinary_schema::RoleStatus> for ordinary_contract::RoleStatus 
 impl ProjectInto<ordinary_contract::RoleStatus> for ordinary_schema::RoleStatus {
     fn project_into(self) -> Result<ordinary_contract::RoleStatus> {
         Ok(ordinary_contract::RoleStatus {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
-            claims: self.claims.project_into()?,
+            role: self.role_name.project_into()?,
+            harness: self.harness_kind.project_into()?,
+            claims: self.claim_entries.project_into()?,
         })
     }
 }
@@ -3006,8 +3045,8 @@ impl ProjectInto<ordinary_contract::RoleStatus> for ordinary_schema::RoleStatus 
 impl ProjectInto<ordinary_schema::RoleSnapshot> for ordinary_contract::RoleSnapshot {
     fn project_into(self) -> Result<ordinary_schema::RoleSnapshot> {
         Ok(ordinary_schema::RoleSnapshot {
-            roles: self.roles.project_into()?,
-            recent_activity: self.recent_activity.project_into()?,
+            role_statuses: self.roles.project_into()?,
+            activities: self.recent_activity.project_into()?,
         })
     }
 }
@@ -3015,8 +3054,8 @@ impl ProjectInto<ordinary_schema::RoleSnapshot> for ordinary_contract::RoleSnaps
 impl ProjectInto<ordinary_contract::RoleSnapshot> for ordinary_schema::RoleSnapshot {
     fn project_into(self) -> Result<ordinary_contract::RoleSnapshot> {
         Ok(ordinary_contract::RoleSnapshot {
-            roles: self.roles.project_into()?,
-            recent_activity: self.recent_activity.project_into()?,
+            roles: self.role_statuses.project_into()?,
+            recent_activity: self.activities.project_into()?,
         })
     }
 }
@@ -3024,8 +3063,8 @@ impl ProjectInto<ordinary_contract::RoleSnapshot> for ordinary_schema::RoleSnaps
 impl ProjectInto<ordinary_schema::SessionProjection> for ordinary_contract::SessionProjection {
     fn project_into(self) -> Result<ordinary_schema::SessionProjection> {
         Ok(ordinary_schema::SessionProjection {
-            session: self.session.project_into()?,
-            active_lanes: self.active_lanes,
+            session_identifier: self.session.project_into()?,
+            integer: self.active_lanes,
         })
     }
 }
@@ -3033,8 +3072,8 @@ impl ProjectInto<ordinary_schema::SessionProjection> for ordinary_contract::Sess
 impl ProjectInto<ordinary_contract::SessionProjection> for ordinary_schema::SessionProjection {
     fn project_into(self) -> Result<ordinary_contract::SessionProjection> {
         Ok(ordinary_contract::SessionProjection {
-            session: self.session.project_into()?,
-            active_lanes: self.active_lanes,
+            session: self.session_identifier.project_into()?,
+            active_lanes: self.integer,
         })
     }
 }
@@ -3058,10 +3097,10 @@ impl ProjectInto<ordinary_contract::SessionsObserved> for ordinary_schema::Sessi
 impl ProjectInto<ordinary_schema::LaneResourceClaim> for ordinary_contract::LaneResourceClaim {
     fn project_into(self) -> Result<ordinary_schema::LaneResourceClaim> {
         Ok(ordinary_schema::LaneResourceClaim {
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            claimed_at: self.claimed_at.project_into()?,
-            age: self.age.project_into()?,
+            scope_reference: self.scope.project_into()?,
+            scope_reason: self.reason.project_into()?,
+            timestamp_nanos: self.claimed_at.project_into()?,
+            duration_nanos: self.age.project_into()?,
         })
     }
 }
@@ -3069,10 +3108,10 @@ impl ProjectInto<ordinary_schema::LaneResourceClaim> for ordinary_contract::Lane
 impl ProjectInto<ordinary_contract::LaneResourceClaim> for ordinary_schema::LaneResourceClaim {
     fn project_into(self) -> Result<ordinary_contract::LaneResourceClaim> {
         Ok(ordinary_contract::LaneResourceClaim {
-            scope: self.scope.project_into()?,
-            reason: self.reason.project_into()?,
-            claimed_at: self.claimed_at.project_into()?,
-            age: self.age.project_into()?,
+            scope: self.scope_reference.project_into()?,
+            reason: self.scope_reason.project_into()?,
+            claimed_at: self.timestamp_nanos.project_into()?,
+            age: self.duration_nanos.project_into()?,
         })
     }
 }
@@ -3080,10 +3119,10 @@ impl ProjectInto<ordinary_contract::LaneResourceClaim> for ordinary_schema::Lane
 impl ProjectInto<ordinary_schema::LaneProjection> for ordinary_contract::LaneProjection {
     fn project_into(self) -> Result<ordinary_schema::LaneProjection> {
         Ok(ordinary_schema::LaneProjection {
-            registration: self.registration.project_into()?,
-            resource_claims: self.resource_claims.project_into()?,
-            observed_at: self.observed_at.project_into()?,
-            age: self.age.project_into()?,
+            lane_registration: self.registration.project_into()?,
+            lane_resource_claims: self.resource_claims.project_into()?,
+            timestamp_nanos: self.observed_at.project_into()?,
+            duration_nanos: self.age.project_into()?,
         })
     }
 }
@@ -3091,10 +3130,10 @@ impl ProjectInto<ordinary_schema::LaneProjection> for ordinary_contract::LanePro
 impl ProjectInto<ordinary_contract::LaneProjection> for ordinary_schema::LaneProjection {
     fn project_into(self) -> Result<ordinary_contract::LaneProjection> {
         Ok(ordinary_contract::LaneProjection {
-            registration: self.registration.project_into()?,
-            resource_claims: self.resource_claims.project_into()?,
-            observed_at: self.observed_at.project_into()?,
-            age: self.age.project_into()?,
+            registration: self.lane_registration.project_into()?,
+            resource_claims: self.lane_resource_claims.project_into()?,
+            observed_at: self.timestamp_nanos.project_into()?,
+            age: self.duration_nanos.project_into()?,
         })
     }
 }
@@ -3256,8 +3295,8 @@ impl ProjectInto<ordinary_contract::ApplicationFailureReason>
 impl ProjectInto<ordinary_schema::ApplicationSuccess> for ordinary_contract::ApplicationSuccess {
     fn project_into(self) -> Result<ordinary_schema::ApplicationSuccess> {
         Ok(ordinary_schema::ApplicationSuccess {
-            component: self.component.project_into()?,
-            detail: self.detail.project_into()?,
+            downstream_component: self.component.project_into()?,
+            scope_reason: self.detail.project_into()?,
         })
     }
 }
@@ -3265,8 +3304,8 @@ impl ProjectInto<ordinary_schema::ApplicationSuccess> for ordinary_contract::App
 impl ProjectInto<ordinary_contract::ApplicationSuccess> for ordinary_schema::ApplicationSuccess {
     fn project_into(self) -> Result<ordinary_contract::ApplicationSuccess> {
         Ok(ordinary_contract::ApplicationSuccess {
-            component: self.component.project_into()?,
-            detail: self.detail.project_into()?,
+            component: self.downstream_component.project_into()?,
+            detail: self.scope_reason.project_into()?,
         })
     }
 }
@@ -3274,9 +3313,9 @@ impl ProjectInto<ordinary_contract::ApplicationSuccess> for ordinary_schema::App
 impl ProjectInto<ordinary_schema::ApplicationFailure> for ordinary_contract::ApplicationFailure {
     fn project_into(self) -> Result<ordinary_schema::ApplicationFailure> {
         Ok(ordinary_schema::ApplicationFailure {
-            component: self.component.project_into()?,
-            reason: self.reason.project_into()?,
-            detail: self.detail.project_into()?,
+            downstream_component: self.component.project_into()?,
+            application_failure_reason: self.reason.project_into()?,
+            scope_reason: self.detail.project_into()?,
         })
     }
 }
@@ -3284,9 +3323,9 @@ impl ProjectInto<ordinary_schema::ApplicationFailure> for ordinary_contract::App
 impl ProjectInto<ordinary_contract::ApplicationFailure> for ordinary_schema::ApplicationFailure {
     fn project_into(self) -> Result<ordinary_contract::ApplicationFailure> {
         Ok(ordinary_contract::ApplicationFailure {
-            component: self.component.project_into()?,
-            reason: self.reason.project_into()?,
-            detail: self.detail.project_into()?,
+            component: self.downstream_component.project_into()?,
+            reason: self.application_failure_reason.project_into()?,
+            detail: self.scope_reason.project_into()?,
         })
     }
 }
@@ -3294,8 +3333,8 @@ impl ProjectInto<ordinary_contract::ApplicationFailure> for ordinary_schema::App
 impl ProjectInto<ordinary_schema::PartialApplied> for ordinary_contract::PartialApplied {
     fn project_into(self) -> Result<ordinary_schema::PartialApplied> {
         Ok(ordinary_schema::PartialApplied {
-            succeeded: self.succeeded.project_into()?,
-            failed: self.failed.project_into()?,
+            application_successes: self.succeeded.project_into()?,
+            application_failures: self.failed.project_into()?,
         })
     }
 }
@@ -3303,8 +3342,8 @@ impl ProjectInto<ordinary_schema::PartialApplied> for ordinary_contract::Partial
 impl ProjectInto<ordinary_contract::PartialApplied> for ordinary_schema::PartialApplied {
     fn project_into(self) -> Result<ordinary_contract::PartialApplied> {
         Ok(ordinary_contract::PartialApplied {
-            succeeded: self.succeeded.project_into()?,
-            failed: self.failed.project_into()?,
+            succeeded: self.application_successes.project_into()?,
+            failed: self.application_failures.project_into()?,
         })
     }
 }
@@ -3412,6 +3451,21 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::ObservationClosed(payload) => {
                 ordinary_schema::Output::ObservationClosed(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::AgentRegistered(payload) => {
+                ordinary_schema::Output::agent_registered(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::AgentRegistrationRejected(payload) => {
+                ordinary_schema::Output::agent_registration_rejected(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::TopicTree(payload) => {
+                ordinary_schema::Output::TopicTree(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::TopicDetail(payload) => {
+                ordinary_schema::Output::TopicDetail(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::AgentDirectory(payload) => {
+                ordinary_schema::Output::AgentDirectory(payload.project_into()?)
+            }
         })
     }
 }
@@ -3497,6 +3551,23 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             ordinary_schema::Output::ObservationClosed(payload) => {
                 ordinary_contract::OrchestrateReply::ObservationClosed(payload.project_into()?)
             }
+            ordinary_schema::Output::AgentRegistered(payload) => {
+                ordinary_contract::OrchestrateReply::AgentRegistered(payload.project_into()?)
+            }
+            ordinary_schema::Output::AgentRegistrationRejected(payload) => {
+                ordinary_contract::OrchestrateReply::AgentRegistrationRejected(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::TopicTree(payload) => {
+                ordinary_contract::OrchestrateReply::TopicTree(payload.project_into()?)
+            }
+            ordinary_schema::Output::TopicDetail(payload) => {
+                ordinary_contract::OrchestrateReply::TopicDetail(payload.project_into()?)
+            }
+            ordinary_schema::Output::AgentDirectory(payload) => {
+                ordinary_contract::OrchestrateReply::AgentDirectory(payload.project_into()?)
+            }
         })
     }
 }
@@ -3504,8 +3575,8 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
 impl ProjectInto<meta_schema::CreateRoleOrder> for meta_contract::CreateRoleOrder {
     fn project_into(self) -> Result<meta_schema::CreateRoleOrder> {
         Ok(meta_schema::CreateRoleOrder {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
+            role_identifier: self.role.project_into()?,
+            harness_kind: self.harness.project_into()?,
         })
     }
 }
@@ -3513,8 +3584,8 @@ impl ProjectInto<meta_schema::CreateRoleOrder> for meta_contract::CreateRoleOrde
 impl ProjectInto<meta_contract::CreateRoleOrder> for meta_schema::CreateRoleOrder {
     fn project_into(self) -> Result<meta_contract::CreateRoleOrder> {
         Ok(meta_contract::CreateRoleOrder {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
+            role: self.role_identifier.project_into()?,
+            harness: self.harness_kind.project_into()?,
         })
     }
 }
@@ -3698,8 +3769,8 @@ impl ProjectInto<meta_contract::LaneRegistrationMode> for meta_schema::LaneRegis
 impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_schema::LaneRegistrationRequest> {
         Ok(meta_schema::LaneRegistrationRequest {
-            assignment: self.assignment.project_into()?,
-            mode: self.mode.project_into()?,
+            lane_assignment: self.assignment.project_into()?,
+            lane_registration_mode: self.mode.project_into()?,
         })
     }
 }
@@ -3707,8 +3778,8 @@ impl ProjectInto<meta_schema::LaneRegistrationRequest> for meta_contract::LaneRe
 impl ProjectInto<meta_contract::LaneRegistrationRequest> for meta_schema::LaneRegistrationRequest {
     fn project_into(self) -> Result<meta_contract::LaneRegistrationRequest> {
         Ok(meta_contract::LaneRegistrationRequest {
-            assignment: self.assignment.project_into()?,
-            mode: self.mode.project_into()?,
+            assignment: self.lane_assignment.project_into()?,
+            mode: self.lane_registration_mode.project_into()?,
         })
     }
 }
@@ -3718,9 +3789,9 @@ impl ProjectInto<meta_schema::LaneUnregistrationRequest>
 {
     fn project_into(self) -> Result<meta_schema::LaneUnregistrationRequest> {
         Ok(meta_schema::LaneUnregistrationRequest {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            details: self.details.project_into()?,
+            session_identifier: self.session.project_into()?,
+            lane_identifier: self.lane.project_into()?,
+            lane_details: self.details.project_into()?,
         })
     }
 }
@@ -3730,9 +3801,9 @@ impl ProjectInto<meta_contract::LaneUnregistrationRequest>
 {
     fn project_into(self) -> Result<meta_contract::LaneUnregistrationRequest> {
         Ok(meta_contract::LaneUnregistrationRequest {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            details: self.details.project_into()?,
+            session: self.session_identifier.project_into()?,
+            lane: self.lane_identifier.project_into()?,
+            details: self.lane_details.project_into()?,
         })
     }
 }
@@ -3740,8 +3811,8 @@ impl ProjectInto<meta_contract::LaneUnregistrationRequest>
 impl ProjectInto<meta_schema::SessionClearRequest> for meta_contract::SessionClearRequest {
     fn project_into(self) -> Result<meta_schema::SessionClearRequest> {
         Ok(meta_schema::SessionClearRequest {
-            session: self.session.project_into()?,
-            details: self.details.project_into()?,
+            session_identifier: self.session.project_into()?,
+            lane_details: self.details.project_into()?,
         })
     }
 }
@@ -3749,8 +3820,8 @@ impl ProjectInto<meta_schema::SessionClearRequest> for meta_contract::SessionCle
 impl ProjectInto<meta_contract::SessionClearRequest> for meta_schema::SessionClearRequest {
     fn project_into(self) -> Result<meta_contract::SessionClearRequest> {
         Ok(meta_contract::SessionClearRequest {
-            session: self.session.project_into()?,
-            details: self.details.project_into()?,
+            session: self.session_identifier.project_into()?,
+            details: self.lane_details.project_into()?,
         })
     }
 }
@@ -3758,8 +3829,8 @@ impl ProjectInto<meta_contract::SessionClearRequest> for meta_schema::SessionCle
 impl ProjectInto<meta_schema::LaneAuthorityChange> for meta_contract::LaneAuthorityChange {
     fn project_into(self) -> Result<meta_schema::LaneAuthorityChange> {
         Ok(meta_schema::LaneAuthorityChange {
-            lane: self.lane.project_into()?,
-            authority: self.authority.project_into()?,
+            lane_identifier: self.lane.project_into()?,
+            lane_authority: self.authority.project_into()?,
         })
     }
 }
@@ -3767,8 +3838,8 @@ impl ProjectInto<meta_schema::LaneAuthorityChange> for meta_contract::LaneAuthor
 impl ProjectInto<meta_contract::LaneAuthorityChange> for meta_schema::LaneAuthorityChange {
     fn project_into(self) -> Result<meta_contract::LaneAuthorityChange> {
         Ok(meta_contract::LaneAuthorityChange {
-            lane: self.lane.project_into()?,
-            authority: self.authority.project_into()?,
+            lane: self.lane_identifier.project_into()?,
+            authority: self.lane_authority.project_into()?,
         })
     }
 }
@@ -3850,8 +3921,8 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequest> for meta_schema::Input {
 impl ProjectInto<meta_schema::RoleCreated> for meta_contract::RoleCreated {
     fn project_into(self) -> Result<meta_schema::RoleCreated> {
         Ok(meta_schema::RoleCreated {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
+            role_identifier: self.role.project_into()?,
+            harness_kind: self.harness.project_into()?,
             report_repository_path: self.report_repository_path.project_into()?,
             report_lane_path: self.report_lane_path.project_into()?,
         })
@@ -3861,8 +3932,8 @@ impl ProjectInto<meta_schema::RoleCreated> for meta_contract::RoleCreated {
 impl ProjectInto<meta_contract::RoleCreated> for meta_schema::RoleCreated {
     fn project_into(self) -> Result<meta_contract::RoleCreated> {
         Ok(meta_contract::RoleCreated {
-            role: self.role.project_into()?,
-            harness: self.harness.project_into()?,
+            role: self.role_identifier.project_into()?,
+            harness: self.harness_kind.project_into()?,
             report_repository_path: self.report_repository_path.project_into()?,
             report_lane_path: self.report_lane_path.project_into()?,
         })
@@ -3922,8 +3993,8 @@ impl ProjectInto<meta_contract::RoleCreationRejectionReason>
 impl ProjectInto<meta_schema::RoleCreationRejected> for meta_contract::RoleCreationRejected {
     fn project_into(self) -> Result<meta_schema::RoleCreationRejected> {
         Ok(meta_schema::RoleCreationRejected {
-            role: self.role.project_into()?,
-            reason: self.reason.project_into()?,
+            role_identifier: self.role.project_into()?,
+            role_creation_rejection_reason: self.reason.project_into()?,
         })
     }
 }
@@ -3931,8 +4002,8 @@ impl ProjectInto<meta_schema::RoleCreationRejected> for meta_contract::RoleCreat
 impl ProjectInto<meta_contract::RoleCreationRejected> for meta_schema::RoleCreationRejected {
     fn project_into(self) -> Result<meta_contract::RoleCreationRejected> {
         Ok(meta_contract::RoleCreationRejected {
-            role: self.role.project_into()?,
-            reason: self.reason.project_into()?,
+            role: self.role_identifier.project_into()?,
+            reason: self.role_creation_rejection_reason.project_into()?,
         })
     }
 }
@@ -4008,9 +4079,9 @@ impl ProjectInto<meta_contract::LaneAlreadyRegisteredResolution>
 impl ProjectInto<meta_schema::LaneAlreadyRegistered> for meta_contract::LaneAlreadyRegistered {
     fn project_into(self) -> Result<meta_schema::LaneAlreadyRegistered> {
         Ok(meta_schema::LaneAlreadyRegistered {
-            requested: self.requested.project_into()?,
-            active: self.active.project_into()?,
-            resolution: self.resolution.project_into()?,
+            lane_registration_request: self.requested.project_into()?,
+            lane_projection: self.active.project_into()?,
+            lane_already_registered_resolution: self.resolution.project_into()?,
         })
     }
 }
@@ -4018,9 +4089,9 @@ impl ProjectInto<meta_schema::LaneAlreadyRegistered> for meta_contract::LaneAlre
 impl ProjectInto<meta_contract::LaneAlreadyRegistered> for meta_schema::LaneAlreadyRegistered {
     fn project_into(self) -> Result<meta_contract::LaneAlreadyRegistered> {
         Ok(meta_contract::LaneAlreadyRegistered {
-            requested: self.requested.project_into()?,
-            active: self.active.project_into()?,
-            resolution: self.resolution.project_into()?,
+            requested: self.lane_registration_request.project_into()?,
+            active: self.lane_projection.project_into()?,
+            resolution: self.lane_already_registered_resolution.project_into()?,
         })
     }
 }
@@ -4028,10 +4099,10 @@ impl ProjectInto<meta_contract::LaneAlreadyRegistered> for meta_schema::LaneAlre
 impl ProjectInto<meta_schema::LaneUnregistered> for meta_contract::LaneUnregistered {
     fn project_into(self) -> Result<meta_schema::LaneUnregistered> {
         Ok(meta_schema::LaneUnregistered {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            ended_at: self.ended_at.project_into()?,
-            details: self.details.project_into()?,
+            session_identifier: self.session.project_into()?,
+            lane_identifier: self.lane.project_into()?,
+            timestamp_nanos: self.ended_at.project_into()?,
+            lane_details: self.details.project_into()?,
         })
     }
 }
@@ -4039,10 +4110,10 @@ impl ProjectInto<meta_schema::LaneUnregistered> for meta_contract::LaneUnregiste
 impl ProjectInto<meta_contract::LaneUnregistered> for meta_schema::LaneUnregistered {
     fn project_into(self) -> Result<meta_contract::LaneUnregistered> {
         Ok(meta_contract::LaneUnregistered {
-            session: self.session.project_into()?,
-            lane: self.lane.project_into()?,
-            ended_at: self.ended_at.project_into()?,
-            details: self.details.project_into()?,
+            session: self.session_identifier.project_into()?,
+            lane: self.lane_identifier.project_into()?,
+            ended_at: self.timestamp_nanos.project_into()?,
+            details: self.lane_details.project_into()?,
         })
     }
 }
@@ -4050,10 +4121,10 @@ impl ProjectInto<meta_contract::LaneUnregistered> for meta_schema::LaneUnregiste
 impl ProjectInto<meta_schema::SessionCleared> for meta_contract::SessionCleared {
     fn project_into(self) -> Result<meta_schema::SessionCleared> {
         Ok(meta_schema::SessionCleared {
-            session: self.session.project_into()?,
-            cleared_lanes: u64::from(self.cleared_lanes),
-            ended_at: self.ended_at.project_into()?,
-            details: self.details.project_into()?,
+            session_identifier: self.session.project_into()?,
+            integer: u64::from(self.cleared_lanes),
+            timestamp_nanos: self.ended_at.project_into()?,
+            lane_details: self.details.project_into()?,
         })
     }
 }
@@ -4061,14 +4132,12 @@ impl ProjectInto<meta_schema::SessionCleared> for meta_contract::SessionCleared 
 impl ProjectInto<meta_contract::SessionCleared> for meta_schema::SessionCleared {
     fn project_into(self) -> Result<meta_contract::SessionCleared> {
         Ok(meta_contract::SessionCleared {
-            session: self.session.project_into()?,
-            cleared_lanes: u32::try_from(self.cleared_lanes).map_err(|error| {
-                Error::SchemaBridge {
-                    message: format!("cleared lane count does not fit u32: {error}"),
-                }
+            session: self.session_identifier.project_into()?,
+            cleared_lanes: u32::try_from(self.integer).map_err(|error| Error::SchemaBridge {
+                message: format!("cleared lane count does not fit u32: {error}"),
             })?,
-            ended_at: self.ended_at.project_into()?,
-            details: self.details.project_into()?,
+            ended_at: self.timestamp_nanos.project_into()?,
+            details: self.lane_details.project_into()?,
         })
     }
 }
@@ -4090,8 +4159,8 @@ impl ProjectInto<meta_contract::LaneRetired> for meta_schema::LaneRetired {
 impl ProjectInto<meta_schema::LaneAuthoritySet> for meta_contract::LaneAuthoritySet {
     fn project_into(self) -> Result<meta_schema::LaneAuthoritySet> {
         Ok(meta_schema::LaneAuthoritySet {
-            lane: self.lane.project_into()?,
-            authority: self.authority.project_into()?,
+            lane_identifier: self.lane.project_into()?,
+            lane_authority: self.authority.project_into()?,
         })
     }
 }
@@ -4099,8 +4168,8 @@ impl ProjectInto<meta_schema::LaneAuthoritySet> for meta_contract::LaneAuthority
 impl ProjectInto<meta_contract::LaneAuthoritySet> for meta_schema::LaneAuthoritySet {
     fn project_into(self) -> Result<meta_contract::LaneAuthoritySet> {
         Ok(meta_contract::LaneAuthoritySet {
-            lane: self.lane.project_into()?,
-            authority: self.authority.project_into()?,
+            lane: self.lane_identifier.project_into()?,
+            authority: self.lane_authority.project_into()?,
         })
     }
 }
@@ -4198,8 +4267,8 @@ impl ProjectInto<meta_schema::MetaOrchestrateRequestUnimplemented>
 {
     fn project_into(self) -> Result<meta_schema::MetaOrchestrateRequestUnimplemented> {
         Ok(meta_schema::MetaOrchestrateRequestUnimplemented {
-            operation: self.operation.project_into()?,
-            reason: self.reason.project_into()?,
+            meta_operation_kind: self.operation.project_into()?,
+            meta_orchestrate_unimplemented_reason: self.reason.project_into()?,
         })
     }
 }
@@ -4209,8 +4278,8 @@ impl ProjectInto<meta_contract::MetaOrchestrateRequestUnimplemented>
 {
     fn project_into(self) -> Result<meta_contract::MetaOrchestrateRequestUnimplemented> {
         Ok(meta_contract::MetaOrchestrateRequestUnimplemented {
-            operation: self.operation.project_into()?,
-            reason: self.reason.project_into()?,
+            operation: self.meta_operation_kind.project_into()?,
+            reason: self.meta_orchestrate_unimplemented_reason.project_into()?,
         })
     }
 }
@@ -4319,6 +4388,529 @@ impl ProjectInto<meta_contract::MetaOrchestrateReply> for meta_schema::Output {
                     payload.project_into()?,
                 )
             }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorAgentIdentifier>
+    for ordinary_contract::OrchestratorAgentIdentifier
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorAgentIdentifier> {
+        Ok(ordinary_schema::OrchestratorAgentIdentifier::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorAgentIdentifier>
+    for ordinary_schema::OrchestratorAgentIdentifier
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorAgentIdentifier> {
+        ordinary_contract::OrchestratorAgentIdentifier::from_wire_token(self.into_payload())
+            .map_err(|error| Error::SchemaBridge {
+                message: error.to_string(),
+            })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorTopicPath>
+    for ordinary_contract::OrchestratorTopicPath
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorTopicPath> {
+        Ok(ordinary_schema::OrchestratorTopicPath::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorTopicPath>
+    for ordinary_schema::OrchestratorTopicPath
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorTopicPath> {
+        ordinary_contract::OrchestratorTopicPath::from_wire_token(self.into_payload()).map_err(
+            |error| Error::SchemaBridge {
+                message: error.to_string(),
+            },
+        )
+    }
+}
+
+impl ProjectInto<ordinary_schema::TopicName> for ordinary_contract::TopicName {
+    fn project_into(self) -> Result<ordinary_schema::TopicName> {
+        Ok(ordinary_schema::TopicName::new(self.as_str().to_string()))
+    }
+}
+
+impl ProjectInto<ordinary_contract::TopicName> for ordinary_schema::TopicName {
+    fn project_into(self) -> Result<ordinary_contract::TopicName> {
+        ordinary_contract::TopicName::from_text(self.into_payload()).map_err(|error| {
+            Error::SchemaBridge {
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::MissionDescription> for ordinary_contract::MissionDescription {
+    fn project_into(self) -> Result<ordinary_schema::MissionDescription> {
+        Ok(ordinary_schema::MissionDescription::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::MissionDescription> for ordinary_schema::MissionDescription {
+    fn project_into(self) -> Result<ordinary_contract::MissionDescription> {
+        ordinary_contract::MissionDescription::from_text(self.into_payload()).map_err(|error| {
+            Error::SchemaBridge {
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorTopic> for ordinary_contract::OrchestratorTopic {
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorTopic> {
+        Ok(ordinary_schema::OrchestratorTopic {
+            orchestrator_topic_path: self.path.project_into()?,
+            topic_name: self.name.project_into()?,
+            optional_orchestrator_topic_path: self
+                .parent
+                .map(ProjectInto::project_into)
+                .transpose()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorTopic> for ordinary_schema::OrchestratorTopic {
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorTopic> {
+        Ok(ordinary_contract::OrchestratorTopic {
+            path: self.orchestrator_topic_path.project_into()?,
+            name: self.topic_name.project_into()?,
+            parent: self
+                .optional_orchestrator_topic_path
+                .map(ProjectInto::project_into)
+                .transpose()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorAgentStatus>
+    for ordinary_contract::OrchestratorAgentStatus
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorAgentStatus> {
+        Ok(match self {
+            ordinary_contract::OrchestratorAgentStatus::Active => {
+                ordinary_schema::OrchestratorAgentStatus::Active
+            }
+            ordinary_contract::OrchestratorAgentStatus::Retired => {
+                ordinary_schema::OrchestratorAgentStatus::Retired
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorAgentStatus>
+    for ordinary_schema::OrchestratorAgentStatus
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorAgentStatus> {
+        Ok(match self {
+            ordinary_schema::OrchestratorAgentStatus::Active => {
+                ordinary_contract::OrchestratorAgentStatus::Active
+            }
+            ordinary_schema::OrchestratorAgentStatus::Retired => {
+                ordinary_contract::OrchestratorAgentStatus::Retired
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::TopicAssignmentSource>
+    for ordinary_contract::TopicAssignmentSource
+{
+    fn project_into(self) -> Result<ordinary_schema::TopicAssignmentSource> {
+        Ok(match self {
+            ordinary_contract::TopicAssignmentSource::Judge => {
+                ordinary_schema::TopicAssignmentSource::Judge
+            }
+            ordinary_contract::TopicAssignmentSource::Explicit => {
+                ordinary_schema::TopicAssignmentSource::Explicit
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::TopicAssignmentSource>
+    for ordinary_schema::TopicAssignmentSource
+{
+    fn project_into(self) -> Result<ordinary_contract::TopicAssignmentSource> {
+        Ok(match self {
+            ordinary_schema::TopicAssignmentSource::Judge => {
+                ordinary_contract::TopicAssignmentSource::Judge
+            }
+            ordinary_schema::TopicAssignmentSource::Explicit => {
+                ordinary_contract::TopicAssignmentSource::Explicit
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::TopicSelection> for ordinary_contract::TopicSelection {
+    fn project_into(self) -> Result<ordinary_schema::TopicSelection> {
+        Ok(match self {
+            ordinary_contract::TopicSelection::Automatic => {
+                ordinary_schema::TopicSelection::Automatic
+            }
+            ordinary_contract::TopicSelection::Explicit(paths) => {
+                ordinary_schema::TopicSelection::Explicit(
+                    ordinary_schema::OrchestratorTopicPaths::new(paths.project_into()?),
+                )
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::TopicSelection> for ordinary_schema::TopicSelection {
+    fn project_into(self) -> Result<ordinary_contract::TopicSelection> {
+        Ok(match self {
+            ordinary_schema::TopicSelection::Automatic => {
+                ordinary_contract::TopicSelection::Automatic
+            }
+            ordinary_schema::TopicSelection::Explicit(paths) => {
+                ordinary_contract::TopicSelection::Explicit(paths.into_payload().project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorAgentRegistration>
+    for ordinary_contract::OrchestratorAgentRegistration
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorAgentRegistration> {
+        Ok(ordinary_schema::OrchestratorAgentRegistration {
+            session_identifier: self.session.project_into()?,
+            mission_description: self.mission.project_into()?,
+            harness_kind: self.harness.project_into()?,
+            topic_selection: self.topic_selection.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorAgentRegistration>
+    for ordinary_schema::OrchestratorAgentRegistration
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorAgentRegistration> {
+        Ok(ordinary_contract::OrchestratorAgentRegistration {
+            session: self.session_identifier.project_into()?,
+            mission: self.mission_description.project_into()?,
+            harness: self.harness_kind.project_into()?,
+            topic_selection: self.topic_selection.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AgentRegistrationRejectionReason>
+    for ordinary_contract::AgentRegistrationRejectionReason
+{
+    fn project_into(self) -> Result<ordinary_schema::AgentRegistrationRejectionReason> {
+        Ok(match self {
+            ordinary_contract::AgentRegistrationRejectionReason::MissionEmpty => {
+                ordinary_schema::AgentRegistrationRejectionReason::MissionEmpty
+            }
+            ordinary_contract::AgentRegistrationRejectionReason::MissionTooVague => {
+                ordinary_schema::AgentRegistrationRejectionReason::MissionTooVague
+            }
+            ordinary_contract::AgentRegistrationRejectionReason::UnknownTopic => {
+                ordinary_schema::AgentRegistrationRejectionReason::UnknownTopic
+            }
+            ordinary_contract::AgentRegistrationRejectionReason::JudgeUnavailable => {
+                ordinary_schema::AgentRegistrationRejectionReason::JudgeUnavailable
+            }
+            ordinary_contract::AgentRegistrationRejectionReason::JudgeMalformed => {
+                ordinary_schema::AgentRegistrationRejectionReason::JudgeMalformed
+            }
+            ordinary_contract::AgentRegistrationRejectionReason::JudgeTimedOut => {
+                ordinary_schema::AgentRegistrationRejectionReason::JudgeTimedOut
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentRegistrationRejectionReason>
+    for ordinary_schema::AgentRegistrationRejectionReason
+{
+    fn project_into(self) -> Result<ordinary_contract::AgentRegistrationRejectionReason> {
+        Ok(match self {
+            ordinary_schema::AgentRegistrationRejectionReason::MissionEmpty => {
+                ordinary_contract::AgentRegistrationRejectionReason::MissionEmpty
+            }
+            ordinary_schema::AgentRegistrationRejectionReason::MissionTooVague => {
+                ordinary_contract::AgentRegistrationRejectionReason::MissionTooVague
+            }
+            ordinary_schema::AgentRegistrationRejectionReason::UnknownTopic => {
+                ordinary_contract::AgentRegistrationRejectionReason::UnknownTopic
+            }
+            ordinary_schema::AgentRegistrationRejectionReason::JudgeUnavailable => {
+                ordinary_contract::AgentRegistrationRejectionReason::JudgeUnavailable
+            }
+            ordinary_schema::AgentRegistrationRejectionReason::JudgeMalformed => {
+                ordinary_contract::AgentRegistrationRejectionReason::JudgeMalformed
+            }
+            ordinary_schema::AgentRegistrationRejectionReason::JudgeTimedOut => {
+                ordinary_contract::AgentRegistrationRejectionReason::JudgeTimedOut
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AgentRegistered> for ordinary_contract::AgentRegistered {
+    fn project_into(self) -> Result<ordinary_schema::AgentRegistered> {
+        Ok(ordinary_schema::AgentRegistered {
+            orchestrator_agent_identifier: self.agent_identifier.project_into()?,
+            orchestrator_topics: ordinary_schema::OrchestratorTopics::new(
+                self.assigned_topics.project_into()?,
+            ),
+            topic_assignment_source: self.assignment_source.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentRegistered> for ordinary_schema::AgentRegistered {
+    fn project_into(self) -> Result<ordinary_contract::AgentRegistered> {
+        Ok(ordinary_contract::AgentRegistered {
+            agent_identifier: self.orchestrator_agent_identifier.project_into()?,
+            assigned_topics: self.orchestrator_topics.into_payload().project_into()?,
+            assignment_source: self.topic_assignment_source.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AgentRegistrationRejected>
+    for ordinary_contract::AgentRegistrationRejected
+{
+    fn project_into(self) -> Result<ordinary_schema::AgentRegistrationRejected> {
+        Ok(ordinary_schema::AgentRegistrationRejected {
+            agent_registration_rejection_reason: self.reason.project_into()?,
+            orchestrator_topics: ordinary_schema::OrchestratorTopics::new(
+                self.available_topics.project_into()?,
+            ),
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentRegistrationRejected>
+    for ordinary_schema::AgentRegistrationRejected
+{
+    fn project_into(self) -> Result<ordinary_contract::AgentRegistrationRejected> {
+        Ok(ordinary_contract::AgentRegistrationRejected {
+            reason: self.agent_registration_rejection_reason.project_into()?,
+            available_topics: self.orchestrator_topics.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::TopicTree> for ordinary_contract::TopicTree {
+    fn project_into(self) -> Result<ordinary_schema::TopicTree> {
+        Ok(ordinary_schema::TopicTree::new(
+            ordinary_schema::OrchestratorTopics::new(self.topics.project_into()?),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::TopicTree> for ordinary_schema::TopicTree {
+    fn project_into(self) -> Result<ordinary_contract::TopicTree> {
+        Ok(ordinary_contract::TopicTree {
+            topics: self.into_payload().into_payload().project_into()?,
+        })
+    }
+}
+
+impl OrchestrateSemaEngine<'_> {
+    fn orchestrator_topics(&self) -> Result<Vec<ordinary_contract::OrchestratorTopic>> {
+        Ok(self
+            .service
+            .tables()
+            .orchestrator_topic_records()?
+            .into_iter()
+            .map(|topic| ordinary_contract::OrchestratorTopic {
+                path: topic.path,
+                name: topic.name,
+                parent: topic.parent,
+            })
+            .collect())
+    }
+
+    fn register_orchestrator_agent(
+        &self,
+        registration: ordinary_contract::OrchestratorAgentRegistration,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        let available_topics = self.orchestrator_topics()?;
+        let selected_paths = match registration.topic_selection {
+            ordinary_contract::TopicSelection::Automatic => {
+                return Ok(ordinary_contract::OrchestrateReply::AgentRegistrationRejected(
+                    ordinary_contract::AgentRegistrationRejected {
+                        reason: ordinary_contract::AgentRegistrationRejectionReason::JudgeUnavailable,
+                        available_topics,
+                    },
+                ));
+            }
+            ordinary_contract::TopicSelection::Explicit(paths) => paths,
+        };
+        if selected_paths
+            .iter()
+            .any(|path| !available_topics.iter().any(|topic| topic.path == *path))
+        {
+            return Ok(
+                ordinary_contract::OrchestrateReply::AgentRegistrationRejected(
+                    ordinary_contract::AgentRegistrationRejected {
+                        reason: ordinary_contract::AgentRegistrationRejectionReason::UnknownTopic,
+                        available_topics,
+                    },
+                ),
+            );
+        }
+        let assigned_topics = selected_paths
+            .into_iter()
+            .filter_map(|path| {
+                available_topics
+                    .iter()
+                    .find(|topic| topic.path == path)
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        let agent = self.service.tables().register_orchestrator_agent(
+            registration.session,
+            registration.mission,
+            registration.harness,
+        )?;
+        for topic in &assigned_topics {
+            self.service
+                .tables()
+                .seat_agent_on_topic(agent.agent_identifier.clone(), topic.path.clone())?;
+        }
+        Ok(ordinary_contract::OrchestrateReply::AgentRegistered(
+            ordinary_contract::AgentRegistered {
+                agent_identifier: agent.agent_identifier,
+                assigned_topics,
+                assignment_source: ordinary_contract::TopicAssignmentSource::Explicit,
+            },
+        ))
+    }
+
+    fn observe_orchestrator_topic(
+        &self,
+        path: ordinary_contract::OrchestratorTopicPath,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        let topics = self.orchestrator_topics()?;
+        let topic = topics
+            .into_iter()
+            .find(|topic| topic.path == path)
+            .ok_or_else(|| Error::SchemaBridge {
+                message: "requested orchestrator topic is absent".to_string(),
+            })?;
+        let member_agent_identifiers = self
+            .service
+            .tables()
+            .topic_member_identifiers(&topic.path)?;
+        Ok(ordinary_contract::OrchestrateReply::TopicDetail(
+            ordinary_contract::TopicDetail {
+                topic,
+                member_agent_identifiers,
+            },
+        ))
+    }
+
+    fn observe_orchestrator_agents(&self) -> Result<ordinary_contract::OrchestrateReply> {
+        let agents = self
+            .service
+            .tables()
+            .orchestrator_agent_records()?
+            .into_iter()
+            .map(|agent| {
+                let topics = self
+                    .service
+                    .tables()
+                    .agent_topic_paths(&agent.agent_identifier)?;
+                Ok(ordinary_contract::OrchestratorAgentSummary {
+                    agent_identifier: agent.agent_identifier,
+                    mission: agent.mission,
+                    topics,
+                    status: agent.status,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(ordinary_contract::OrchestrateReply::AgentDirectory(
+            ordinary_contract::AgentDirectory { agents },
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorAgentSummary>
+    for ordinary_contract::OrchestratorAgentSummary
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorAgentSummary> {
+        Ok(ordinary_schema::OrchestratorAgentSummary {
+            orchestrator_agent_identifier: self.agent_identifier.project_into()?,
+            mission_description: self.mission.project_into()?,
+            orchestrator_topic_paths: ordinary_schema::OrchestratorTopicPaths::new(
+                self.topics.project_into()?,
+            ),
+            orchestrator_agent_status: self.status.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorAgentSummary>
+    for ordinary_schema::OrchestratorAgentSummary
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorAgentSummary> {
+        Ok(ordinary_contract::OrchestratorAgentSummary {
+            agent_identifier: self.orchestrator_agent_identifier.project_into()?,
+            mission: self.mission_description.project_into()?,
+            topics: self
+                .orchestrator_topic_paths
+                .into_payload()
+                .project_into()?,
+            status: self.orchestrator_agent_status.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::TopicDetail> for ordinary_contract::TopicDetail {
+    fn project_into(self) -> Result<ordinary_schema::TopicDetail> {
+        Ok(ordinary_schema::TopicDetail {
+            orchestrator_topic: self.topic.project_into()?,
+            orchestrator_agent_identifiers: ordinary_schema::OrchestratorAgentIdentifiers::new(
+                self.member_agent_identifiers.project_into()?,
+            ),
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::TopicDetail> for ordinary_schema::TopicDetail {
+    fn project_into(self) -> Result<ordinary_contract::TopicDetail> {
+        Ok(ordinary_contract::TopicDetail {
+            topic: self.orchestrator_topic.project_into()?,
+            member_agent_identifiers: self
+                .orchestrator_agent_identifiers
+                .into_payload()
+                .project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AgentDirectory> for ordinary_contract::AgentDirectory {
+    fn project_into(self) -> Result<ordinary_schema::AgentDirectory> {
+        Ok(ordinary_schema::AgentDirectory::new(
+            ordinary_schema::OrchestratorAgentSummaries::new(self.agents.project_into()?),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentDirectory> for ordinary_schema::AgentDirectory {
+    fn project_into(self) -> Result<ordinary_contract::AgentDirectory> {
+        Ok(ordinary_contract::AgentDirectory {
+            agents: self.into_payload().into_payload().project_into()?,
         })
     }
 }

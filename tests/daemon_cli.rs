@@ -217,16 +217,16 @@ fn schema_lane_registration(
     role: SchemaRole,
 ) -> SchemaLaneRegistrationRequest {
     SchemaLaneRegistrationRequest {
-        assignment: SchemaLaneAssignment {
-            session: SchemaSessionIdentifier::new(session),
-            lane: SchemaLaneIdentifier::new(lane),
-            owner: SchemaLaneOwner {
+        lane_assignment: SchemaLaneAssignment {
+            session_identifier: SchemaSessionIdentifier::new(session),
+            lane_identifier: SchemaLaneIdentifier::new(lane),
+            lane_owner: SchemaLaneOwner {
                 role,
-                authority: SchemaLaneAuthority::Structural,
+                lane_authority: SchemaLaneAuthority::Structural,
             },
-            details: SchemaLaneDetails::new("daemon cli lane registration"),
+            lane_details: SchemaLaneDetails::new("daemon cli lane registration"),
         },
-        mode: SchemaLaneRegistrationMode::Fresh,
+        lane_registration_mode: SchemaLaneRegistrationMode::Fresh,
     }
 }
 
@@ -403,8 +403,8 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let schema_role_name = SchemaRoleName::new(schema_role_identifier.clone());
 
     let output = fixture.meta_cli(MetaSchemaInput::Create(SchemaCreateRoleOrder {
-        role: schema_role_identifier.clone(),
-        harness: SchemaHarnessKind::Codex,
+        role_identifier: schema_role_identifier.clone(),
+        harness_kind: SchemaHarnessKind::Codex,
     }));
     assert!(
         output.status.success(),
@@ -415,7 +415,7 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     let MetaSchemaOutput::RoleCreated(created) = reply else {
         panic!("expected role created, got {reply:?}");
     };
-    assert_eq!(created.role, schema_role_identifier);
+    assert_eq!(created.role_identifier, schema_role_identifier);
     assert!(Path::new(created.report_repository_path.payload().as_str()).is_dir());
     assert!(Path::new(created.report_lane_path.payload().as_str()).exists());
 
@@ -431,10 +431,10 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     };
     assert!(
         snapshot
-            .roles
+            .role_statuses
             .payload()
             .iter()
-            .any(|status| status.role == schema_role_name)
+            .any(|status| status.role_name == schema_role_name)
     );
 
     let output = fixture.meta_cli(MetaSchemaInput::Register(schema_lane_registration(
@@ -456,12 +456,12 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     );
 
     let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
-        role: schema_role_name,
-        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
+        role_name: schema_role_name,
+        scope_references: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/primary-orchestrate-daemon-zxq9-never-collide",
         ))]
         .into(),
-        reason: SchemaScopeReason::new("daemon CLI claim projection"),
+        scope_reason: SchemaScopeReason::new("daemon CLI claim projection"),
     }));
     assert!(
         output.status.success(),
@@ -483,12 +483,12 @@ fn cli_unregistered_lane_claim_returns_structured_error_output() {
     let fixture = DaemonFixture::start("orchestrate-cli-unregistered-claim");
 
     let output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
-        role: SchemaRoleName::new(SchemaRoleIdentifier::new("unregistered-audit-lane")),
-        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
+        role_name: SchemaRoleName::new(SchemaRoleIdentifier::new("unregistered-audit-lane")),
+        scope_references: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/session-lane-audit-unregistered",
         ))]
         .into(),
-        reason: SchemaScopeReason::new("should fail without transport failure"),
+        scope_reason: SchemaScopeReason::new("should fail without transport failure"),
     }));
     assert!(
         output.status.success(),
@@ -506,12 +506,12 @@ fn cli_unregistered_lane_claim_returns_structured_error_output() {
         panic!("expected structured partial failure, got {reply:?}");
     };
     let failure = partial
-        .failed
+        .application_failures
         .payload()
         .first()
         .expect("partial failure detail");
     assert_eq!(
-        failure.detail.payload(),
+        failure.scope_reason.payload(),
         "lane is not registered: unregistered-audit-lane"
     );
 }
@@ -542,12 +542,12 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
     );
 
     let claim_output = fixture.ordinary_cli(SchemaInput::Claim(SchemaRoleClaim {
-        role: SchemaRoleName::new(SchemaRoleIdentifier::new("daemon-cli-alpha-observe")),
-        scopes: vec![SchemaScopeReference::Path(SchemaWirePath::new(
+        role_name: SchemaRoleName::new(SchemaRoleIdentifier::new("daemon-cli-alpha-observe")),
+        scope_references: vec![SchemaScopeReference::Path(SchemaWirePath::new(
             "/tmp/daemon-cli-alpha-observe",
         ))]
         .into(),
-        reason: SchemaScopeReason::new("daemon CLI observe resource claim"),
+        scope_reason: SchemaScopeReason::new("daemon CLI observe resource claim"),
     }));
     assert!(
         claim_output.status.success(),
@@ -570,10 +570,10 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
         .payload()
         .iter()
         .find(|projection| {
-            projection.session == SchemaSessionIdentifier::new("DaemonCliObserveSession")
+            projection.session_identifier == SchemaSessionIdentifier::new("DaemonCliObserveSession")
         })
         .expect("daemon cli observe session");
-    assert_eq!(daemon_session.active_lanes, 1);
+    assert_eq!(daemon_session.integer, 1);
 
     let empty_session_output =
         fixture.ordinary_cli(SchemaInput::Observe(SchemaObservation::SessionLanes(
@@ -605,16 +605,16 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
     assert_eq!(session_lanes.payload().payload().len(), 1);
     let alpha_lane = &session_lanes.payload().payload()[0];
     assert_eq!(
-        alpha_lane.registration.assignment.lane,
+        alpha_lane.lane_registration.lane_assignment.lane_identifier,
         SchemaLaneIdentifier::new("daemon-cli-alpha-observe")
     );
     assert_eq!(
-        alpha_lane.registration.status,
+        alpha_lane.lane_registration.lane_status,
         signal_orchestrate::schema::lib::LaneStatus::Active
     );
-    assert_eq!(alpha_lane.resource_claims.payload().len(), 1);
+    assert_eq!(alpha_lane.lane_resource_claims.payload().len(), 1);
     assert_eq!(
-        alpha_lane.resource_claims.payload()[0].reason,
+        alpha_lane.lane_resource_claims.payload()[0].scope_reason,
         SchemaScopeReason::new("daemon CLI observe resource claim")
     );
 
@@ -629,7 +629,7 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
         panic!("expected all lanes observed, got {all_lanes_reply:?}");
     };
     assert!(all_lanes.payload().payload().iter().any(|projection| {
-        projection.registration.assignment.lane
+        projection.lane_registration.lane_assignment.lane_identifier
             == SchemaLaneIdentifier::new("daemon-cli-beta-observe")
     }));
 }
@@ -655,15 +655,15 @@ fn daemon_drops_legacy_lock_claims_without_registered_lanes() {
         panic!("expected role snapshot, got {reply:?}");
     };
     let system_operator = snapshot
-        .roles
+        .role_statuses
         .payload()
         .iter()
         .find(|status| {
-            status.role == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
+            status.role_name == SchemaRoleName::new(SchemaRoleIdentifier::new("system-operator"))
         })
         .expect("system-operator role");
     assert!(
-        system_operator.claims.payload().is_empty(),
+        system_operator.claim_entries.payload().is_empty(),
         "legacy role locks must not create ordinary claims without registered lanes"
     );
 }
@@ -902,8 +902,8 @@ fn cli_rejects_flag_style_argument_shapes() {
 #[test]
 fn component_clis_reject_the_other_contract_tier() {
     let meta_request = MetaSchemaInput::Create(SchemaCreateRoleOrder {
-        role: SchemaRoleIdentifier::new("wrong-tier-role"),
-        harness: SchemaHarnessKind::Codex,
+        role_identifier: SchemaRoleIdentifier::new("wrong-tier-role"),
+        harness_kind: SchemaHarnessKind::Codex,
     });
     let ordinary_output = Command::new(env!("CARGO_BIN_EXE_orchestrate"))
         .arg(encode_nota(&meta_request))

@@ -1,5 +1,6 @@
 use schema::{
     EnumDeclaration, ImportResolver, Root, SchemaEngine, SchemaIdentity, SchemaSourceArtifact,
+    TrueSchema,
 };
 use std::path::PathBuf;
 
@@ -46,7 +47,7 @@ fn resolver() -> ImportResolver {
         ))
 }
 
-fn lower_schema(name: &str, module: &str) -> schema::Schema {
+fn lower_schema(name: &str, module: &str) -> TrueSchema {
     let source = std::fs::read_to_string(schema_file(name)).expect("read schema source");
     let artifact = SchemaSourceArtifact::from_schema_text(&source).expect("schema source decodes");
     SchemaEngine::default()
