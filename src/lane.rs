@@ -6,11 +6,24 @@ use meta_signal_orchestrate::{
     LaneUnregistrationRequest, MetaOrchestrateReply, SessionClearRequest, SessionCleared,
 };
 use signal_orchestrate::{
-    LaneAuthority, LaneIdentifier, LaneProjection, LanesObserved, OrchestrateReply, Role, RoleName,
-    SessionProjection, SessionsObserved,
+    LaneAuthority, LaneIdentifier, LaneProjection, LaneStatus, LanesObserved, OrchestrateReply,
+    Role, RoleName, SessionProjection, SessionsObserved, TimestampNanos,
 };
 
 use crate::{Error, OrchestrateTables, Result, StoredClaim, StoredLaneRegistration};
+
+/// How long a terminal lane record (`Released` / `HandoverEnded`) is retained
+/// after its last update before the reaper hard-deletes it. Terminal lanes are
+/// finished work; a short window keeps them briefly for post-mortem, then they
+/// are gone so the live view reflects only real lanes. Tunable.
+const TERMINAL_LANE_RETENTION_NANOS: u64 = 60 * 60 * 1_000_000_000;
+
+/// How long an `Active` lane may sit idle — no claim, release, handoff, or
+/// recovery re-registration — before the reaper treats it as a leaked lane
+/// whose owning agent is gone and hard-deletes it. Generous by design: genuine
+/// long-running work refreshes its last-activity stamp on every real use, so
+/// only an abandoned lane idles this long. Tunable.
+const ACTIVE_LANE_IDLE_LIMIT_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 
 pub struct LaneRegistry<'tables> {
     tables: &'tables OrchestrateTables,
@@ -33,6 +46,10 @@ impl<'tables> LaneRegistry<'tables> {
             let resolution = match request.mode {
                 LaneRegistrationMode::Fresh => LaneAlreadyRegisteredResolution::FreshConflict,
                 LaneRegistrationMode::Recovery => {
+                    // Recovery is real use: resuming a lane refreshes its
+                    // last-activity stamp so an inherited lane does not age out
+                    // from under the agent that just reclaimed it.
+                    self.tables.touch_lane(&request.assignment.lane)?;
                     LaneAlreadyRegisteredResolution::RecoveryInherited
                 }
             };
@@ -118,7 +135,28 @@ impl<'tables> LaneRegistry<'tables> {
         }))
     }
 
+    /// Reap dead lane records, then report the current live registry. Every
+    /// read of the registry first reconciles it, so the observed count always
+    /// reflects only real lanes without a background timer: a terminal record
+    /// past its retention window and an `Active` lane idle past the generous
+    /// liveness window are both hard-deleted here.
+    pub fn reconcile(&self) -> Result<LaneReconciliation> {
+        let reaper = LaneReaper::new(self.tables.current_timestamp()?);
+        let mut reconciliation = LaneReconciliation::none();
+        for lane in self.tables.lane_records()? {
+            let Some(reason) = reaper.reap_reason(&lane) else {
+                continue;
+            };
+            self.tables.remove_claims_for_lane(&lane.assignment.lane)?;
+            self.tables
+                .remove_lane(&lane.assignment.session, &lane.assignment.lane)?;
+            reconciliation.record(reason);
+        }
+        Ok(reconciliation)
+    }
+
     pub fn observe(&self) -> Result<OrchestrateReply> {
+        self.reconcile()?;
         let observed_at = self.tables.current_timestamp()?;
         let claims = self.tables.claim_records()?;
         let mut lanes = self
@@ -146,6 +184,7 @@ impl<'tables> LaneRegistry<'tables> {
         &self,
         session: signal_orchestrate::SessionIdentifier,
     ) -> Result<OrchestrateReply> {
+        self.reconcile()?;
         let observed_at = self.tables.current_timestamp()?;
         let claims = self.tables.claim_records()?;
         let mut lanes = self
@@ -164,6 +203,7 @@ impl<'tables> LaneRegistry<'tables> {
     }
 
     pub fn observe_sessions(&self) -> Result<OrchestrateReply> {
+        self.reconcile()?;
         let mut sessions = BTreeMap::new();
         for registration in self.tables.lane_records()? {
             let active_lanes = sessions.entry(registration.assignment.session).or_insert(0);
@@ -261,5 +301,71 @@ impl<'tables> LaneRegistry<'tables> {
             10 => Ok("tenth"),
             _ => Err(Error::UnsupportedLaneOrdinal { ordinal }),
         }
+    }
+}
+
+/// Decides, against a single reconciliation instant, whether one stored lane is
+/// a real live lane to keep or a dead record to reap. Liveness is read from the
+/// lane's own `updated_at` last-activity stamp: the two terminal states and the
+/// `Active` state each dissolve into the same idle-past-a-window rule, only with
+/// a different window. A lane is never reaped by anything but its own idle age.
+struct LaneReaper {
+    now: TimestampNanos,
+}
+
+impl LaneReaper {
+    fn new(now: TimestampNanos) -> Self {
+        Self { now }
+    }
+
+    /// Why this lane should be reaped, or `None` to keep it. `Active` lanes use
+    /// the generous liveness window; terminal lanes use the short retention
+    /// window. A lane whose stamp is in the future (clock skew) reads as zero
+    /// idle and is always kept.
+    fn reap_reason(&self, lane: &StoredLaneRegistration) -> Option<LaneReapReason> {
+        let idle_nanos = self.now.value().saturating_sub(lane.updated_at.value());
+        match lane.status {
+            LaneStatus::Active => {
+                (idle_nanos >= ACTIVE_LANE_IDLE_LIMIT_NANOS).then_some(LaneReapReason::ActiveIdle)
+            }
+            LaneStatus::Released | LaneStatus::HandoverEnded => {
+                (idle_nanos >= TERMINAL_LANE_RETENTION_NANOS)
+                    .then_some(LaneReapReason::TerminalExpired)
+            }
+        }
+    }
+}
+
+/// Why the reaper hard-deleted a lane: an `Active` lane idle past the liveness
+/// window (a leaked lane whose agent is gone), or a terminal record past its
+/// retention window (finished work whose brief post-mortem window elapsed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneReapReason {
+    ActiveIdle,
+    TerminalExpired,
+}
+
+/// The tally of one reconciliation pass: how many lanes were reaped for each
+/// reason, so a caller (startup log, test) can witness the cleanup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LaneReconciliation {
+    pub reaped_idle_active: u32,
+    pub reaped_terminal: u32,
+}
+
+impl LaneReconciliation {
+    fn none() -> Self {
+        Self::default()
+    }
+
+    fn record(&mut self, reason: LaneReapReason) {
+        match reason {
+            LaneReapReason::ActiveIdle => self.reaped_idle_active += 1,
+            LaneReapReason::TerminalExpired => self.reaped_terminal += 1,
+        }
+    }
+
+    pub fn total_reaped(&self) -> u32 {
+        self.reaped_idle_active + self.reaped_terminal
     }
 }

@@ -485,6 +485,19 @@ impl OrchestrateTables {
         Ok(())
     }
 
+    /// Refresh an active lane's last-activity stamp (`updated_at`) to now, the
+    /// liveness signal the reaper reads: any real use of a lane — a claim,
+    /// release, handoff, or recovery re-registration — pushes its idle clock
+    /// back so genuine long-running work is never aged out. A lane that is not
+    /// currently active is left untouched.
+    pub fn touch_lane(&self, lane: &LaneIdentifier) -> Result<()> {
+        if let Some(mut registration) = self.active_lane_record(lane)? {
+            registration.updated_at = self.current_timestamp()?;
+            self.insert_lane(&registration)?;
+        }
+        Ok(())
+    }
+
     pub fn replace_lanes(&self, lanes: &[StoredLaneRegistration]) -> Result<()> {
         let existing = self
             .lane_records()?

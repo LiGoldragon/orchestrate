@@ -43,7 +43,7 @@ pub use execution::{
     OrchestrateSemaEngine,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
-pub use lane::LaneRegistry;
+pub use lane::{LaneReapReason, LaneReconciliation, LaneRegistry};
 pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;

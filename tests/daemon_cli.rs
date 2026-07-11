@@ -343,6 +343,16 @@ fn complete_handover(fixture: &DaemonFixture) -> HandoverMarker {
 }
 
 fn test_mirror_payload() -> MirrorPayload {
+    // A handover mirror transfers live state: its lanes were last active moments
+    // before the handover, so their last-activity stamp is recent. Using a recent
+    // `updated_at` keeps the restored lanes clear of the idle-lane reaper, exactly
+    // as a real handover of active work would.
+    let recent = TimestampNanos::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_nanos() as u64,
+    );
     MirrorSnapshot {
         claims: vec![StoredClaim::new(
             lane_identifier("operator"),
@@ -367,7 +377,7 @@ fn test_mirror_payload() -> MirrorPayload {
                         .expect("lane details"),
                 },
                 TimestampNanos::new(1),
-                TimestampNanos::new(1),
+                recent,
                 LaneStatus::Active,
             ),
             StoredLaneRegistration::new(
@@ -383,7 +393,7 @@ fn test_mirror_payload() -> MirrorPayload {
                         .expect("lane details"),
                 },
                 TimestampNanos::new(1),
-                TimestampNanos::new(1),
+                recent,
                 LaneStatus::Active,
             ),
         ],

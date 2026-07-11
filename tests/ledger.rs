@@ -3,8 +3,9 @@ use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
     HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails,
-    LaneIdentifier, LaneOwner, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
-    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
+    LaneIdentifier, LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest,
+    LaneRegistry, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
+    MissionDescription,
     Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
     OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
     PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
@@ -1111,6 +1112,89 @@ fn claim_cleanup_removes_rows_for_missing_lanes() {
 }
 
 #[test]
+fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
+    let temporary = tempfile::Builder::new()
+        .prefix("orchestrate-lane-reconcile")
+        .tempdir()
+        .expect("temporary directory");
+    let store = StoreLocation::new(
+        temporary
+            .path()
+            .join("orchestrate.sema")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let tables = OrchestrateTables::open(&store).expect("tables open");
+
+    const HOUR_NANOS: u64 = 60 * 60 * 1_000_000_000;
+    let now = tables.current_timestamp().expect("clock").value();
+    let at = |offset_hours: u64| TimestampNanos::new(now - offset_hours * HOUR_NANOS);
+
+    // A lane whose last activity is recent survives regardless of its age at
+    // registration: liveness is idle time, not lifetime.
+    let fresh_active = StoredLaneRegistration::new(
+        lane_registration("ReconcileSession", "fresh-active", role_vector(&["Operator"]))
+            .assignment,
+        at(500),
+        at(0),
+        orchestrate::LaneStatus::Active,
+    );
+    // A leaked lane: Active but idle far past the generous liveness window.
+    let idle_active = StoredLaneRegistration::new(
+        lane_registration("ReconcileSession", "idle-active", role_vector(&["Designer"])).assignment,
+        at(500),
+        at(25),
+        orchestrate::LaneStatus::Active,
+    );
+    // A terminal record just past its short retention window.
+    let expired_terminal = StoredLaneRegistration::new(
+        lane_registration(
+            "ReconcileSession",
+            "expired-terminal",
+            role_vector(&["Schema", "Designer"]),
+        )
+        .assignment,
+        at(500),
+        at(2),
+        orchestrate::LaneStatus::Released,
+    );
+    // A terminal record still inside its retention window: kept for post-mortem.
+    let recent_terminal = StoredLaneRegistration::new(
+        lane_registration(
+            "ReconcileSession",
+            "recent-terminal",
+            role_vector(&["System", "Operator"]),
+        )
+        .assignment,
+        at(500),
+        at(0),
+        orchestrate::LaneStatus::Released,
+    );
+    for registration in [&fresh_active, &idle_active, &expired_terminal, &recent_terminal] {
+        tables.insert_lane(registration).expect("insert lane");
+    }
+    assert_eq!(tables.lane_records().expect("lanes").len(), 4);
+
+    let reconciliation: LaneReconciliation =
+        LaneRegistry::new(&tables).reconcile().expect("reconcile");
+    assert_eq!(reconciliation.reaped_idle_active, 1);
+    assert_eq!(reconciliation.reaped_terminal, 1);
+    assert_eq!(reconciliation.total_reaped(), 2);
+
+    let survivors: Vec<String> = tables
+        .lane_records()
+        .expect("lanes")
+        .into_iter()
+        .map(|registration| registration.assignment.lane.as_wire_token().to_string())
+        .collect();
+    assert_eq!(survivors.len(), 2);
+    assert!(survivors.contains(&"fresh-active".to_string()));
+    assert!(survivors.contains(&"recent-terminal".to_string()));
+    assert!(!survivors.contains(&"idle-active".to_string()));
+    assert!(!survivors.contains(&"expired-terminal".to_string()));
+}
+
+#[test]
 fn lane_registry_register_observe_set_authority_and_retire_are_store_backed() {
     let mut fixture = Fixture::new("orchestrate-lane-registry");
     let designer_role = role_vector(&["Designer"]);
@@ -1293,9 +1377,12 @@ fn observe_projects_sessions_all_lanes_session_lanes_and_resource_claims() {
         "ledger lane registration"
     );
     assert!(alpha_lane.observed_at.value() >= alpha_lane.registration.registered_at.value());
-    assert_eq!(
-        alpha_lane.age.value(),
-        alpha_lane.observed_at.value() - alpha_lane.registration.registered_at.value()
+    // Lane age is measured from last activity (`updated_at`), which a claim on
+    // this lane refreshed, so age is bounded by — and here strictly less than —
+    // time since registration.
+    assert!(
+        alpha_lane.age.value()
+            <= alpha_lane.observed_at.value() - alpha_lane.registration.registered_at.value()
     );
     assert_eq!(alpha_lane.resource_claims.len(), 1);
     assert_eq!(alpha_lane.resource_claims[0].scope, claimed_scope);

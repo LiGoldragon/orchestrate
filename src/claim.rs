@@ -51,6 +51,7 @@ impl<'tables> ClaimLedger<'tables> {
 
     pub fn apply_claim(&self, claim: RoleClaim) -> Result<OrchestrateReply> {
         let claimant = ClaimLane::from_role_name(&claim.role)?.registered(self.tables)?;
+        self.tables.touch_lane(claimant.lane())?;
         let entries = self.tables.claim_records()?;
         let conflicts = Self::conflicts_for(&entries, &claim, claimant.lane())?;
         if !conflicts.is_empty() {
@@ -98,6 +99,7 @@ impl<'tables> ClaimLedger<'tables> {
 
     pub fn apply_release(&self, release: RoleRelease) -> Result<OrchestrateReply> {
         let released_lane = ClaimLane::from_role_name(&release.role)?.registered(self.tables)?;
+        self.tables.touch_lane(released_lane.lane())?;
         let entries = self.tables.claim_records()?;
         let released_scopes = entries
             .iter()
@@ -122,6 +124,8 @@ impl<'tables> ClaimLedger<'tables> {
     pub fn apply_handoff(&self, handoff: RoleHandoff) -> Result<OrchestrateReply> {
         let from_lane = ClaimLane::from_role_name(&handoff.from)?.registered(self.tables)?;
         let to_lane = ClaimLane::from_role_name(&handoff.to)?.registered(self.tables)?;
+        self.tables.touch_lane(from_lane.lane())?;
+        self.tables.touch_lane(to_lane.lane())?;
         let entries = self.tables.claim_records()?;
         if !Self::source_holds_all(&entries, from_lane.lane(), &handoff) {
             return Ok(OrchestrateReply::HandoffRejection(HandoffRejection {

@@ -53,6 +53,11 @@ impl OrchestrateService {
         let tables = OrchestrateTables::open(store)?;
         RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
         LegacyLockImport::new(&tables, &layout).import_if_store_has_no_claims()?;
+        // Reap dead lane records at startup: every daemon restart (each deploy)
+        // hard-deletes terminal records past retention and Active lanes idle past
+        // the liveness window, so a store that accumulated leaked and terminal
+        // lanes while an older daemon ran comes up reflecting only real lanes.
+        crate::LaneRegistry::new(&tables).reconcile()?;
         tables.remove_claims_without_lanes()?;
         Ok(Self {
             tables,
