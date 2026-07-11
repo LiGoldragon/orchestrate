@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.4.1"
+version      = "0.5.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -54,6 +54,7 @@ meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-or
 meta-signal-harness = { git = "https://github.com/LiGoldragon/meta-signal-harness.git", branch = "main" }
 signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
 signal-harness = { git = "https://github.com/LiGoldragon/signal-harness.git", branch = "main" }
+signal-router = { git = "https://github.com/LiGoldragon/signal-router.git", branch = "main" }
 signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", branch = "main" }
 signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sema.git", branch = "main" }
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }

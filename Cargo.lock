@@ -464,7 +464,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "criome",
  "getrandom",
@@ -481,6 +481,7 @@ dependencies = [
  "signal-frame",
  "signal-harness",
  "signal-orchestrate",
+ "signal-router",
  "signal-sema",
  "signal-version-handover",
  "tempfile",
@@ -685,7 +686,7 @@ dependencies = [
 [[package]]
 name = "schema-rust"
 version = "0.7.0"
-source = "git+https://github.com/LiGoldragon/schema-rust.git?branch=main#255823ab3d0d6c5cab26e26a8b1d60c63c52c7b4"
+source = "git+https://github.com/LiGoldragon/schema-rust.git?branch=main#f3b4563163dd11ba1cbbcca8081701ab7830b8f5"
 dependencies = [
  "nota",
  "prettyplease",
@@ -846,11 +847,11 @@ dependencies = [
 
 [[package]]
 name = "signal-router"
-version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/signal-router.git?branch=main#2bc4c51027a82b773d6d7b7087e8cb0043b2576a"
+version = "0.6.0"
+source = "git+https://github.com/LiGoldragon/signal-router.git?branch=main#56e11a3deb00492546ee06c8dcfd8304898b454f"
 dependencies = [
  "rkyv",
- "schema-rust 0.7.0 (git+https://github.com/LiGoldragon/schema-rust.git?branch=main)",
+ "schema-rust 0.7.0 (git+https://github.com/LiGoldragon/schema-rust.git?rev=255823ab3d0d6c5cab26e26a8b1d60c63c52c7b4)",
  "signal-frame",
  "thiserror",
 ]

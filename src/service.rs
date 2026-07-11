@@ -36,6 +36,12 @@ pub struct OrchestrateService {
     /// reachability. Direct contract-level callers (tests) leave it `None`, so
     /// registration simply lands without reachability.
     pending_caller_process_id: Option<u32>,
+    /// The router working socket a discovered agent's registration is propagated
+    /// to, so the minted identity becomes a live router delivery target. `None`
+    /// when the daemon was not configured with a router socket (or in tests):
+    /// registration then lands without router propagation and no degradation is
+    /// recorded. The router is a co-resident peer, so propagation is best-effort.
+    router_registration_endpoint: Option<std::path::PathBuf>,
 }
 
 impl OrchestrateService {
@@ -55,7 +61,26 @@ impl OrchestrateService {
             handover: HandoverState::Active,
             public_sockets: PublicSocketRetirement::none(),
             pending_caller_process_id: None,
+            router_registration_endpoint: None,
         })
+    }
+
+    /// Register the router working socket a discovered agent's registration is
+    /// propagated to. The daemon's `build_runtime` calls this with the configured
+    /// path; tests and router-less deployments leave it unset, so registration
+    /// lands without router propagation.
+    pub fn with_router_registration_endpoint(
+        mut self,
+        endpoint: Option<std::path::PathBuf>,
+    ) -> Self {
+        self.router_registration_endpoint = endpoint;
+        self
+    }
+
+    /// The router working socket to propagate a discovered registration to, when
+    /// configured.
+    pub(crate) fn router_registration_endpoint(&self) -> Option<&std::path::Path> {
+        self.router_registration_endpoint.as_deref()
     }
 
     /// Record the peer process identifier for the working request about to be

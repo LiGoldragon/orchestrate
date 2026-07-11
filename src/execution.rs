@@ -10,7 +10,8 @@ use signal_orchestrate::schema::lib as ordinary_schema;
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
     ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, LaneRegistry,
-    OrchestrateService, RepositoryRegistry, Result, RoleRegistry, WorkflowRunner, WorktreeRegistry,
+    OrchestrateService, RepositoryRegistry, Result, RoleRegistry, RouterActorRegistration,
+    RouterRegistrationDegradation, StoredAgentReachability, WorkflowRunner, WorktreeRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4868,8 +4869,87 @@ impl OrchestrateSemaEngine<'_> {
         };
         self.service
             .tables()
-            .attach_agent_reachability(agent_identifier, reachability)?;
+            .attach_agent_reachability(agent_identifier, reachability.clone())?;
+        self.propagate_registration_to_router(agent_identifier, &reachability)?;
         Ok(())
+    }
+
+    /// Propagate a discovered registration to the router so the minted identity
+    /// becomes a live delivery target. The router is a co-resident peer, so this
+    /// is best-effort: a router that is unreachable or that refuses the
+    /// registration is recorded as a divergence (the router leg of the
+    /// registration did not apply), never a failure of the agent's own
+    /// registration. When no router socket is configured, propagation is skipped
+    /// with no divergence.
+    fn propagate_registration_to_router(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+        reachability: &StoredAgentReachability,
+    ) -> Result<()> {
+        let Some(socket_path) = self.service.router_registration_endpoint() else {
+            return Ok(());
+        };
+        match RouterActorRegistration::new(socket_path.to_path_buf())
+            .register(agent_identifier, reachability)
+        {
+            Ok(_disposition) => Ok(()),
+            Err(degradation) => {
+                self.record_router_registration_divergence(agent_identifier, degradation)
+            }
+        }
+    }
+
+    /// Record a router-registration degradation as a divergence: the router
+    /// downstream leg failed while the agent's own registration succeeded. An
+    /// unreachable router maps to `Unreachable`; a router refusal maps to
+    /// `Rejected` carrying the typed reason.
+    fn record_router_registration_divergence(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+        degradation: RouterRegistrationDegradation,
+    ) -> Result<()> {
+        let (reason, detail) = match degradation {
+            RouterRegistrationDegradation::Unreachable(detail) => (
+                ordinary_contract::ApplicationFailureReason::Unreachable,
+                format!(
+                    "router registration for agent {} degraded: {detail}",
+                    agent_identifier.as_str()
+                ),
+            ),
+            RouterRegistrationDegradation::Rejected(refusal) => (
+                ordinary_contract::ApplicationFailureReason::Rejected,
+                format!(
+                    "router refused registration for agent {}: {}",
+                    agent_identifier.as_str(),
+                    Self::router_refusal_detail(refusal)
+                ),
+            ),
+        };
+        let failure = ordinary_contract::ApplicationFailure {
+            component: ordinary_contract::DownstreamComponent::Router,
+            reason,
+            detail: ordinary_contract::ScopeReason::from_text(detail)?,
+        };
+        self.service
+            .tables()
+            .append_divergence(ordinary_contract::PartialApplied {
+                succeeded: Vec::new(),
+                failed: vec![failure],
+            })?;
+        Ok(())
+    }
+
+    fn router_refusal_detail(
+        refusal: signal_router::ActorRegistrationRefusalReason,
+    ) -> &'static str {
+        match refusal {
+            signal_router::ActorRegistrationRefusalReason::ProcessIdentifierOutOfRange => {
+                "process identifier out of range"
+            }
+            signal_router::ActorRegistrationRefusalReason::RemoteRouterEndpointNotLocal => {
+                "remote-router endpoint is not a local delivery target"
+            }
+        }
     }
 
     fn observe_orchestrator_topic(

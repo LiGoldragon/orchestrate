@@ -95,7 +95,12 @@ impl ComponentDaemon for OrchestrateDaemon {
         .with_public_socket_retirement(PublicSocketRetirement::new(
             PathBuf::from(configuration.ordinary_socket_path.as_str()),
             PathBuf::from(configuration.meta_socket_path.as_str()),
-        ));
+        ))
+        .with_router_registration_endpoint(
+            configuration
+                .router_working_socket_path()
+                .map(|path| PathBuf::from(path.as_str())),
+        );
         Ok(service)
     }
 

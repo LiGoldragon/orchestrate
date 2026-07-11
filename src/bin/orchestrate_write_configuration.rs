@@ -17,7 +17,13 @@ use orchestrate::{
 };
 use thiserror::Error;
 
+/// The seven required path arguments (signal, store, three sockets, two roots).
 const REQUIRED_ARGUMENT_COUNT: usize = 7;
+
+/// One optional trailing argument: the co-resident router working socket to
+/// propagate discovered registrations to. Absent, the daemon lands registrations
+/// without router propagation.
+const MAXIMUM_ARGUMENT_COUNT: usize = 8;
 
 fn main() -> ExitCode {
     match DaemonConfigurationWriter::from_environment().run() {
@@ -54,13 +60,14 @@ struct DaemonConfigurationArguments {
     upgrade_socket_path: RuntimePath,
     workspace_root: RuntimePath,
     git_index_root: RuntimePath,
+    router_working_socket_path: Option<RuntimePath>,
 }
 
 impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
     type Error = DaemonConfigurationWriterError;
 
     fn try_from(arguments: Vec<OsString>) -> Result<Self, Self::Error> {
-        if arguments.len() != REQUIRED_ARGUMENT_COUNT {
+        if arguments.len() < REQUIRED_ARGUMENT_COUNT || arguments.len() > MAXIMUM_ARGUMENT_COUNT {
             return Err(DaemonConfigurationWriterError::ArgumentCount {
                 expected: REQUIRED_ARGUMENT_COUNT,
                 actual: arguments.len(),
@@ -75,6 +82,10 @@ impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
             upgrade_socket_path: ArgumentPath::required("upgrade_socket_path", &mut paths)?,
             workspace_root: ArgumentPath::required("workspace_root", &mut paths)?,
             git_index_root: ArgumentPath::required("git_index_root", &mut paths)?,
+            router_working_socket_path: ArgumentPath::optional(
+                "router_working_socket_path",
+                &mut paths,
+            )?,
         })
     }
 }
@@ -93,14 +104,19 @@ impl DaemonConfigurationArguments {
     }
 
     fn configuration(&self) -> Result<DaemonConfiguration, DaemonConfigurationWriterError> {
-        Ok(DaemonConfiguration::new(
+        let configuration = DaemonConfiguration::new(
             wire_path(self.store_path.as_path())?,
             wire_path(self.ordinary_socket_path.as_path())?,
             wire_path(self.meta_socket_path.as_path())?,
             wire_path(self.upgrade_socket_path.as_path())?,
             wire_path(self.workspace_root.as_path())?,
             wire_path(self.git_index_root.as_path())?,
-        ))
+        );
+        Ok(match &self.router_working_socket_path {
+            Some(router_working_socket_path) => configuration
+                .with_router_working_socket_path(wire_path(router_working_socket_path.as_path())?),
+            None => configuration,
+        })
     }
 
     fn create_runtime_directories(&self) -> Result<(), DaemonConfigurationWriterError> {
@@ -124,6 +140,18 @@ impl ArgumentPath {
             .ok_or(DaemonConfigurationWriterError::MissingArgument)?;
         RuntimePath::try_new(field, PathBuf::from(path))
             .map_err(DaemonConfigurationWriterError::RuntimePath)
+    }
+
+    fn optional(
+        field: &'static str,
+        paths: &mut impl Iterator<Item = OsString>,
+    ) -> Result<Option<RuntimePath>, DaemonConfigurationWriterError> {
+        match paths.next() {
+            Some(path) => RuntimePath::try_new(field, PathBuf::from(path))
+                .map(Some)
+                .map_err(DaemonConfigurationWriterError::RuntimePath),
+            None => Ok(None),
+        }
     }
 }
 

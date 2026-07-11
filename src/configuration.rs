@@ -18,6 +18,12 @@ pub struct DaemonConfiguration {
     pub upgrade_socket_path: WirePath,
     pub workspace_root: WirePath,
     pub git_index_root: WirePath,
+    /// The co-resident router's working socket, when configured. On a successful
+    /// agent registration with discovered reachability, orchestrate propagates
+    /// the minted identity to the router over this socket so it becomes a live
+    /// delivery target. `None` (the default, and the shape an older deployment
+    /// writes) leaves registration landing without router propagation.
+    pub router_working_socket_path: Option<WirePath>,
 }
 
 impl DaemonConfiguration {
@@ -36,7 +42,21 @@ impl DaemonConfiguration {
             upgrade_socket_path,
             workspace_root,
             git_index_root,
+            router_working_socket_path: None,
         }
+    }
+
+    /// Set the co-resident router working socket the daemon propagates
+    /// registrations to. The write-configuration boundary calls this when a
+    /// router socket path is supplied; absent it, registration lands without
+    /// router propagation.
+    pub fn with_router_working_socket_path(mut self, router_working_socket_path: WirePath) -> Self {
+        self.router_working_socket_path = Some(router_working_socket_path);
+        self
+    }
+
+    pub fn router_working_socket_path(&self) -> Option<&WirePath> {
+        self.router_working_socket_path.as_ref()
     }
 
     /// Encode the configuration to the binary rkyv form the daemon accepts as

@@ -15,6 +15,7 @@ pub mod lock_projection;
 pub mod orchestrator_agent_identifier;
 pub mod repository;
 pub mod role;
+pub mod router_registration;
 #[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
@@ -57,6 +58,7 @@ pub use meta_signal_orchestrate::{
 pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
+pub use router_registration::{RouterActorRegistration, RouterRegistrationDegradation};
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentRegistrationRejectionReason,
