@@ -355,6 +355,14 @@ Task scopes render in bracketed human form:
   directory-minus-file handoff shape.
 - Lane registry changes are meta-authority operations, not contract
   enum additions.
+- The lane registry reflects only real lanes: a lane's `updated_at` is its
+  last-activity stamp, refreshed on every real use (claim, release, handoff,
+  recovery re-registration). A `LaneReaper` reconciles the registry at daemon
+  startup and before every observe, hard-deleting terminal records past a short
+  retention window and `Active` lanes idle past a generous liveness window. A
+  lane is never reaped by anything but its own idle age, so genuine long-running
+  work — which refreshes its stamp on each claim — never ages out. Windows are
+  tunable constants in `src/lane.rs` (terminal 1h, active idle 24h).
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path
