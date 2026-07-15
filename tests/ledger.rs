@@ -5,14 +5,14 @@ use orchestrate::{
     HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails,
     LaneIdentifier, LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest,
     LaneRegistry, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
-    MissionDescription,
-    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
-    OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
-    PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
-    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
-    ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
-    StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
-    TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
+    MissionDescription, Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply,
+    OrchestrateRequest, OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration,
+    OrchestratorTopicPath, PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest,
+    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
+    ScopeReason, ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation,
+    StoredClaim, StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken,
+    TimestampNanos, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
+    WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -1133,15 +1133,24 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
     // A lane whose last activity is recent survives regardless of its age at
     // registration: liveness is idle time, not lifetime.
     let fresh_active = StoredLaneRegistration::new(
-        lane_registration("ReconcileSession", "fresh-active", role_vector(&["Operator"]))
-            .assignment,
+        lane_registration(
+            "ReconcileSession",
+            "fresh-active",
+            role_vector(&["Operator"]),
+        )
+        .assignment,
         at(500),
         at(0),
         orchestrate::LaneStatus::Active,
     );
     // A leaked lane: Active but idle far past the generous liveness window.
     let idle_active = StoredLaneRegistration::new(
-        lane_registration("ReconcileSession", "idle-active", role_vector(&["Designer"])).assignment,
+        lane_registration(
+            "ReconcileSession",
+            "idle-active",
+            role_vector(&["Designer"]),
+        )
+        .assignment,
         at(500),
         at(25),
         orchestrate::LaneStatus::Active,
@@ -1170,7 +1179,12 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
         at(0),
         orchestrate::LaneStatus::Released,
     );
-    for registration in [&fresh_active, &idle_active, &expired_terminal, &recent_terminal] {
+    for registration in [
+        &fresh_active,
+        &idle_active,
+        &expired_terminal,
+        &recent_terminal,
+    ] {
         tables.insert_lane(registration).expect("insert lane");
     }
     assert_eq!(tables.lane_records().expect("lanes").len(), 4);

@@ -328,10 +328,9 @@ impl LaneReaper {
             LaneStatus::Active => {
                 (idle_nanos >= ACTIVE_LANE_IDLE_LIMIT_NANOS).then_some(LaneReapReason::ActiveIdle)
             }
-            LaneStatus::Released | LaneStatus::HandoverEnded => {
-                (idle_nanos >= TERMINAL_LANE_RETENTION_NANOS)
-                    .then_some(LaneReapReason::TerminalExpired)
-            }
+            LaneStatus::Released | LaneStatus::HandoverEnded => (idle_nanos
+                >= TERMINAL_LANE_RETENTION_NANOS)
+                .then_some(LaneReapReason::TerminalExpired),
         }
     }
 }
