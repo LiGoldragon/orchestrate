@@ -16,14 +16,14 @@ use crate::{Error, OrchestrateTables, Result, StoredClaim, StoredLaneRegistratio
 /// after its last update before the reaper hard-deletes it. Terminal lanes are
 /// finished work; a short window keeps them briefly for post-mortem, then they
 /// are gone so the live view reflects only real lanes. Tunable.
-const TERMINAL_LANE_RETENTION_NANOS: u64 = 60 * 60 * 1_000_000_000;
+pub const TERMINAL_LANE_RETENTION_NANOS: u64 = 60 * 60 * 1_000_000_000;
 
 /// How long an `Active` lane may sit idle — no claim, release, handoff, or
 /// recovery re-registration — before the reaper treats it as a leaked lane
 /// whose owning agent is gone and hard-deletes it. Generous by design: genuine
 /// long-running work refreshes its last-activity stamp on every real use, so
 /// only an abandoned lane idles this long. Tunable.
-const ACTIVE_LANE_IDLE_LIMIT_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
+pub const ACTIVE_LANE_IDLE_LIMIT_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 
 pub struct LaneRegistry<'tables> {
     tables: &'tables OrchestrateTables,
@@ -153,6 +153,18 @@ impl<'tables> LaneRegistry<'tables> {
             reconciliation.record(reason);
         }
         Ok(reconciliation)
+    }
+
+    /// Return the next durable lane expiry. Lifecycle mutations publish this
+    /// deadline to the daemon-owned reclaimer, which sleeps until it rather
+    /// than scanning the registry on an interval.
+    pub fn next_reclamation_deadline(&self) -> Result<Option<TimestampNanos>> {
+        Ok(self
+            .tables
+            .lane_records()?
+            .into_iter()
+            .map(|lane| LaneReaper::deadline_for(&lane))
+            .min_by_key(|deadline| deadline.value()))
     }
 
     pub fn observe(&self) -> Result<OrchestrateReply> {
@@ -332,6 +344,14 @@ impl LaneReaper {
                 >= TERMINAL_LANE_RETENTION_NANOS)
                 .then_some(LaneReapReason::TerminalExpired),
         }
+    }
+
+    fn deadline_for(lane: &StoredLaneRegistration) -> TimestampNanos {
+        let retention = match lane.status {
+            LaneStatus::Active => ACTIVE_LANE_IDLE_LIMIT_NANOS,
+            LaneStatus::Released | LaneStatus::HandoverEnded => TERMINAL_LANE_RETENTION_NANOS,
+        };
+        TimestampNanos::new(lane.updated_at.value().saturating_add(retention))
     }
 }
 

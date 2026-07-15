@@ -8,6 +8,7 @@ pub mod error;
 pub mod execution;
 pub mod handover;
 pub mod lane;
+pub mod lane_reclamation;
 pub mod layout;
 pub mod legacy_lock_import;
 pub mod location;
@@ -19,7 +20,6 @@ pub mod router_registration;
 #[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
-#[cfg(feature = "nota-text")]
 pub mod signal_transport;
 pub mod socket_retirement;
 pub mod tables;
@@ -44,6 +44,7 @@ pub use execution::{
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::{LaneReapReason, LaneReconciliation, LaneRegistry};
+pub use lane_reclamation::LaneReclaimer;
 pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
@@ -78,11 +79,11 @@ pub use signal_orchestrate::{
     WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus,
     WorktreesObserved,
 };
-#[cfg(feature = "nota-text")]
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use tables::{
+    CURRENT_ACTIVITY_LIMIT, CURRENT_DIVERGENCE_LIMIT, CURRENT_ORCHESTRATOR_TRIAGE_LIMIT,
     OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,
     StoredClaim, StoredDivergence, StoredGuidanceMagnitude, StoredLaneRegistration,
     StoredOrchestratorAgent, StoredOrchestratorMessageKind, StoredOrchestratorTopic,

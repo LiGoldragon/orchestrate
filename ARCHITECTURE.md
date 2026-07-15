@@ -357,19 +357,23 @@ Task scopes render in bracketed human form:
   enum additions.
 - The lane registry reflects only real lanes: a lane's `updated_at` is its
   last-activity stamp, refreshed on every real use (claim, release, handoff,
-  recovery re-registration). A `LaneReaper` reconciles the registry at daemon
-  startup and before every observe, hard-deleting terminal records past a short
-  retention window and `Active` lanes idle past a generous liveness window. A
-  lane is never reaped by anything but its own idle age, so genuine long-running
-  work — which refreshes its stamp on each claim — never ages out. Windows are
-  tunable constants in `src/lane.rs` (terminal 1h, active idle 24h).
+  recovery re-registration). A `LaneReaper` reconciles at daemon startup and
+  through a lifecycle-driven deadline worker: each lane mutation publishes the
+  next expiry, the worker sleeps until that one deadline, then re-enters through
+  the ordinary Signal path for actor-owned reclamation. It is not an interval
+  poll and does not require a human Observe call. Terminal records past a short
+  retention window and `Active` lanes idle past a generous liveness window are
+  hard-deleted with their claims. Windows are tunable constants in `src/lane.rs`
+  (terminal 1h, active idle 24h).
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path
   before inserting the role record.
 - A fanned-out Mutate that has at least one downstream success and at
   least one downstream failure records a divergence and returns a typed
-  `PartialApplied` reply instead of rolling back the successful leg.
+  `PartialApplied` reply instead of rolling back the successful leg. Activities,
+  divergences, and orchestrator triage audit rows are bounded current-reality
+  windows, not unbounded historical ledgers.
 - Repository refresh reads local checkouts from the configured Git
   index root and creates workspace `repos/` links.
 - Lock files are projections of typed state, not durable authority.

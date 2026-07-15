@@ -493,6 +493,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.register_orchestrator_agent(registration)?
             }
         };
+        self.service.reschedule_lane_reclamation()?;
         Ok(reply)
     }
 
@@ -552,6 +553,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 reply
             }
         };
+        self.service.reschedule_lane_reclamation()?;
         Ok(reply)
     }
 

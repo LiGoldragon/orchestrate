@@ -12,9 +12,9 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LegacyLockImport, LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions,
-    OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement,
-    Result, RoleRegistry, StoreLocation, StoredDivergence,
+    Error, LaneReclaimer, LegacyLockImport, LockProjection, MetaRequestExecution, MirrorSnapshot,
+    MirrorVersions, OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables,
+    PublicSocketRetirement, Result, RoleRegistry, StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
@@ -42,6 +42,10 @@ pub struct OrchestrateService {
     /// registration then lands without router propagation and no degradation is
     /// recorded. The router is a co-resident peer, so propagation is best-effort.
     router_registration_endpoint: Option<std::path::PathBuf>,
+    /// The daemon-lifecycle deadline worker. It receives state-derived expiry
+    /// deadlines after lane mutations and re-enters through Signal at expiry;
+    /// it never opens or mutates the store itself.
+    lane_reclaimer: Option<LaneReclaimer>,
 }
 
 impl OrchestrateService {
@@ -67,7 +71,30 @@ impl OrchestrateService {
             public_sockets: PublicSocketRetirement::none(),
             pending_caller_process_id: None,
             router_registration_endpoint: None,
+            lane_reclaimer: None,
         })
+    }
+
+    /// Attach lifecycle-driven lane expiry work to this daemon's ordinary
+    /// socket. It uses exact store-derived deadlines, not an interval scan.
+    pub fn with_lane_reclamation_socket(
+        mut self,
+        ordinary_socket_path: std::path::PathBuf,
+    ) -> Result<Self> {
+        let deadline = crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?;
+        self.lane_reclaimer = Some(LaneReclaimer::spawn(ordinary_socket_path, deadline));
+        Ok(self)
+    }
+
+    /// Publish the current earliest expiry after an engine turn. The worker
+    /// waits for this exact deadline and sends one internal event when it is
+    /// due; no human observation or background polling is involved.
+    pub(crate) fn reschedule_lane_reclamation(&self) -> Result<()> {
+        let Some(reclaimer) = &self.lane_reclaimer else {
+            return Ok(());
+        };
+        reclaimer.reschedule(crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?);
+        Ok(())
     }
 
     /// Register the router working socket a discovered agent's registration is

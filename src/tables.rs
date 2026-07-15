@@ -78,6 +78,14 @@ const ORCHESTRATOR_TOPIC_MEMBERSHIP: TableName = TableName::new("orchestrator_to
 const ORCHESTRATOR_TRIAGE_AUDIT: TableName = TableName::new("orchestrator_triage_audit");
 const ORCHESTRATOR_TRIAGE_NEXT_SLOT: TableName = TableName::new("orchestrator_triage_next_slot");
 const ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY: &str = "next";
+
+/// The live activity view is a bounded recent-history window, not an archive.
+pub const CURRENT_ACTIVITY_LIMIT: usize = 256;
+/// Divergences are diagnostic current reality; retain the latest bounded set.
+pub const CURRENT_DIVERGENCE_LIMIT: usize = 128;
+/// Triage audit supports current routing diagnosis, not unbounded transcript storage.
+pub const CURRENT_ORCHESTRATOR_TRIAGE_LIMIT: usize = 256;
+
 const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
 const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
 
@@ -690,11 +698,22 @@ impl OrchestrateTables {
             ACTIVITY_NEXT_SLOT_KEY,
             &slot.next_value(),
         )?;
+        self.trim_activities()?;
         Ok(activity)
     }
 
     pub fn activity_records(&self) -> Result<Vec<StoredActivity>> {
         self.records(self.activities)
+    }
+
+    fn trim_activities(&self) -> Result<()> {
+        let mut records = self.activity_records()?;
+        records.sort_by_key(|record| record.slot);
+        let expired = records.len().saturating_sub(CURRENT_ACTIVITY_LIMIT);
+        for record in records.into_iter().take(expired) {
+            self.remove_if_present(self.activities, &record.slot.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn append_divergence(&self, partial: PartialApplied) -> Result<StoredDivergence> {
@@ -707,11 +726,22 @@ impl OrchestrateTables {
             DIVERGENCE_NEXT_SLOT_KEY,
             &slot.next_value(),
         )?;
+        self.trim_divergences()?;
         Ok(divergence)
     }
 
     pub fn divergence_records(&self) -> Result<Vec<StoredDivergence>> {
         self.records(self.divergences)
+    }
+
+    fn trim_divergences(&self) -> Result<()> {
+        let mut records = self.divergence_records()?;
+        records.sort_by_key(|record| record.slot);
+        let expired = records.len().saturating_sub(CURRENT_DIVERGENCE_LIMIT);
+        for record in records.into_iter().take(expired) {
+            self.remove_if_present(self.divergences, &record.slot.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn insert_workflow_model_resolution(
@@ -928,11 +958,24 @@ impl OrchestrateTables {
             ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY,
             &slot.next_value(),
         )?;
+        self.trim_orchestrator_triage_records()?;
         Ok(record)
     }
 
     pub fn orchestrator_triage_records(&self) -> Result<Vec<StoredOrchestratorTriageRecord>> {
         self.records(self.orchestrator_triage_audit)
+    }
+
+    fn trim_orchestrator_triage_records(&self) -> Result<()> {
+        let mut records = self.orchestrator_triage_records()?;
+        records.sort_by_key(|record| record.slot);
+        let expired = records
+            .len()
+            .saturating_sub(CURRENT_ORCHESTRATOR_TRIAGE_LIMIT);
+        for record in records.into_iter().take(expired) {
+            self.remove_if_present(self.orchestrator_triage_audit, &record.slot.to_string())?;
+        }
+        Ok(())
     }
 
     fn next_orchestrator_triage_slot(&self) -> Result<ActivitySlot> {
@@ -1709,6 +1752,23 @@ mod tests {
     }
 
     #[test]
+    fn divergence_records_are_bounded_to_current_reality() {
+        let temporary = TemporaryStore::new("orchestrate-bounded-divergences");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        for _ in 0..=CURRENT_DIVERGENCE_LIMIT {
+            tables
+                .append_divergence(PartialApplied {
+                    succeeded: Vec::new(),
+                    failed: Vec::new(),
+                })
+                .expect("append divergence");
+        }
+        let records = tables.divergence_records().expect("divergences");
+        assert_eq!(records.len(), CURRENT_DIVERGENCE_LIMIT);
+        assert_eq!(records.iter().map(|record| record.slot).min(), Some(1));
+    }
+
+    #[test]
     fn orchestrator_agents_round_trip_with_store_minted_unique_identifiers() {
         let temporary = TemporaryStore::new("orchestrate-agent-registry");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
@@ -1884,6 +1944,21 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert!(records.contains(&routed));
         assert!(records.contains(&rejected));
+
+        for _ in 0..CURRENT_ORCHESTRATOR_TRIAGE_LIMIT {
+            tables
+                .append_orchestrator_triage_record(
+                    sender.agent_identifier.clone(),
+                    StoredOrchestratorMessageKind::Report,
+                    StoredTriageVerdict::Escalate,
+                )
+                .expect("append current triage record");
+        }
+        let bounded = tables
+            .orchestrator_triage_records()
+            .expect("bounded triage records");
+        assert_eq!(bounded.len(), CURRENT_ORCHESTRATOR_TRIAGE_LIMIT);
+        assert_eq!(bounded.iter().map(|record| record.slot).min(), Some(2));
     }
 
     #[test]

@@ -1,18 +1,18 @@
 use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
-    ApplicationFailureReason, ApplicationSuccess, CreateRoleOrder, DownstreamComponent,
-    HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails,
-    LaneIdentifier, LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest,
-    LaneRegistry, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
-    MissionDescription, Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply,
-    OrchestrateRequest, OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration,
-    OrchestratorTopicPath, PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest,
-    RetireRoleOrder, Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken,
-    ScopeReason, ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation,
-    StoredClaim, StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken,
-    TimestampNanos, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
-    WorkflowRunner,
+    ApplicationFailureReason, ApplicationSuccess, CURRENT_ACTIVITY_LIMIT, CreateRoleOrder,
+    DownstreamComponent, HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment,
+    LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneReconciliation,
+    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, LaneUnregistrationRequest,
+    MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription, Observation,
+    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
+    PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
+    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
+    ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
+    StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
+    TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -805,6 +805,48 @@ fn activity_submission_query_and_observation_are_store_stamped() {
 }
 
 #[test]
+fn repeated_activity_is_bounded_to_current_reality() {
+    let mut fixture = Fixture::new("orchestrate-bounded-activity");
+    for slot in 0..=CURRENT_ACTIVITY_LIMIT {
+        fixture
+            .handle(OrchestrateRequest::Submit(ActivitySubmission {
+                role: operator(),
+                scope: task("bounded-activity"),
+                reason: reason(&format!("activity {slot}")),
+            }))
+            .expect("submit activity");
+    }
+    let OrchestrateReply::ActivityList(records) = fixture
+        .handle(OrchestrateRequest::Query(ActivityQuery {
+            limit: (CURRENT_ACTIVITY_LIMIT + 1) as u32,
+            filters: Vec::new(),
+        }))
+        .expect("query activities")
+    else {
+        panic!("expected bounded activity list");
+    };
+    assert_eq!(records.records.len(), CURRENT_ACTIVITY_LIMIT);
+    assert_eq!(
+        records
+            .records
+            .first()
+            .expect("newest retained")
+            .reason
+            .as_str(),
+        "activity 256"
+    );
+    assert_eq!(
+        records
+            .records
+            .last()
+            .expect("oldest retained")
+            .reason
+            .as_str(),
+        "activity 1"
+    );
+}
+
+#[test]
 fn partial_downstream_failure_records_divergence_and_returns_typed_reply() {
     let fixture = Fixture::new("orchestrate-divergence");
     let partial = PartialApplied {
@@ -1187,6 +1229,28 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
     ] {
         tables.insert_lane(registration).expect("insert lane");
     }
+    tables
+        .replace_all_claims(&[
+            StoredClaim::new(
+                lane("idle-active"),
+                path("/tmp/reap-idle-active"),
+                reason("leaked active claim"),
+                at(25),
+            ),
+            StoredClaim::new(
+                lane("expired-terminal"),
+                path("/tmp/reap-terminal"),
+                reason("terminal claim must not outlive lane"),
+                at(2),
+            ),
+            StoredClaim::new(
+                lane("recent-terminal"),
+                path("/tmp/keep-terminal"),
+                reason("postmortem claim remains inside retention"),
+                at(0),
+            ),
+        ])
+        .expect("insert claims");
     assert_eq!(tables.lane_records().expect("lanes").len(), 4);
 
     let reconciliation: LaneReconciliation =
@@ -1206,6 +1270,13 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
     assert!(survivors.contains(&"recent-terminal".to_string()));
     assert!(!survivors.contains(&"idle-active".to_string()));
     assert!(!survivors.contains(&"expired-terminal".to_string()));
+    let remaining_claim_lanes: Vec<String> = tables
+        .claim_records()
+        .expect("claims")
+        .into_iter()
+        .map(|claim| claim.lane.as_wire_token().to_string())
+        .collect();
+    assert_eq!(remaining_claim_lanes, vec!["recent-terminal"]);
 }
 
 #[test]
