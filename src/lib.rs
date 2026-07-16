@@ -76,8 +76,10 @@ pub use signal_orchestrate::{
     WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
     WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
     WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeStatus,
-    WorktreesObserved,
+    TeardownRefusal, WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree,
+    WorktreeConclusion, WorktreeConclusionRequest, WorktreeConcluded, WorktreeRequest,
+    WorktreeRequestRejected, WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus,
+    WorktreeTeardownRefused, WorktreesObserved,
 };
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;

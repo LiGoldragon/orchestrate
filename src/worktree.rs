@@ -18,7 +18,10 @@ use meta_signal_orchestrate::{
 };
 use signal_orchestrate::{
     BranchName, LaneName, OrchestrateReply, PurposeText, PushedState, RepositoryName,
-    TimestampNanos, WirePath, Worktree, WorktreeStatus, WorktreesObserved,
+    TeardownRefusal, TimestampNanos, WirePath, Worktree, WorktreeConclusion,
+    WorktreeConclusionRequest, WorktreeConcluded, WorktreeRequest, WorktreeRequestRejected,
+    WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
+    WorktreesObserved,
 };
 
 use crate::{
@@ -130,6 +133,222 @@ impl<'tables> WorktreeRegistry<'tables> {
         Ok(MetaOrchestrateReply::WorktreeArchived(WorktreeArchived {
             worktree: Worktree::from(stored),
         }))
+    }
+
+    /// Scaffold a fresh worktree at the canonical root
+    /// (`<worktree_index_root>/<repository>/<branch>`) and register it.
+    ///
+    /// The daemon creates the `jj` workspace off `main`, sets the feature
+    /// bookmark, derives `pushed_state`/`last_activity`, and inserts the row.
+    /// Refuses (as a reply, mutating nothing) when the repository has no source
+    /// checkout or when a worktree already occupies the `(repository, branch)`
+    /// identity. A `jj` failure surfaces as [`Error::WorktreeScaffold`] with no
+    /// row committed.
+    pub fn request(&self, order: WorktreeRequest) -> Result<OrchestrateReply> {
+        let repository_checkout = self.layout.git_index_root().join(order.repository.as_str());
+        if !Self::is_checkout(&repository_checkout) {
+            return Ok(OrchestrateReply::WorktreeRequestRejected(
+                WorktreeRequestRejected {
+                    reason: WorktreeRequestRejection::RepositoryNotFound,
+                },
+            ));
+        }
+        let destination = self
+            .layout
+            .worktree_index_root()
+            .join(order.repository.as_str())
+            .join(order.branch.as_str());
+        let already_registered = self.tables.worktree_records()?.into_iter().any(|record| {
+            record.repository.as_str() == order.repository.as_str()
+                && record.branch.as_str() == order.branch.as_str()
+                && record.status != WorktreeStatus::Recycled
+        });
+        if already_registered || Self::directory_is_occupied(&destination) {
+            return Ok(OrchestrateReply::WorktreeRequestRejected(
+                WorktreeRequestRejected {
+                    reason: WorktreeRequestRejection::WorktreeAlreadyExists,
+                },
+            ));
+        }
+        self.scaffold_workspace(&repository_checkout, &destination, order.branch.as_str())?;
+        let derived = WorktreePathProbe::from_path(&destination).derive()?;
+        let worktree = Worktree {
+            repository: order.repository,
+            branch: order.branch,
+            path: wire_path(&destination)?,
+            owning_lane: order.owning_lane,
+            status: WorktreeStatus::Active,
+            purpose: order.purpose,
+            last_activity: derived.last_activity,
+            pushed_state: derived.pushed_state,
+        };
+        self.tables
+            .insert_worktree(&StoredWorktree::from(worktree.clone()))?;
+        Ok(OrchestrateReply::WorktreeScaffolded(WorktreeScaffolded {
+            worktree,
+        }))
+    }
+
+    /// Mark the worktree owned by `owning_lane` terminal and tear its workspace
+    /// down. A `Merged` disposition is gated: teardown is refused (mutating
+    /// nothing) unless the work is already an ancestor of `main`. `Rejected`
+    /// preserves the commit only on a remote `discard/<branch>` bookmark, then
+    /// discards everything local. On success the row transitions to
+    /// [`WorktreeStatus::Recycled`]. This is the shared teardown primitive any
+    /// abandonment trigger reuses.
+    pub fn conclude(&self, order: WorktreeConclusionRequest) -> Result<OrchestrateReply> {
+        let mut stored = self
+            .tables
+            .worktree_records()?
+            .into_iter()
+            .find(|record| {
+                record.owning_lane.as_str() == order.owning_lane.as_str()
+                    && record.status != WorktreeStatus::Recycled
+            })
+            .ok_or_else(|| Error::WorktreeLaneNotFound {
+                lane: order.owning_lane.as_str().to_owned(),
+            })?;
+        let destination = PathBuf::from(stored.path.as_str());
+        let pushed_state = WorktreePathProbe::from_path(&destination).pushed_state()?;
+        if matches!(order.disposition, WorktreeConclusion::Merged)
+            && pushed_state != PushedState::AncestorOfMain
+        {
+            stored.pushed_state = pushed_state;
+            return Ok(OrchestrateReply::WorktreeTeardownRefused(
+                WorktreeTeardownRefused {
+                    worktree: Worktree::from(stored),
+                    reason: TeardownRefusal::UnmergedWorkPresent,
+                },
+            ));
+        }
+        let repository_checkout = self.layout.git_index_root().join(stored.repository.as_str());
+        let workspace = Self::workspace_name(&destination);
+        let branch = stored.branch.as_str().to_owned();
+        let teardown_error = |path: &std::path::Path| {
+            let path = path.display().to_string();
+            move |message: String| Error::WorktreeTeardown { path, message }
+        };
+        if matches!(order.disposition, WorktreeConclusion::Rejected) {
+            let discard = format!("discard/{branch}");
+            Self::jj_effect(&destination, &["bookmark", "set", &discard, "-r", "@"])
+                .map_err(teardown_error(&destination))?;
+            Self::jj_effect(
+                &destination,
+                &["git", "push", "--bookmark", &discard, "--allow-new"],
+            )
+            .map_err(teardown_error(&destination))?;
+        }
+        Self::jj_effect(&repository_checkout, &["workspace", "forget", &workspace])
+            .map_err(teardown_error(&destination))?;
+        std::fs::remove_dir_all(&destination).map_err(|error| Error::WorktreeTeardown {
+            path: destination.display().to_string(),
+            message: format!("could not remove worktree directory: {error}"),
+        })?;
+        // Local bookmarks are best-effort: the remote `discard/<branch>` ref is
+        // the salvage, and a missing local bookmark must not fail teardown.
+        let _ = Self::jj_effect(&repository_checkout, &["bookmark", "delete", &branch]);
+        if matches!(order.disposition, WorktreeConclusion::Rejected) {
+            let _ = Self::jj_effect(
+                &repository_checkout,
+                &["bookmark", "delete", &format!("discard/{branch}")],
+            );
+        }
+        stored.status = WorktreeStatus::Recycled;
+        stored.pushed_state = pushed_state;
+        self.tables.insert_worktree(&stored)?;
+        Ok(OrchestrateReply::WorktreeConcluded(WorktreeConcluded {
+            worktree: Worktree::from(stored),
+        }))
+    }
+
+    /// Create the `jj` workspace off `main` and the feature bookmark. The
+    /// workspace name is the canonical path's final component so
+    /// [`Self::conclude`]'s `workspace forget` can name it deterministically.
+    fn scaffold_workspace(
+        &self,
+        repository_checkout: &Path,
+        destination: &Path,
+        branch: &str,
+    ) -> Result<()> {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| Error::WorktreeScaffold {
+                path: destination.display().to_string(),
+                message: format!("could not create worktree parent directory: {error}"),
+            })?;
+        }
+        let workspace = Self::workspace_name(destination);
+        let destination_text = destination.to_string_lossy().into_owned();
+        let scaffold_error = || {
+            let path = destination.display().to_string();
+            move |message: String| Error::WorktreeScaffold { path, message }
+        };
+        Self::jj_effect(
+            repository_checkout,
+            &[
+                "workspace",
+                "add",
+                "--revision",
+                "main",
+                "--name",
+                &workspace,
+                &destination_text,
+            ],
+        )
+        .map_err(scaffold_error())?;
+        Self::jj_effect(destination, &["bookmark", "create", branch, "-r", "@"])
+            .map_err(scaffold_error())?;
+        Ok(())
+    }
+
+    /// Flag every `Active` worktree owned by `owning_lane` as
+    /// [`WorktreeStatus::Abandoned`], returning how many were flagged. The
+    /// filesystem is never touched — this only marks orphans (owner reaped
+    /// before a terminal mark) for later reclamation through [`Self::conclude`].
+    pub fn flag_abandoned(&self, owning_lane: &LaneName) -> Result<u32> {
+        self.tables
+            .mark_worktrees_abandoned_for_lane(owning_lane.as_str())
+    }
+
+    /// A directory is a real checkout when it holds a `.jj` or `.git` entry.
+    fn is_checkout(path: &Path) -> bool {
+        path.join(".jj").exists() || path.join(".git").exists()
+    }
+
+    /// A destination is occupied when it exists and is not an empty directory.
+    fn directory_is_occupied(path: &Path) -> bool {
+        match std::fs::read_dir(path) {
+            Ok(mut entries) => entries.next().is_some(),
+            Err(_) => false,
+        }
+    }
+
+    /// The `jj` workspace name for a canonical worktree path: its final path
+    /// component (the branch directory).
+    fn workspace_name(destination: &Path) -> String {
+        destination
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Run one `jj` write effect in `directory`, returning the trimmed stderr as
+    /// the error string on non-zero exit so callers can wrap it in the right
+    /// typed error for their phase.
+    fn jj_effect(directory: &Path, arguments: &[&str]) -> std::result::Result<(), String> {
+        let output = Command::new("jj")
+            .arg("--no-pager")
+            .arg("--color")
+            .arg("never")
+            .arg("-R")
+            .arg(directory)
+            .args(arguments)
+            .output()
+            .map_err(|error| format!("could not run jj: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
     }
 
     /// Read the worktree table, ordered by `(repository, branch)`.
@@ -304,5 +523,72 @@ impl WorktreePathProbe {
 impl From<WirePath> for WorktreePathProbe {
     fn from(path: WirePath) -> Self {
         Self::new(path.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{OrchestrateLayout, OrchestrateTables, StoreLocation};
+
+    /// The reaper flags an orphaned Active worktree Abandoned without any
+    /// filesystem effect; already-terminal rows and other lanes are untouched.
+    #[test]
+    fn flag_abandoned_flips_only_active_rows_for_the_lane() {
+        let temporary = tempfile::Builder::new()
+            .prefix("orchestrate-flag-abandoned")
+            .tempdir()
+            .expect("temp dir");
+        let store = StoreLocation::new(
+            temporary
+                .path()
+                .join("orchestrate.sema")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let layout = OrchestrateLayout::new(
+            temporary.path().join("workspace"),
+            temporary.path().join("git-index"),
+        );
+        let tables = OrchestrateTables::open(&store).expect("tables open");
+
+        let row = |branch: &str, lane: &str, status: WorktreeStatus| StoredWorktree {
+            repository: RepositoryName::from_text("orchestrate").expect("repository"),
+            branch: BranchName::from_text(branch).expect("branch"),
+            path: WirePath::from_absolute_path(format!("/tmp/wt/{branch}")).expect("path"),
+            owning_lane: LaneName::from_text(lane).expect("lane"),
+            status,
+            purpose: PurposeText::from_text("abandonment fixture").expect("purpose"),
+            last_activity: TimestampNanos::new(1),
+            pushed_state: PushedState::Unpushed,
+        };
+        tables
+            .insert_worktree(&row("orphan", "GoneLane", WorktreeStatus::Active))
+            .expect("insert orphan");
+        tables
+            .insert_worktree(&row("already", "GoneLane", WorktreeStatus::Recycled))
+            .expect("insert terminal");
+        tables
+            .insert_worktree(&row("other", "LiveLane", WorktreeStatus::Active))
+            .expect("insert other lane");
+
+        let registry = WorktreeRegistry::new(&tables, &layout);
+        let flagged = registry
+            .flag_abandoned(&LaneName::from_text("GoneLane").expect("lane"))
+            .expect("flag abandoned");
+        assert_eq!(flagged, 1);
+
+        let status_of = |branch: &str| {
+            tables
+                .worktree_records()
+                .expect("records")
+                .into_iter()
+                .find(|record| record.branch.as_str() == branch)
+                .expect("row present")
+                .status
+        };
+        assert_eq!(status_of("orphan"), WorktreeStatus::Abandoned);
+        assert_eq!(status_of("already"), WorktreeStatus::Recycled);
+        assert_eq!(status_of("other"), WorktreeStatus::Active);
     }
 }

@@ -61,8 +61,13 @@ impl OrchestrateService {
         // hard-deletes terminal records past retention and Active lanes idle past
         // the liveness window, so a store that accumulated leaked and terminal
         // lanes while an older daemon ran comes up reflecting only real lanes.
-        crate::LaneRegistry::new(&tables).reconcile()?;
+        let reconciliation = crate::LaneRegistry::new(&tables).reconcile()?;
         tables.remove_claims_without_lanes()?;
+        // A reap that flagged orphaned worktrees `Abandoned` changed the
+        // worktree table, so refresh the GC manifest at startup.
+        if reconciliation.flagged_abandoned_worktrees > 0 {
+            crate::WorktreeProjection::new(&tables, &layout).project()?;
+        }
         Ok(Self {
             tables,
             layout,

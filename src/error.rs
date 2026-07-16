@@ -121,6 +121,18 @@ pub enum Error {
     #[error("worktree scan failed for {path}: {message}")]
     WorktreeScan { path: String, message: String },
 
+    #[error("worktree scaffold failed at {path}: {message}")]
+    WorktreeScaffold { path: String, message: String },
+
+    #[error("worktree teardown failed at {path}: {message}")]
+    WorktreeTeardown { path: String, message: String },
+
+    #[error("no worktree is registered for owning lane {lane}")]
+    WorktreeLaneNotFound { lane: String },
+
+    #[error("no source checkout found for repository {repository}")]
+    RepositoryCheckoutMissing { repository: String },
+
     #[error(
         "atomic batch has {operation_count} operations; orchestrate supports one operation per execution batch today"
     )]

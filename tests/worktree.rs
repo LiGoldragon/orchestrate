@@ -10,13 +10,14 @@ use orchestrate::{
     BranchName, LaneName, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
     OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, PurposeText,
     PushedState, RegisterWorktree, RepositoryName, StoreLocation, TimestampNanos, WirePath,
-    Worktree, WorktreeStatus,
+    Worktree, WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeStatus,
 };
 use tempfile::TempDir;
 
 struct WorktreeFixture {
     _temporary: TempDir,
     workspace: PathBuf,
+    git_index: PathBuf,
     worktree_root: PathBuf,
     service: OrchestrateService,
 }
@@ -47,16 +48,68 @@ impl WorktreeFixture {
         );
         let service = OrchestrateService::open_with_layout(
             &store,
-            OrchestrateLayout::new(workspace.clone(), git_index)
+            OrchestrateLayout::new(workspace.clone(), git_index.clone())
                 .with_worktree_index_root(worktree_root.clone()),
         )
         .expect("service opens");
         Self {
             _temporary: temporary,
             workspace,
+            git_index,
             worktree_root,
             service,
         }
+    }
+
+    /// A source checkout at `<git_index>/<repository>` with a `main` bookmark
+    /// and repo-local jj user config, so the daemon's own `jj workspace add`
+    /// (which sets no author env) can commit a working copy.
+    fn make_source_repository(&self, repository: &str) -> PathBuf {
+        let path = self.git_index.join(repository);
+        std::fs::create_dir_all(&path).expect("source repo path");
+        let status = Command::new("jj")
+            .arg("--no-pager")
+            .arg("git")
+            .arg("init")
+            .arg("--colocate")
+            .arg(&path)
+            .env("JJ_USER", "smoke")
+            .env("JJ_EMAIL", "smoke@example.invalid")
+            .output()
+            .expect("run jj git init");
+        assert!(
+            status.status.success(),
+            "jj git init failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        );
+        run_jj(&path, &["config", "set", "--repo", "user.name", "smoke"]);
+        run_jj(
+            &path,
+            &["config", "set", "--repo", "user.email", "smoke@example.invalid"],
+        );
+        std::fs::write(path.join("base.txt"), "base\n").expect("base file");
+        run_jj(&path, &["describe", "-m", "base commit"]);
+        run_jj(&path, &["bookmark", "create", "main", "-r", "@"]);
+        run_jj(&path, &["new"]);
+        path
+    }
+
+    fn request(&mut self, repository: &str, branch: &str, lane: &str) -> OrchestrateReply {
+        self.handle(OrchestrateRequest::RequestWorktree(WorktreeRequest {
+            repository: RepositoryName::from_text(repository).expect("repository name"),
+            branch: BranchName::from_text(branch).expect("branch name"),
+            owning_lane: LaneName::from_text(lane).expect("lane name"),
+            purpose: PurposeText::from_text("worktree lifecycle protocol").expect("purpose"),
+        }))
+        .expect("request worktree")
+    }
+
+    fn conclude(&mut self, lane: &str, disposition: WorktreeConclusion) -> OrchestrateReply {
+        self.handle(OrchestrateRequest::ConcludeWorktree(WorktreeConclusionRequest {
+            owning_lane: LaneName::from_text(lane).expect("lane name"),
+            disposition,
+        }))
+        .expect("conclude worktree")
     }
 
     fn handle(&mut self, request: OrchestrateRequest) -> orchestrate::Result<OrchestrateReply> {
@@ -215,4 +268,185 @@ fn refresh_scans_worktree_index_into_manifest() {
         panic!("expected WorktreesObserved, got {observed:?}");
     };
     assert_eq!(snapshot.worktrees.len(), 2);
+}
+
+fn observe_worktrees(fixture: &mut WorktreeFixture) -> Vec<Worktree> {
+    let observed = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Worktrees))
+        .expect("observe worktrees");
+    let OrchestrateReply::WorktreesObserved(snapshot) = observed else {
+        panic!("expected WorktreesObserved, got {observed:?}");
+    };
+    snapshot.worktrees
+}
+
+#[test]
+fn request_scaffolds_workspace_and_registers_row() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-request");
+    fixture.make_source_repository("orchestrate");
+
+    let reply = fixture.request("orchestrate", "feature-lifecycle", "designer");
+    let OrchestrateReply::WorktreeScaffolded(scaffolded) = reply else {
+        panic!("expected WorktreeScaffolded, got {reply:?}");
+    };
+    assert_eq!(scaffolded.worktree.status, WorktreeStatus::Active);
+    assert_eq!(scaffolded.worktree.owning_lane.as_str(), "designer");
+
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("feature-lifecycle");
+    assert!(destination.join(".jj").exists(), "workspace .jj must exist");
+    assert_eq!(scaffolded.worktree.path.as_str(), destination.to_string_lossy());
+
+    let worktrees = observe_worktrees(&mut fixture);
+    assert_eq!(worktrees.len(), 1);
+    assert_eq!(worktrees[0].branch.as_str(), "feature-lifecycle");
+
+    // A second request for the same identity is refused without scaffolding.
+    let again = fixture.request("orchestrate", "feature-lifecycle", "designer");
+    assert!(
+        matches!(again, OrchestrateReply::WorktreeRequestRejected(_)),
+        "duplicate request must be rejected, got {again:?}"
+    );
+
+    // An unknown repository is refused before any filesystem work.
+    let unknown = fixture.request("no-such-repo", "feature-lifecycle", "designer");
+    let OrchestrateReply::WorktreeRequestRejected(rejected) = unknown else {
+        panic!("expected WorktreeRequestRejected, got {unknown:?}");
+    };
+    assert_eq!(
+        rejected.reason,
+        orchestrate::WorktreeRequestRejection::RepositoryNotFound
+    );
+}
+
+#[test]
+fn conclude_merged_refuses_unmerged_work_and_preserves_directory() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-refuse");
+    fixture.make_source_repository("orchestrate");
+    fixture.request("orchestrate", "unmerged-feature", "operator");
+
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("unmerged-feature");
+    // Diverge from main: fill the working commit so its parent is a child of
+    // main (no longer an ancestor of main).
+    run_jj(&destination, &["describe", "-m", "real unmerged work"]);
+    run_jj(&destination, &["new"]);
+
+    let reply = fixture.conclude("operator", WorktreeConclusion::Merged);
+    let OrchestrateReply::WorktreeTeardownRefused(refused) = reply else {
+        panic!("expected WorktreeTeardownRefused, got {reply:?}");
+    };
+    assert_eq!(
+        refused.reason,
+        orchestrate::TeardownRefusal::UnmergedWorkPresent
+    );
+    assert!(destination.join(".jj").exists(), "refused teardown keeps dir");
+    let worktrees = observe_worktrees(&mut fixture);
+    assert_eq!(worktrees[0].status, WorktreeStatus::Active);
+}
+
+#[test]
+fn conclude_merged_tears_down_when_ancestor_of_main() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-merged");
+    fixture.make_source_repository("orchestrate");
+    fixture.request("orchestrate", "merged-feature", "operator");
+
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("merged-feature");
+    // No divergence: the scaffolded working-copy parent is `main` itself, so the
+    // work is trivially an ancestor of main and the safety gate opens.
+    let reply = fixture.conclude("operator", WorktreeConclusion::Merged);
+    let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
+        panic!("expected WorktreeConcluded, got {reply:?}");
+    };
+    assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
+    assert!(
+        !destination.exists(),
+        "merged teardown removes the worktree directory"
+    );
+    assert_eq!(observe_worktrees(&mut fixture)[0].status, WorktreeStatus::Recycled);
+}
+
+#[test]
+fn conclude_rejected_salvages_to_remote_then_tears_down() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-rejected");
+    let source = fixture.make_source_repository("orchestrate");
+    // A throwaway colocated repo used purely as the push remote for salvage.
+    let remote = fixture._temporary.path().join("remote");
+    let status = Command::new("jj")
+        .arg("--no-pager")
+        .arg("git")
+        .arg("init")
+        .arg("--colocate")
+        .arg(&remote)
+        .env("JJ_USER", "smoke")
+        .env("JJ_EMAIL", "smoke@example.invalid")
+        .output()
+        .expect("run jj git init remote");
+    assert!(status.status.success(), "remote init: {}", String::from_utf8_lossy(&status.stderr));
+    run_jj(
+        &source,
+        &[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            &format!("{}/.git", remote.to_string_lossy()),
+        ],
+    );
+
+    fixture.request("orchestrate", "rejected-feature", "designer");
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("rejected-feature");
+    run_jj(&destination, &["describe", "-m", "rejected work"]);
+
+    let reply = fixture.conclude("designer", WorktreeConclusion::Rejected);
+    let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
+        panic!("expected WorktreeConcluded, got {reply:?}");
+    };
+    assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
+    assert!(!destination.exists(), "rejected teardown removes the dir");
+
+    // The salvage bookmark lives on the remote repository itself.
+    let remote_bookmarks = jj_stdout(&remote, &["bookmark", "list"]);
+    assert!(
+        remote_bookmarks.contains("discard/rejected-feature"),
+        "remote must hold the salvage bookmark: {remote_bookmarks}"
+    );
+    // Nothing local survives: neither the feature bookmark nor a live (undeleted)
+    // discard bookmark remains in the source repository.
+    let source_bookmarks = jj_stdout(&source, &["bookmark", "list"]);
+    assert!(
+        source_bookmarks.lines().all(|line| {
+            let live = !line.trim_start().starts_with('@') && !line.contains("(deleted)");
+            !(live && line.contains("rejected-feature"))
+        }),
+        "no live local rejected-feature bookmark should remain: {source_bookmarks}"
+    );
+}
+
+fn jj_stdout(repository: &std::path::Path, arguments: &[&str]) -> String {
+    let output = Command::new("jj")
+        .arg("--no-pager")
+        .arg("-R")
+        .arg(repository)
+        .args(arguments)
+        .env("JJ_USER", "smoke")
+        .env("JJ_EMAIL", "smoke@example.invalid")
+        .output()
+        .expect("run jj");
+    assert!(
+        output.status.success(),
+        "jj {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }

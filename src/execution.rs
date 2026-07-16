@@ -492,6 +492,18 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ordinary_contract::OrchestrateRequest::RegisterAgent(registration) => {
                 self.register_orchestrator_agent(registration)?
             }
+            ordinary_contract::OrchestrateRequest::RequestWorktree(order) => {
+                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .request(order)?;
+                self.service.project_worktrees()?;
+                reply
+            }
+            ordinary_contract::OrchestrateRequest::ConcludeWorktree(order) => {
+                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .conclude(order)?;
+                self.service.project_worktrees()?;
+                reply
+            }
         };
         self.service.reschedule_lane_reclamation()?;
         Ok(reply)
@@ -2600,6 +2612,9 @@ impl ProjectInto<ordinary_schema::WorktreeStatus> for ordinary_contract::Worktre
             ordinary_contract::WorktreeStatus::Recycled => {
                 ordinary_schema::WorktreeStatus::Recycled
             }
+            ordinary_contract::WorktreeStatus::Abandoned => {
+                ordinary_schema::WorktreeStatus::Abandoned
+            }
         })
     }
 }
@@ -2614,6 +2629,9 @@ impl ProjectInto<ordinary_contract::WorktreeStatus> for ordinary_schema::Worktre
             }
             ordinary_schema::WorktreeStatus::Recycled => {
                 ordinary_contract::WorktreeStatus::Recycled
+            }
+            ordinary_schema::WorktreeStatus::Abandoned => {
+                ordinary_contract::WorktreeStatus::Abandoned
             }
         })
     }
@@ -2669,6 +2687,137 @@ impl ProjectInto<ordinary_contract::Worktree> for ordinary_schema::Worktree {
             purpose: self.purpose_text.project_into()?,
             last_activity: self.timestamp_nanos.project_into()?,
             pushed_state: self.pushed_state.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeConclusion> for ordinary_contract::WorktreeConclusion {
+    fn project_into(self) -> Result<ordinary_schema::WorktreeConclusion> {
+        Ok(match self {
+            ordinary_contract::WorktreeConclusion::Merged => {
+                ordinary_schema::WorktreeConclusion::Merged
+            }
+            ordinary_contract::WorktreeConclusion::Rejected => {
+                ordinary_schema::WorktreeConclusion::Rejected
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreeConclusion> for ordinary_schema::WorktreeConclusion {
+    fn project_into(self) -> Result<ordinary_contract::WorktreeConclusion> {
+        Ok(match self {
+            ordinary_schema::WorktreeConclusion::Merged => {
+                ordinary_contract::WorktreeConclusion::Merged
+            }
+            ordinary_schema::WorktreeConclusion::Rejected => {
+                ordinary_contract::WorktreeConclusion::Rejected
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeRequest> for ordinary_contract::WorktreeRequest {
+    fn project_into(self) -> Result<ordinary_schema::WorktreeRequest> {
+        Ok(ordinary_schema::WorktreeRequest {
+            repository_name: self.repository.project_into()?,
+            branch_name: self.branch.project_into()?,
+            lane_name: self.owning_lane.project_into()?,
+            purpose_text: self.purpose.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreeRequest> for ordinary_schema::WorktreeRequest {
+    fn project_into(self) -> Result<ordinary_contract::WorktreeRequest> {
+        Ok(ordinary_contract::WorktreeRequest {
+            repository: self.repository_name.project_into()?,
+            branch: self.branch_name.project_into()?,
+            owning_lane: self.lane_name.project_into()?,
+            purpose: self.purpose_text.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeConclusionRequest>
+    for ordinary_contract::WorktreeConclusionRequest
+{
+    fn project_into(self) -> Result<ordinary_schema::WorktreeConclusionRequest> {
+        Ok(ordinary_schema::WorktreeConclusionRequest {
+            lane_name: self.owning_lane.project_into()?,
+            worktree_conclusion: self.disposition.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreeConclusionRequest>
+    for ordinary_schema::WorktreeConclusionRequest
+{
+    fn project_into(self) -> Result<ordinary_contract::WorktreeConclusionRequest> {
+        Ok(ordinary_contract::WorktreeConclusionRequest {
+            owning_lane: self.lane_name.project_into()?,
+            disposition: self.worktree_conclusion.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeRequestRejection>
+    for ordinary_contract::WorktreeRequestRejection
+{
+    fn project_into(self) -> Result<ordinary_schema::WorktreeRequestRejection> {
+        Ok(match self {
+            ordinary_contract::WorktreeRequestRejection::RepositoryNotFound => {
+                ordinary_schema::WorktreeRequestRejection::RepositoryNotFound
+            }
+            ordinary_contract::WorktreeRequestRejection::WorktreeAlreadyExists => {
+                ordinary_schema::WorktreeRequestRejection::WorktreeAlreadyExists
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::WorktreeRequestRejection>
+    for ordinary_schema::WorktreeRequestRejection
+{
+    fn project_into(self) -> Result<ordinary_contract::WorktreeRequestRejection> {
+        Ok(match self {
+            ordinary_schema::WorktreeRequestRejection::RepositoryNotFound => {
+                ordinary_contract::WorktreeRequestRejection::RepositoryNotFound
+            }
+            ordinary_schema::WorktreeRequestRejection::WorktreeAlreadyExists => {
+                ordinary_contract::WorktreeRequestRejection::WorktreeAlreadyExists
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::TeardownRefusal> for ordinary_contract::TeardownRefusal {
+    fn project_into(self) -> Result<ordinary_schema::TeardownRefusal> {
+        Ok(match self {
+            ordinary_contract::TeardownRefusal::UnmergedWorkPresent => {
+                ordinary_schema::TeardownRefusal::UnmergedWorkPresent
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::TeardownRefusal> for ordinary_schema::TeardownRefusal {
+    fn project_into(self) -> Result<ordinary_contract::TeardownRefusal> {
+        Ok(match self {
+            ordinary_schema::TeardownRefusal::UnmergedWorkPresent => {
+                ordinary_contract::TeardownRefusal::UnmergedWorkPresent
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::WorktreeTeardownRefused>
+    for ordinary_contract::WorktreeTeardownRefused
+{
+    fn project_into(self) -> Result<ordinary_schema::WorktreeTeardownRefused> {
+        Ok(ordinary_schema::WorktreeTeardownRefused {
+            worktree: self.worktree.project_into()?,
+            teardown_refusal: self.reason.project_into()?,
         })
     }
 }
@@ -2827,6 +2976,12 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::RegisterAgent(payload) => {
                 ordinary_schema::Input::register_agent(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::RequestWorktree(payload) => {
+                ordinary_schema::Input::request_worktree(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateRequest::ConcludeWorktree(payload) => {
+                ordinary_schema::Input::conclude_worktree(payload.project_into()?)
+            }
         })
     }
 }
@@ -2874,6 +3029,12 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             }
             ordinary_schema::Input::RegisterAgent(payload) => {
                 ordinary_contract::OrchestrateRequest::RegisterAgent(payload.project_into()?)
+            }
+            ordinary_schema::Input::RequestWorktree(payload) => {
+                ordinary_contract::OrchestrateRequest::RequestWorktree(payload.project_into()?)
+            }
+            ordinary_schema::Input::ConcludeWorktree(payload) => {
+                ordinary_contract::OrchestrateRequest::ConcludeWorktree(payload.project_into()?)
             }
         })
     }
@@ -3519,6 +3680,18 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::AgentDirectory(payload) => {
                 ordinary_schema::Output::AgentDirectory(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::WorktreeScaffolded(payload) => {
+                ordinary_schema::Output::worktree_scaffolded(payload.worktree.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorktreeRequestRejected(payload) => {
+                ordinary_schema::Output::worktree_request_rejected(payload.reason.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorktreeConcluded(payload) => {
+                ordinary_schema::Output::worktree_concluded(payload.worktree.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::WorktreeTeardownRefused(payload) => {
+                ordinary_schema::Output::worktree_teardown_refused(payload.project_into()?)
+            }
         })
     }
 }
@@ -3620,6 +3793,35 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             }
             ordinary_schema::Output::AgentDirectory(payload) => {
                 ordinary_contract::OrchestrateReply::AgentDirectory(payload.project_into()?)
+            }
+            ordinary_schema::Output::WorktreeScaffolded(payload) => {
+                ordinary_contract::OrchestrateReply::WorktreeScaffolded(
+                    ordinary_contract::WorktreeScaffolded {
+                        worktree: payload.into_payload().project_into()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::WorktreeRequestRejected(payload) => {
+                ordinary_contract::OrchestrateReply::WorktreeRequestRejected(
+                    ordinary_contract::WorktreeRequestRejected {
+                        reason: payload.into_payload().project_into()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::WorktreeConcluded(payload) => {
+                ordinary_contract::OrchestrateReply::WorktreeConcluded(
+                    ordinary_contract::WorktreeConcluded {
+                        worktree: payload.into_payload().project_into()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::WorktreeTeardownRefused(payload) => {
+                ordinary_contract::OrchestrateReply::WorktreeTeardownRefused(
+                    ordinary_contract::WorktreeTeardownRefused {
+                        worktree: payload.worktree.project_into()?,
+                        reason: payload.teardown_refusal.project_into()?,
+                    },
+                )
             }
         })
     }

@@ -147,6 +147,15 @@ impl<'tables> LaneRegistry<'tables> {
             let Some(reason) = reaper.reap_reason(&lane) else {
                 continue;
             };
+            // An idle `Active` lane is a leaked owner: flag its worktrees
+            // `Abandoned` (durable status only, never a filesystem effect) so a
+            // later `ConcludeWorktree` — the shared teardown primitive — can
+            // reclaim them. The projection catches up on the next worktree op.
+            if matches!(reason, LaneReapReason::ActiveIdle) {
+                reconciliation.flagged_abandoned_worktrees += self
+                    .tables
+                    .mark_worktrees_abandoned_for_lane(lane.assignment.lane.as_str())?;
+            }
             self.tables.remove_claims_for_lane(&lane.assignment.lane)?;
             self.tables
                 .remove_lane(&lane.assignment.session, &lane.assignment.lane)?;
@@ -370,6 +379,7 @@ pub enum LaneReapReason {
 pub struct LaneReconciliation {
     pub reaped_idle_active: u32,
     pub reaped_terminal: u32,
+    pub flagged_abandoned_worktrees: u32,
 }
 
 impl LaneReconciliation {

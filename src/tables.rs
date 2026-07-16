@@ -590,6 +590,24 @@ impl OrchestrateTables {
         Ok(())
     }
 
+    /// Flip every `Active` worktree owned by `owning_lane` to
+    /// [`WorktreeStatus::Abandoned`], returning how many were flipped. A pure
+    /// status transition on durable state — no filesystem effect — so the lane
+    /// reaper can flag orphans without the worktree layout.
+    pub fn mark_worktrees_abandoned_for_lane(&self, owning_lane: &str) -> Result<u32> {
+        let mut flagged = 0;
+        for mut record in self.worktree_records()? {
+            if record.owning_lane.as_str() == owning_lane
+                && record.status == WorktreeStatus::Active
+            {
+                record.status = WorktreeStatus::Abandoned;
+                self.insert_worktree(&record)?;
+                flagged += 1;
+            }
+        }
+        Ok(flagged)
+    }
+
     pub fn replace_worktrees(&self, worktrees: &[StoredWorktree]) -> Result<()> {
         let existing = self
             .worktree_records()?
