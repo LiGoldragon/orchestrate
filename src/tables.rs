@@ -476,6 +476,19 @@ impl OrchestrateTables {
         }))
     }
 
+    /// The lane record for `lane` when it is *open* — `Active` or `Suspect`.
+    /// Both belong to a presumed-present owner whose claims are still live and
+    /// who can still re-assert; the claim gate and [`Self::touch_lane`] accept
+    /// either, so a `Suspect` lane's owner reviving through real use is honored.
+    pub fn open_lane_record(
+        &self,
+        lane: &LaneIdentifier,
+    ) -> Result<Option<StoredLaneRegistration>> {
+        Ok(self.lane_records()?.into_iter().find(|registration| {
+            registration.assignment.lane == *lane && registration.status.is_open()
+        }))
+    }
+
     pub fn session_lane_records(
         &self,
         session: &SessionIdentifier,

@@ -2180,6 +2180,7 @@ impl ProjectInto<ordinary_schema::LaneStatus> for ordinary_contract::LaneStatus 
             ordinary_contract::LaneStatus::HandoverEnded => {
                 ordinary_schema::LaneStatus::HandoverEnded
             }
+            ordinary_contract::LaneStatus::Suspect => ordinary_schema::LaneStatus::Suspect,
         })
     }
 }
@@ -2192,6 +2193,7 @@ impl ProjectInto<ordinary_contract::LaneStatus> for ordinary_schema::LaneStatus 
             ordinary_schema::LaneStatus::HandoverEnded => {
                 ordinary_contract::LaneStatus::HandoverEnded
             }
+            ordinary_schema::LaneStatus::Suspect => ordinary_contract::LaneStatus::Suspect,
         })
     }
 }
