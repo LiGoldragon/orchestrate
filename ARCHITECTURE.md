@@ -441,6 +441,24 @@ Task scopes render in bracketed human form:
   entries in `Archived` or `Recycled` status; the daemon or an external
   agent acts on them. Infrastructure-minted fields (`last_activity`,
   `pushed_state`) are derived from `jj` by the daemon, never agent-supplied.
+- Repository-main contention (contention-flow MVP, psyche-ruled 2026-07-17):
+  a claim covering a registered repository whose whole checkout another live
+  lane holds is answered `RepositoryMainContended` — holder, held age, and a
+  feature worktree scaffolded on the spot with the claimant's lane name as
+  the branch (`FeatureWorktree::Scaffolded`/`Existing`). Narrow-path
+  conflicts inside a repository keep the plain `ClaimRejection`.
+- `ConcludeWorktree(Merged)` lands the work itself — the MVP has no review
+  gate ("first MVP doesnt, just merge in main"): work already an ancestor
+  passes through (`AlreadyAncestor`); otherwise `AutoLand` fetches, rebases
+  the salvage head onto the latest `main`, advances the bookmark, and pushes
+  (`FastForwarded`/`Rebased`). A conflicted rebase or a push rejected after
+  one retry is fully unwound via `jj op restore` and refused typed
+  (`AutoRebaseConflicted`/`MainPushRejected`) — the seam where the deferred
+  review gate lands later. `Rejected` conclusions report `Discarded`.
+  Releasing a lane whose scopes covered a repository main carries
+  `started_branches` in the acknowledgment: the un-integrated feature
+  worktrees other lanes started while main was held — a live view of the
+  worktree registry, never a separate ledger.
 
 ## 8 - Invariants
 

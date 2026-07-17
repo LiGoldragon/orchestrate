@@ -86,6 +86,7 @@ pub use signal_orchestrate::{
     WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
     WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
     WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeConcluded,
+    FeatureWorktree, MainIntegration, RepositoryMainContended,
     WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected,
     WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
     WorktreesObserved,

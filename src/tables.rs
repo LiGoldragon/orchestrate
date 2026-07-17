@@ -72,7 +72,11 @@ where
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
 // topic membership, and triage audit log. The orchestrator topic tree starts
 // empty; there is no seeded topic.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(9);
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(10);
+/// The version the agent family carried before the identity-mint bump (the
+/// `Allocated` status variant, appended last); rows are byte-compatible with
+/// the current shape and migrate forward.
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT: SchemaVersion = SchemaVersion::new(9);
 /// The version the agent family carried before the death-state bump; a store
 /// whose agent registry sits under this identity migrates its rows forward
 /// (they are byte-compatible with the current shape).
@@ -1842,6 +1846,7 @@ impl<'store> OrchestrateStoreMigration<'store> {
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH
+            || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT
     }
 
     fn apply(&self, repair: StoreRepair) -> Result<RepairOutcome> {
@@ -1908,6 +1913,15 @@ impl<'store> OrchestrateStoreMigration<'store> {
     /// tried under its own identity, so the read is well-typed rather than a
     /// reinterpretation of mismatched bytes.
     fn read_prior_shape_agents(&self) -> Result<Vec<StoredOrchestratorAgent>> {
+        match self.read_agents_under_identity::<StoredOrchestratorAgent>(
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT,
+        ) {
+            Ok(agents) => return Ok(agents),
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                ..
+            })) => {}
+            Err(error) => return Err(error),
+        }
         match self.read_agents_under_identity::<StoredOrchestratorAgent>(
             ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
         ) {

@@ -185,6 +185,24 @@ fn run_jj(repository: &std::path::Path, arguments: &[&str]) {
     );
 }
 
+fn read_jj(repository: &std::path::Path, arguments: &[&str]) -> String {
+    let output = Command::new("jj")
+        .arg("--no-pager")
+        .arg("-R")
+        .arg(repository)
+        .args(arguments)
+        .env("JJ_USER", "smoke")
+        .env("JJ_EMAIL", "smoke@example.invalid")
+        .output()
+        .expect("run jj");
+    assert!(
+        output.status.success(),
+        "jj {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
 #[test]
 fn register_worktree_observe_and_project_manifest() {
     let mut fixture = WorktreeFixture::new("orchestrate-worktree-smoke");
@@ -333,19 +351,95 @@ fn request_scaffolds_workspace_and_registers_row() {
 }
 
 #[test]
-fn conclude_merged_refuses_unmerged_work_and_preserves_directory() {
-    let mut fixture = WorktreeFixture::new("orchestrate-worktree-refuse");
-    fixture.make_source_repository("orchestrate");
+fn conclude_merged_fast_forwards_real_work_onto_unmoved_main() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-fastforward");
+    let source = fixture.make_source_repository("orchestrate");
     fixture.request("orchestrate", "unmerged-feature", "operator");
 
     let destination = fixture
         .worktree_root
         .join("orchestrate")
         .join("unmerged-feature");
-    // Diverge from main: fill the working commit so its parent is a child of
-    // main (no longer an ancestor of main).
+    // Real work not yet on main: under the MVP ruling the daemon lands it
+    // itself — main has not moved, so the land is a fast-forward.
     run_jj(&destination, &["describe", "-m", "real unmerged work"]);
     run_jj(&destination, &["new"]);
+
+    let reply = fixture.conclude("operator", WorktreeConclusion::Merged);
+    let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
+        panic!("expected WorktreeConcluded, got {reply:?}");
+    };
+    assert_eq!(
+        concluded.integration,
+        orchestrate::MainIntegration::FastForwarded
+    );
+    assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
+    assert!(!destination.exists(), "landed teardown removes the worktree");
+    let main_description = read_jj(
+        &source,
+        &["log", "--no-graph", "-r", "main", "-T", "description.first_line()"],
+    );
+    assert_eq!(main_description.trim(), "real unmerged work");
+}
+
+#[test]
+fn conclude_merged_rebases_work_when_main_moved() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-rebase");
+    let source = fixture.make_source_repository("orchestrate");
+    fixture.request("orchestrate", "rebase-feature", "operator");
+
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("rebase-feature");
+    std::fs::write(destination.join("feature.txt"), "feature\n").expect("feature file");
+    run_jj(&destination, &["describe", "-m", "feature work"]);
+    run_jj(&destination, &["new"]);
+
+    // Someone else lands on main first (same repo — the worktree is a jj
+    // workspace of it, so the bookmark move is immediately visible).
+    run_jj(&source, &["new", "main"]);
+    std::fs::write(source.join("other.txt"), "other\n").expect("other file");
+    run_jj(&source, &["describe", "-m", "other landed work"]);
+    run_jj(&source, &["bookmark", "set", "main", "-r", "@"]);
+    run_jj(&source, &["new"]);
+
+    let reply = fixture.conclude("operator", WorktreeConclusion::Merged);
+    let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
+        panic!("expected WorktreeConcluded, got {reply:?}");
+    };
+    assert_eq!(concluded.integration, orchestrate::MainIntegration::Rebased);
+    assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
+    // main now carries both lines of work, feature rebased on top.
+    let main_history = read_jj(
+        &source,
+        &["log", "--no-graph", "-r", "::main", "-T", "description.first_line() ++ \"\\n\""],
+    );
+    assert!(main_history.contains("feature work"));
+    assert!(main_history.contains("other landed work"));
+}
+
+#[test]
+fn conclude_merged_refuses_conflicted_rebase_and_preserves_work() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-conflict");
+    let source = fixture.make_source_repository("orchestrate");
+    fixture.request("orchestrate", "conflict-feature", "operator");
+
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("conflict-feature");
+    // Both sides edit base.txt: the auto-rebase must hit a real conflict,
+    // fully unwind, and refuse typed — the seam where review gets built later.
+    std::fs::write(destination.join("base.txt"), "mine\n").expect("conflicting edit");
+    run_jj(&destination, &["describe", "-m", "conflicting feature edit"]);
+    run_jj(&destination, &["new"]);
+
+    run_jj(&source, &["new", "main"]);
+    std::fs::write(source.join("base.txt"), "theirs\n").expect("other edit");
+    run_jj(&source, &["describe", "-m", "conflicting landed work"]);
+    run_jj(&source, &["bookmark", "set", "main", "-r", "@"]);
+    run_jj(&source, &["new"]);
 
     let reply = fixture.conclude("operator", WorktreeConclusion::Merged);
     let OrchestrateReply::WorktreeTeardownRefused(refused) = reply else {
@@ -353,14 +447,26 @@ fn conclude_merged_refuses_unmerged_work_and_preserves_directory() {
     };
     assert_eq!(
         refused.reason,
-        orchestrate::TeardownRefusal::UnmergedWorkPresent
+        orchestrate::TeardownRefusal::AutoRebaseConflicted
     );
     assert!(
         destination.join(".jj").exists(),
-        "refused teardown keeps dir"
+        "refused teardown keeps the worktree"
     );
     let worktrees = observe_worktrees(&mut fixture);
     assert_eq!(worktrees[0].status, WorktreeStatus::Active);
+    // The unwind restored the pre-rebase graph: the feature commit is intact
+    // and conflict-free.
+    let conflicted = read_jj(
+        &destination,
+        &["log", "--no-graph", "-r", "::@ & conflicts()", "-T", "commit_id.short()"],
+    );
+    assert!(conflicted.trim().is_empty(), "no conflicted commits remain");
+    let feature = read_jj(
+        &destination,
+        &["log", "--no-graph", "-r", "@-", "-T", "description.first_line()"],
+    );
+    assert_eq!(feature.trim(), "conflicting feature edit");
 }
 
 #[test]
@@ -379,6 +485,10 @@ fn conclude_merged_tears_down_when_ancestor_of_main() {
     let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
         panic!("expected WorktreeConcluded, got {reply:?}");
     };
+    assert_eq!(
+        concluded.integration,
+        orchestrate::MainIntegration::AlreadyAncestor
+    );
     assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
     assert!(
         !destination.exists(),
@@ -433,6 +543,10 @@ fn conclude_rejected_salvages_to_remote_then_tears_down() {
     let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
         panic!("expected WorktreeConcluded, got {reply:?}");
     };
+    assert_eq!(
+        concluded.integration,
+        orchestrate::MainIntegration::Discarded
+    );
     assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
     assert!(!destination.exists(), "rejected teardown removes the dir");
 

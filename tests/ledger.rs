@@ -152,7 +152,8 @@ impl LayoutFixture {
         );
         let mut service = OrchestrateService::open_with_layout(
             &store,
-            OrchestrateLayout::new(workspace.clone(), git_index.clone()),
+            OrchestrateLayout::new(workspace.clone(), git_index.clone())
+                .with_worktree_index_root(temporary.path().join("wt")),
         )
         .expect("service opens");
         register_standard_lanes(&mut service);
@@ -2168,6 +2169,7 @@ fn register_explicit(
                 mission: MissionDescription::from_text(mission_text).expect("mission"),
                 harness: HarnessKind::Codex,
                 topic_selection,
+                minted_identity: signal_orchestrate::MintedIdentitySelection::None,
             },
         ))
         .expect("explicit registration reply")
@@ -2331,6 +2333,7 @@ fn automatic_registration_fails_closed_without_the_topic_judge() {
                     .expect("mission"),
                 harness: HarnessKind::Codex,
                 topic_selection: TopicSelection::Automatic,
+                minted_identity: signal_orchestrate::MintedIdentitySelection::None,
             },
         ))
         .expect("automatic registration reply");
@@ -2352,4 +2355,166 @@ fn automatic_registration_fails_closed_without_the_topic_judge() {
         panic!("expected agent directory");
     };
     assert!(directory.agents.is_empty());
+}
+
+// ─── Repository-main contention (contention-flow MVP) ─────
+
+/// A real jj repository inside the fixture's git index, so contention
+/// scaffolding and the repository refresh see a genuine checkout.
+fn make_contention_repository(fixture: &LayoutFixture, name: &str) -> PathBuf {
+    let path = fixture.git_index.join(name);
+    std::fs::create_dir_all(&path).expect("repository directory");
+    let init = std::process::Command::new("jj")
+        .args(["--no-pager", "git", "init", "--colocate"])
+        .arg(&path)
+        .env("JJ_USER", "smoke")
+        .env("JJ_EMAIL", "smoke@example.invalid")
+        .output()
+        .expect("run jj git init");
+    assert!(
+        init.status.success(),
+        "jj git init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    for arguments in [
+        vec!["config", "set", "--repo", "user.name", "smoke"],
+        vec!["config", "set", "--repo", "user.email", "smoke@example.invalid"],
+    ] {
+        let output = std::process::Command::new("jj")
+            .arg("--no-pager")
+            .arg("-R")
+            .arg(&path)
+            .args(&arguments)
+            .output()
+            .expect("run jj");
+        assert!(output.status.success());
+    }
+    std::fs::write(path.join("base.txt"), "base\n").expect("base file");
+    for arguments in [
+        vec!["describe", "-m", "base commit"],
+        vec!["bookmark", "create", "main", "-r", "@"],
+        vec!["new"],
+    ] {
+        let output = std::process::Command::new("jj")
+            .arg("--no-pager")
+            .arg("-R")
+            .arg(&path)
+            .args(&arguments)
+            .output()
+            .expect("run jj");
+        assert!(
+            output.status.success(),
+            "jj {:?} failed: {}",
+            arguments,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    path
+}
+
+#[test]
+fn contended_repository_main_answers_with_scaffolded_feature_worktree() {
+    let mut fixture = LayoutFixture::new("orchestrate-main-contention");
+    make_contention_repository(&fixture, "contended");
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Refresh(
+            RefreshRepositoryIndexOrder {},
+        ))
+        .expect("refresh repositories");
+    let repository_path = fixture.service.repositories().expect("repositories")[0]
+        .path
+        .as_str()
+        .to_owned();
+
+    // The operator takes the repository main — the working-on-main default.
+    let accepted = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: operator(),
+            scopes: vec![path(&repository_path)],
+            reason: reason("working on main"),
+        }))
+        .expect("operator claim");
+    assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
+
+    // The designer hits the taken main and is answered automatically: holder
+    // named, and a feature worktree scaffolded with the designer's lane name
+    // as the branch.
+    let contended = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: designer(),
+            scopes: vec![path(&repository_path)],
+            reason: reason("designer needs the same repo"),
+        }))
+        .expect("designer claim");
+    let OrchestrateReply::RepositoryMainContended(contention) = contended else {
+        panic!("expected RepositoryMainContended, got {contended:?}");
+    };
+    assert_eq!(contention.repository.as_str(), "contended");
+    assert_eq!(contention.holder, operator());
+    assert_eq!(contention.held_reason.as_str(), "working on main");
+    let orchestrate::FeatureWorktree::Scaffolded(worktree) = &contention.redirect else {
+        panic!("expected scaffolded feature worktree, got {:?}", contention.redirect);
+    };
+    assert_eq!(worktree.branch.as_str(), "designer");
+    assert_eq!(worktree.owning_lane.as_str(), "designer");
+    assert!(
+        std::path::Path::new(worktree.path.as_str()).join(".jj").exists(),
+        "scaffolded feature worktree is a real jj workspace"
+    );
+
+    // Claiming again while contended returns the STANDING worktree, not a
+    // second scaffold.
+    let again = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: designer(),
+            scopes: vec![path(&repository_path)],
+            reason: reason("designer retries"),
+        }))
+        .expect("designer reclaim");
+    let OrchestrateReply::RepositoryMainContended(retry) = again else {
+        panic!("expected RepositoryMainContended, got {again:?}");
+    };
+    assert!(matches!(
+        retry.redirect,
+        orchestrate::FeatureWorktree::Existing(_)
+    ));
+
+    // The operator releases main and is told, in the release acknowledgment
+    // itself, that a branch was started off the repo while it was held.
+    let released = fixture
+        .handle(OrchestrateRequest::Release(RoleRelease { role: operator() }))
+        .expect("operator release");
+    let OrchestrateReply::ReleaseAcknowledgment(acknowledgment) = released else {
+        panic!("expected ReleaseAcknowledgment, got {released:?}");
+    };
+    assert_eq!(acknowledgment.started_branches.len(), 1);
+    assert_eq!(acknowledgment.started_branches[0].branch.as_str(), "designer");
+    assert_eq!(
+        acknowledgment.started_branches[0].repository.as_str(),
+        "contended"
+    );
+}
+
+#[test]
+fn narrow_path_conflict_stays_a_plain_claim_rejection() {
+    let mut fixture = Fixture::new("orchestrate-narrow-conflict");
+    // No repository records exist (no refresh): a conflict on an ordinary
+    // path must keep the plain typed rejection, never a contention answer.
+    let scope = path("/git/github.com/LiGoldragon/persona/src/lib.rs");
+    let accepted = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: operator(),
+            scopes: vec![scope.clone()],
+            reason: reason("narrow file claim"),
+        }))
+        .expect("operator claim");
+    assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
+    let rejected = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: designer(),
+            scopes: vec![scope],
+            reason: reason("competing narrow claim"),
+        }))
+        .expect("designer claim");
+    assert!(matches!(rejected, OrchestrateReply::ClaimRejection(_)));
 }

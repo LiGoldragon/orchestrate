@@ -17,10 +17,11 @@ use meta_signal_orchestrate::{
     WorktreeIndexRefreshed, WorktreeRegistered,
 };
 use signal_orchestrate::{
-    BranchName, LaneName, OrchestrateReply, PurposeText, PushedState, RepositoryName,
-    TeardownRefusal, TimestampNanos, WirePath, Worktree, WorktreeConcluded, WorktreeConclusion,
-    WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected, WorktreeRequestRejection,
-    WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused, WorktreesObserved,
+    BranchName, FeatureWorktree, LaneName, MainIntegration, OrchestrateReply, PurposeText,
+    PushedState, RepositoryName, ScopeReason, TeardownRefusal, TimestampNanos, WirePath, Worktree,
+    WorktreeConcluded, WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest,
+    WorktreeRequestRejected, WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus,
+    WorktreeTeardownRefused, WorktreesObserved,
 };
 
 use crate::{
@@ -196,14 +197,19 @@ impl<'tables> WorktreeRegistry<'tables> {
     }
 
     /// Mark the worktree owned by `owning_lane` terminal and tear its workspace
-    /// down. A `Merged` disposition is gated: teardown is refused (mutating
-    /// nothing) unless the work is already an ancestor of `main`. `Rejected`
-    /// preserves the newest real commit on a remote `discard/<branch>` bookmark
-    /// — real uncommitted working-copy changes are described first so `jj`
-    /// will push them, and the empty description-less placeholder `jj` parks
-    /// the working copy on is skipped — then discards everything local. On
-    /// success the row transitions to [`WorktreeStatus::Recycled`]. This is
-    /// the shared teardown primitive any abandonment trigger reuses.
+    /// down. A `Merged` disposition lands the work on `main` first: work
+    /// already an ancestor of `main` passes straight through; otherwise the
+    /// daemon fetches, rebases the work onto the latest `main`, advances the
+    /// `main` bookmark, and pushes — the MVP has no review gate. A rebase
+    /// with real conflicts or a push that stays rejected after retry is fully
+    /// unwound (`jj op restore`) and refused typed, parking the worktree.
+    /// `Rejected` preserves the newest real commit on a remote
+    /// `discard/<branch>` bookmark — real uncommitted working-copy changes
+    /// are described first so `jj` will push them, and the empty
+    /// description-less placeholder `jj` parks the working copy on is skipped
+    /// — then discards everything local. On success the row transitions to
+    /// [`WorktreeStatus::Recycled`]. This is the shared teardown primitive
+    /// any abandonment trigger reuses.
     pub fn conclude(&self, order: WorktreeConclusionRequest) -> Result<OrchestrateReply> {
         let mut stored = self
             .tables
@@ -218,17 +224,28 @@ impl<'tables> WorktreeRegistry<'tables> {
             })?;
         let destination = PathBuf::from(stored.path.as_str());
         let pushed_state = WorktreePathProbe::from_path(&destination).pushed_state()?;
-        if matches!(order.disposition, WorktreeConclusion::Merged)
-            && pushed_state != PushedState::AncestorOfMain
-        {
-            stored.pushed_state = pushed_state;
-            return Ok(OrchestrateReply::WorktreeTeardownRefused(
-                WorktreeTeardownRefused {
-                    worktree: Worktree::from(stored),
-                    reason: TeardownRefusal::UnmergedWorkPresent,
-                },
-            ));
-        }
+        let integration = match (&order.disposition, pushed_state) {
+            (WorktreeConclusion::Merged, PushedState::AncestorOfMain) => {
+                MainIntegration::AlreadyAncestor
+            }
+            (WorktreeConclusion::Merged, _) => {
+                match AutoLand::new(&destination).land()? {
+                    LandOutcome::Landed(integration) => integration,
+                    LandOutcome::Refused(reason) => {
+                        stored.pushed_state =
+                            WorktreePathProbe::from_path(&destination).pushed_state()?;
+                        return Ok(OrchestrateReply::WorktreeTeardownRefused(
+                            WorktreeTeardownRefused {
+                                worktree: Worktree::from(stored),
+                                reason,
+                            },
+                        ));
+                    }
+                }
+            }
+            (WorktreeConclusion::Rejected, _) => MainIntegration::Discarded,
+        };
+        let pushed_state = WorktreePathProbe::from_path(&destination).pushed_state()?;
         let repository_checkout = self
             .layout
             .git_index_root()
@@ -293,7 +310,50 @@ impl<'tables> WorktreeRegistry<'tables> {
         self.tables.insert_worktree(&stored)?;
         Ok(OrchestrateReply::WorktreeConcluded(WorktreeConcluded {
             worktree: Worktree::from(stored),
+            integration,
         }))
+    }
+
+    /// The claimant's redirect for a contended repository main: find the
+    /// standing feature worktree for `(repository, lane)` or scaffold a fresh
+    /// one whose branch is the lane name — the psyche-ruled default that a
+    /// feature-named lane becomes the feature branch.
+    pub fn feature_worktree_for(
+        &self,
+        repository: RepositoryName,
+        lane: LaneName,
+        reason: &ScopeReason,
+    ) -> Result<FeatureWorktree> {
+        let standing = self.tables.worktree_records()?.into_iter().find(|record| {
+            record.repository.as_str() == repository.as_str()
+                && record.branch.as_str() == lane.as_str()
+                && record.status != WorktreeStatus::Recycled
+        });
+        if let Some(record) = standing {
+            return Ok(FeatureWorktree::Existing(Worktree::from(record)));
+        }
+        let branch = BranchName::from_text(lane.as_str().to_owned())?;
+        let purpose = PurposeText::from_text(reason.as_str().to_owned())?;
+        match self.request(WorktreeRequest {
+            repository: repository.clone(),
+            branch,
+            owning_lane: lane,
+            purpose,
+        })? {
+            OrchestrateReply::WorktreeScaffolded(scaffolded) => {
+                Ok(FeatureWorktree::Scaffolded(scaffolded.worktree))
+            }
+            OrchestrateReply::WorktreeRequestRejected(rejected) => {
+                Err(Error::FeatureWorktreeUnavailable {
+                    repository: repository.as_str().to_owned(),
+                    reason: format!("{:?}", rejected.reason),
+                })
+            }
+            other => Err(Error::FeatureWorktreeUnavailable {
+                repository: repository.as_str().to_owned(),
+                reason: format!("unexpected scaffold reply {other:?}"),
+            }),
+        }
     }
 
     /// Create the `jj` workspace off `main` and the feature bookmark. The
@@ -582,6 +642,163 @@ impl WorktreePathProbe {
 impl From<WirePath> for WorktreePathProbe {
     fn from(path: WirePath) -> Self {
         Self::new(path.as_str())
+    }
+}
+
+/// How an [`AutoLand`] attempt ended: the work landed on `main`, or the land
+/// was fully unwound and the conclusion must be refused typed.
+enum LandOutcome {
+    Landed(MainIntegration),
+    Refused(TeardownRefusal),
+}
+
+/// The MVP auto-integration: land a worktree's real work on `main` with no
+/// review gate — fetch, rebase onto the latest `main`, advance the bookmark,
+/// push. Every jj semantic here was verified against deployed jj 0.40:
+/// a tracked `main` auto-advances on fetch; `jj rebase` reports conflicts as
+/// conflicted commits (never a failed exit); `jj op restore` fully unwinds a
+/// bad attempt including bookmark moves.
+struct AutoLand {
+    destination: PathBuf,
+}
+
+impl AutoLand {
+    /// One retry after a rejected push: the remote moved between fetch and
+    /// push; a second fetch-rebase-push closes the race or the land refuses.
+    const PUSH_ATTEMPTS: u32 = 2;
+
+    fn new(destination: &Path) -> Self {
+        Self {
+            destination: destination.to_path_buf(),
+        }
+    }
+
+    fn land(&self) -> Result<LandOutcome> {
+        let probe = WorktreePathProbe::from_path(&self.destination);
+        if probe.holds_undescribed_changes()? {
+            self.jj(&["describe", "-r", "@", "-m", "auto-land working copy"])?;
+        }
+        let has_remote = self.has_remote()?;
+        for attempt in 1..=Self::PUSH_ATTEMPTS {
+            if has_remote {
+                self.jj(&["git", "fetch"])?;
+            }
+            let unwind_point = self.operation_head()?;
+            let before = self.salvage_commit()?;
+            self.jj(&[
+                "rebase",
+                "-b",
+                WorktreeRegistry::SALVAGE_REVSET,
+                "-d",
+                "main",
+            ])?;
+            if self.holds_conflicts()? {
+                self.jj(&["op", "restore", &unwind_point])?;
+                return Ok(LandOutcome::Refused(TeardownRefusal::AutoRebaseConflicted));
+            }
+            let after = self.salvage_commit()?;
+            let integration = if before == after {
+                MainIntegration::FastForwarded
+            } else {
+                MainIntegration::Rebased
+            };
+            self.jj(&["bookmark", "set", "main", "-r", WorktreeRegistry::SALVAGE_REVSET])?;
+            if !has_remote {
+                return Ok(LandOutcome::Landed(integration));
+            }
+            match self.jj(&["git", "push", "--bookmark", "main"]) {
+                Ok(()) => return Ok(LandOutcome::Landed(integration)),
+                Err(_) if attempt < Self::PUSH_ATTEMPTS => {
+                    self.jj(&["op", "restore", &unwind_point])?;
+                }
+                Err(_) => {
+                    self.jj(&["op", "restore", &unwind_point])?;
+                    return Ok(LandOutcome::Refused(TeardownRefusal::MainPushRejected));
+                }
+            }
+        }
+        Ok(LandOutcome::Refused(TeardownRefusal::MainPushRejected))
+    }
+
+    /// Whether the worktree's repo has any real (non-`git`) remote — a
+    /// remote-less repo lands locally and skips the push leg.
+    fn has_remote(&self) -> Result<bool> {
+        let output = self.read(&["git", "remote", "list"])?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .any(|line| !line.is_empty() && !line.starts_with("git ")))
+    }
+
+    /// The newest operation-log head — the unwind point `jj op restore`
+    /// returns to when a land attempt must be abandoned.
+    fn operation_head(&self) -> Result<String> {
+        let output = self.read(&["op", "log", "--no-graph", "-n", "1", "-T", "id.short()"])?;
+        Ok(output.trim().to_owned())
+    }
+
+    fn salvage_commit(&self) -> Result<String> {
+        let output = self.read(&[
+            "log",
+            "--no-graph",
+            "-r",
+            WorktreeRegistry::SALVAGE_REVSET,
+            "-T",
+            "commit_id",
+        ])?;
+        Ok(output.trim().to_owned())
+    }
+
+    fn holds_conflicts(&self) -> Result<bool> {
+        let output = self.read(&["log", "--no-graph", "-r", "::@ & conflicts()", "-T", "commit_id.short()"])?;
+        Ok(!output.trim().is_empty())
+    }
+
+    /// One jj write effect in the worktree, snapshotting the working copy —
+    /// land operations must see uncommitted changes, never ignore them.
+    fn jj(&self, arguments: &[&str]) -> Result<()> {
+        let output = Command::new("jj")
+            .arg("--no-pager")
+            .arg("--color")
+            .arg("never")
+            .arg("-R")
+            .arg(&self.destination)
+            .args(arguments)
+            .output()
+            .map_err(|error| Error::WorktreeAutoLand {
+                path: self.destination.display().to_string(),
+                message: format!("could not run jj: {error}"),
+            })?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(Error::WorktreeAutoLand {
+                path: self.destination.display().to_string(),
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
+    }
+
+    fn read(&self, arguments: &[&str]) -> Result<String> {
+        let output = Command::new("jj")
+            .arg("--no-pager")
+            .arg("--color")
+            .arg("never")
+            .arg("-R")
+            .arg(&self.destination)
+            .args(arguments)
+            .output()
+            .map_err(|error| Error::WorktreeAutoLand {
+                path: self.destination.display().to_string(),
+                message: format!("could not run jj: {error}"),
+            })?;
+        if !output.status.success() {
+            return Err(Error::WorktreeAutoLand {
+                path: self.destination.display().to_string(),
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 

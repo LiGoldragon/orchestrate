@@ -266,7 +266,12 @@ impl BoundedTableReaper {
         status: OrchestratorAgentStatus,
     ) -> TimestampNanos {
         let window = match status {
-            OrchestratorAgentStatus::Active => ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS,
+            // An allocated identity waits for its launch on the same idle
+            // window as a live agent; an abandoned mint ages out rather than
+            // lingering (mint-relocation may refine this policy).
+            OrchestratorAgentStatus::Active | OrchestratorAgentStatus::Allocated => {
+                ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS
+            }
             OrchestratorAgentStatus::Retired | OrchestratorAgentStatus::Dead => {
                 RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS
             }

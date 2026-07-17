@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#1ef0ab7160610cfbbe0d9be9d10b04a1bed3794d"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#6198cf87695495e664be1bd43c9824640d752c32"
 dependencies = [
  "nota",
  "rkyv",
@@ -464,7 +464,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "criome",
  "getrandom",
@@ -844,8 +844,8 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.6.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#8c2ca59f176bd7fd2987f87766e9330cb15043bf"
+version = "0.8.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#9cc3077f1a4a6c343bb640b049dc3402a2ada937"
 dependencies = [
  "nota",
  "rkyv",

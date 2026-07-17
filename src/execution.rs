@@ -385,7 +385,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<sema_schema::SemaReadOutput> {
         match input {
             sema_schema::SemaReadInput::ReadRoles(_) => {
-                let reply = ClaimLedger::new(self.service.tables()).observe()?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?;
                 let ordinary_schema::Output::RoleSnapshot(snapshot) = reply.project_into()? else {
                     return Err(Error::SchemaBridge {
                         message: "role observation did not produce RoleSnapshot".to_string(),
@@ -425,23 +425,23 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<ordinary_contract::OrchestrateReply> {
         let reply = match request {
             ordinary_contract::OrchestrateRequest::Claim(claim) => {
-                let reply = ClaimLedger::new(self.service.tables()).apply_claim(claim)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_claim(claim)?;
                 self.service.project_locks()?;
                 reply
             }
             ordinary_contract::OrchestrateRequest::Release(release) => {
-                let reply = ClaimLedger::new(self.service.tables()).apply_release(release)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_release(release)?;
                 self.service.project_locks()?;
                 reply
             }
             ordinary_contract::OrchestrateRequest::Handoff(handoff) => {
-                let reply = ClaimLedger::new(self.service.tables()).apply_handoff(handoff)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_handoff(handoff)?;
                 self.service.project_locks()?;
                 reply
             }
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Roles,
-            ) => ClaimLedger::new(self.service.tables()).observe()?,
+            ) => ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Sessions,
             ) => LaneRegistry::new(self.service.tables()).observe_sessions()?,
@@ -510,6 +510,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
                     .conclude(order)?;
                 self.service.project_worktrees()?;
                 reply
+            }
+            ordinary_contract::OrchestrateRequest::MintAgentIdentity(_) => {
+                return Err(Error::MintAuthorityPending);
             }
         };
         self.service.reschedule_lane_reclamation()?;
@@ -2808,6 +2811,12 @@ impl ProjectInto<ordinary_schema::TeardownRefusal> for ordinary_contract::Teardo
             ordinary_contract::TeardownRefusal::UnmergedWorkPresent => {
                 ordinary_schema::TeardownRefusal::UnmergedWorkPresent
             }
+            ordinary_contract::TeardownRefusal::AutoRebaseConflicted => {
+                ordinary_schema::TeardownRefusal::AutoRebaseConflicted
+            }
+            ordinary_contract::TeardownRefusal::MainPushRejected => {
+                ordinary_schema::TeardownRefusal::MainPushRejected
+            }
         })
     }
 }
@@ -2818,6 +2827,104 @@ impl ProjectInto<ordinary_contract::TeardownRefusal> for ordinary_schema::Teardo
             ordinary_schema::TeardownRefusal::UnmergedWorkPresent => {
                 ordinary_contract::TeardownRefusal::UnmergedWorkPresent
             }
+            ordinary_schema::TeardownRefusal::AutoRebaseConflicted => {
+                ordinary_contract::TeardownRefusal::AutoRebaseConflicted
+            }
+            ordinary_schema::TeardownRefusal::MainPushRejected => {
+                ordinary_contract::TeardownRefusal::MainPushRejected
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::MainIntegration> for ordinary_contract::MainIntegration {
+    fn project_into(self) -> Result<ordinary_schema::MainIntegration> {
+        Ok(match self {
+            ordinary_contract::MainIntegration::AlreadyAncestor => {
+                ordinary_schema::MainIntegration::AlreadyAncestor
+            }
+            ordinary_contract::MainIntegration::FastForwarded => {
+                ordinary_schema::MainIntegration::FastForwarded
+            }
+            ordinary_contract::MainIntegration::Rebased => {
+                ordinary_schema::MainIntegration::Rebased
+            }
+            ordinary_contract::MainIntegration::Discarded => {
+                ordinary_schema::MainIntegration::Discarded
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::MainIntegration> for ordinary_schema::MainIntegration {
+    fn project_into(self) -> Result<ordinary_contract::MainIntegration> {
+        Ok(match self {
+            ordinary_schema::MainIntegration::AlreadyAncestor => {
+                ordinary_contract::MainIntegration::AlreadyAncestor
+            }
+            ordinary_schema::MainIntegration::FastForwarded => {
+                ordinary_contract::MainIntegration::FastForwarded
+            }
+            ordinary_schema::MainIntegration::Rebased => {
+                ordinary_contract::MainIntegration::Rebased
+            }
+            ordinary_schema::MainIntegration::Discarded => {
+                ordinary_contract::MainIntegration::Discarded
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::FeatureWorktree> for ordinary_contract::FeatureWorktree {
+    fn project_into(self) -> Result<ordinary_schema::FeatureWorktree> {
+        Ok(match self {
+            ordinary_contract::FeatureWorktree::Scaffolded(worktree) => {
+                ordinary_schema::FeatureWorktree::Scaffolded(worktree.project_into()?)
+            }
+            ordinary_contract::FeatureWorktree::Existing(worktree) => {
+                ordinary_schema::FeatureWorktree::Existing(worktree.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::FeatureWorktree> for ordinary_schema::FeatureWorktree {
+    fn project_into(self) -> Result<ordinary_contract::FeatureWorktree> {
+        Ok(match self {
+            ordinary_schema::FeatureWorktree::Scaffolded(worktree) => {
+                ordinary_contract::FeatureWorktree::Scaffolded(worktree.project_into()?)
+            }
+            ordinary_schema::FeatureWorktree::Existing(worktree) => {
+                ordinary_contract::FeatureWorktree::Existing(worktree.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryMainContended>
+    for ordinary_contract::RepositoryMainContended
+{
+    fn project_into(self) -> Result<ordinary_schema::RepositoryMainContended> {
+        Ok(ordinary_schema::RepositoryMainContended {
+            repository_name: self.repository.project_into()?,
+            role_name: self.holder.project_into()?,
+            scope_reason: self.held_reason.project_into()?,
+            duration_nanos: self.held_age.project_into()?,
+            feature_worktree: self.redirect.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryMainContended>
+    for ordinary_schema::RepositoryMainContended
+{
+    fn project_into(self) -> Result<ordinary_contract::RepositoryMainContended> {
+        Ok(ordinary_contract::RepositoryMainContended {
+            repository: self.repository_name.project_into()?,
+            holder: self.role_name.project_into()?,
+            held_reason: self.scope_reason.project_into()?,
+            held_age: self.duration_nanos.project_into()?,
+            redirect: self.feature_worktree.project_into()?,
         })
     }
 }
@@ -2993,6 +3100,15 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::ConcludeWorktree(payload) => {
                 ordinary_schema::Input::conclude_worktree(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::MintAgentIdentity(payload) => {
+                ordinary_schema::Input::MintAgentIdentity(
+                    ordinary_schema::AgentIdentityMintRequest {
+                        session_identifier: payload.session.project_into()?,
+                        mission_description: payload.mission.project_into()?,
+                        harness_kind: payload.harness.project_into()?,
+                    },
+                )
+            }
         })
     }
 }
@@ -3046,6 +3162,15 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             }
             ordinary_schema::Input::ConcludeWorktree(payload) => {
                 ordinary_contract::OrchestrateRequest::ConcludeWorktree(payload.project_into()?)
+            }
+            ordinary_schema::Input::MintAgentIdentity(payload) => {
+                ordinary_contract::OrchestrateRequest::MintAgentIdentity(
+                    ordinary_contract::AgentIdentityMintRequest {
+                        session: payload.session_identifier.project_into()?,
+                        mission: payload.mission_description.project_into()?,
+                        harness: payload.harness_kind.project_into()?,
+                    },
+                )
             }
         })
     }
@@ -3114,6 +3239,7 @@ impl ProjectInto<ordinary_schema::ReleaseAcknowledgment>
         Ok(ordinary_schema::ReleaseAcknowledgment {
             role_name: self.role.project_into()?,
             scope_references: self.released_scopes.project_into()?,
+            worktrees: self.started_branches.project_into()?,
         })
     }
 }
@@ -3125,6 +3251,7 @@ impl ProjectInto<ordinary_contract::ReleaseAcknowledgment>
         Ok(ordinary_contract::ReleaseAcknowledgment {
             role: self.role_name.project_into()?,
             released_scopes: self.scope_references.project_into()?,
+            started_branches: self.worktrees.project_into()?,
         })
     }
 }
@@ -3698,10 +3825,21 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
                 ordinary_schema::Output::worktree_request_rejected(payload.reason.project_into()?)
             }
             ordinary_contract::OrchestrateReply::WorktreeConcluded(payload) => {
-                ordinary_schema::Output::worktree_concluded(payload.worktree.project_into()?)
+                ordinary_schema::Output::worktree_concluded(ordinary_schema::WorktreeConcluded {
+                    worktree: payload.worktree.project_into()?,
+                    main_integration: payload.integration.project_into()?,
+                })
             }
             ordinary_contract::OrchestrateReply::WorktreeTeardownRefused(payload) => {
                 ordinary_schema::Output::worktree_teardown_refused(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::RepositoryMainContended(payload) => {
+                ordinary_schema::Output::repository_main_contended(payload.project_into()?)
+            }
+            ordinary_contract::OrchestrateReply::AgentIdentityMinted(payload) => {
+                ordinary_schema::Output::agent_identity_minted(
+                    payload.agent_identifier.project_into()?,
+                )
             }
         })
     }
@@ -3822,7 +3960,20 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             ordinary_schema::Output::WorktreeConcluded(payload) => {
                 ordinary_contract::OrchestrateReply::WorktreeConcluded(
                     ordinary_contract::WorktreeConcluded {
-                        worktree: payload.into_payload().project_into()?,
+                        worktree: payload.worktree.project_into()?,
+                        integration: payload.main_integration.project_into()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::RepositoryMainContended(payload) => {
+                ordinary_contract::OrchestrateReply::RepositoryMainContended(
+                    payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::AgentIdentityMinted(payload) => {
+                ordinary_contract::OrchestrateReply::AgentIdentityMinted(
+                    ordinary_contract::AgentIdentityMinted {
+                        agent_identifier: payload.into_payload().project_into()?,
                     },
                 )
             }
@@ -4775,6 +4926,9 @@ impl ProjectInto<ordinary_schema::OrchestratorAgentStatus>
             ordinary_contract::OrchestratorAgentStatus::Dead => {
                 ordinary_schema::OrchestratorAgentStatus::Dead
             }
+            ordinary_contract::OrchestratorAgentStatus::Allocated => {
+                ordinary_schema::OrchestratorAgentStatus::Allocated
+            }
         })
     }
 }
@@ -4792,6 +4946,9 @@ impl ProjectInto<ordinary_contract::OrchestratorAgentStatus>
             }
             ordinary_schema::OrchestratorAgentStatus::Dead => {
                 ordinary_contract::OrchestratorAgentStatus::Dead
+            }
+            ordinary_schema::OrchestratorAgentStatus::Allocated => {
+                ordinary_contract::OrchestratorAgentStatus::Allocated
             }
         })
     }
@@ -4864,6 +5021,16 @@ impl ProjectInto<ordinary_schema::OrchestratorAgentRegistration>
             mission_description: self.mission.project_into()?,
             harness_kind: self.harness.project_into()?,
             topic_selection: self.topic_selection.project_into()?,
+            minted_identity_selection: match self.minted_identity {
+                ordinary_contract::MintedIdentitySelection::None => {
+                    ordinary_schema::MintedIdentitySelection::None
+                }
+                ordinary_contract::MintedIdentitySelection::PreMinted(identifier) => {
+                    ordinary_schema::MintedIdentitySelection::PreMinted(
+                        identifier.project_into()?,
+                    )
+                }
+            },
         })
     }
 }
@@ -4877,6 +5044,16 @@ impl ProjectInto<ordinary_contract::OrchestratorAgentRegistration>
             mission: self.mission_description.project_into()?,
             harness: self.harness_kind.project_into()?,
             topic_selection: self.topic_selection.project_into()?,
+            minted_identity: match self.minted_identity_selection {
+                ordinary_schema::MintedIdentitySelection::None => {
+                    ordinary_contract::MintedIdentitySelection::None
+                }
+                ordinary_schema::MintedIdentitySelection::PreMinted(identifier) => {
+                    ordinary_contract::MintedIdentitySelection::PreMinted(
+                        identifier.project_into()?,
+                    )
+                }
+            },
         })
     }
 }
