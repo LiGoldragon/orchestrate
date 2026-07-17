@@ -10,7 +10,8 @@ use signal_orchestrate::schema::lib as ordinary_schema;
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
     ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, LaneRegistry,
-    OrchestrateService, RepositoryRegistry, Result, RoleRegistry, RouterActorRegistration,
+    MessengerRegistrationDegradation, MessengerRegistryPush, OrchestrateService,
+    RepositoryRegistry, Result, RoleRegistry, RouterActorRegistration,
     RouterRegistrationDegradation, StoredAgentReachability, WorkflowRunner, WorktreeRegistry,
 };
 
@@ -511,8 +512,8 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.service.project_worktrees()?;
                 reply
             }
-            ordinary_contract::OrchestrateRequest::MintAgentIdentity(_) => {
-                return Err(Error::MintAuthorityPending);
+            ordinary_contract::OrchestrateRequest::MintAgentIdentity(request) => {
+                self.mint_agent_identity(request)?
             }
         };
         self.service.reschedule_lane_reclamation()?;
@@ -3101,13 +3102,7 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
                 ordinary_schema::Input::conclude_worktree(payload.project_into()?)
             }
             ordinary_contract::OrchestrateRequest::MintAgentIdentity(payload) => {
-                ordinary_schema::Input::MintAgentIdentity(
-                    ordinary_schema::AgentIdentityMintRequest {
-                        session_identifier: payload.session.project_into()?,
-                        mission_description: payload.mission.project_into()?,
-                        harness_kind: payload.harness.project_into()?,
-                    },
-                )
+                ordinary_schema::Input::mint_agent_identity(payload.project_into()?)
             }
         })
     }
@@ -3164,13 +3159,7 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
                 ordinary_contract::OrchestrateRequest::ConcludeWorktree(payload.project_into()?)
             }
             ordinary_schema::Input::MintAgentIdentity(payload) => {
-                ordinary_contract::OrchestrateRequest::MintAgentIdentity(
-                    ordinary_contract::AgentIdentityMintRequest {
-                        session: payload.session_identifier.project_into()?,
-                        mission: payload.mission_description.project_into()?,
-                        harness: payload.harness_kind.project_into()?,
-                    },
-                )
+                ordinary_contract::OrchestrateRequest::MintAgentIdentity(payload.project_into()?)
             }
         })
     }
@@ -5021,16 +5010,7 @@ impl ProjectInto<ordinary_schema::OrchestratorAgentRegistration>
             mission_description: self.mission.project_into()?,
             harness_kind: self.harness.project_into()?,
             topic_selection: self.topic_selection.project_into()?,
-            minted_identity_selection: match self.minted_identity {
-                ordinary_contract::MintedIdentitySelection::None => {
-                    ordinary_schema::MintedIdentitySelection::None
-                }
-                ordinary_contract::MintedIdentitySelection::PreMinted(identifier) => {
-                    ordinary_schema::MintedIdentitySelection::PreMinted(
-                        identifier.project_into()?,
-                    )
-                }
-            },
+            minted_identity_selection: self.minted_identity.project_into()?,
         })
     }
 }
@@ -5044,16 +5024,61 @@ impl ProjectInto<ordinary_contract::OrchestratorAgentRegistration>
             mission: self.mission_description.project_into()?,
             harness: self.harness_kind.project_into()?,
             topic_selection: self.topic_selection.project_into()?,
-            minted_identity: match self.minted_identity_selection {
-                ordinary_schema::MintedIdentitySelection::None => {
-                    ordinary_contract::MintedIdentitySelection::None
-                }
-                ordinary_schema::MintedIdentitySelection::PreMinted(identifier) => {
-                    ordinary_contract::MintedIdentitySelection::PreMinted(
-                        identifier.project_into()?,
-                    )
-                }
-            },
+            minted_identity: self.minted_identity_selection.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::MintedIdentitySelection>
+    for ordinary_contract::MintedIdentitySelection
+{
+    fn project_into(self) -> Result<ordinary_schema::MintedIdentitySelection> {
+        Ok(match self {
+            ordinary_contract::MintedIdentitySelection::None => {
+                ordinary_schema::MintedIdentitySelection::None
+            }
+            ordinary_contract::MintedIdentitySelection::PreMinted(identifier) => {
+                ordinary_schema::MintedIdentitySelection::PreMinted(identifier.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::MintedIdentitySelection>
+    for ordinary_schema::MintedIdentitySelection
+{
+    fn project_into(self) -> Result<ordinary_contract::MintedIdentitySelection> {
+        Ok(match self {
+            ordinary_schema::MintedIdentitySelection::None => {
+                ordinary_contract::MintedIdentitySelection::None
+            }
+            ordinary_schema::MintedIdentitySelection::PreMinted(identifier) => {
+                ordinary_contract::MintedIdentitySelection::PreMinted(identifier.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::AgentIdentityMintRequest>
+    for ordinary_contract::AgentIdentityMintRequest
+{
+    fn project_into(self) -> Result<ordinary_schema::AgentIdentityMintRequest> {
+        Ok(ordinary_schema::AgentIdentityMintRequest {
+            session_identifier: self.session.project_into()?,
+            mission_description: self.mission.project_into()?,
+            harness_kind: self.harness.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentIdentityMintRequest>
+    for ordinary_schema::AgentIdentityMintRequest
+{
+    fn project_into(self) -> Result<ordinary_contract::AgentIdentityMintRequest> {
+        Ok(ordinary_contract::AgentIdentityMintRequest {
+            session: self.session_identifier.project_into()?,
+            mission: self.mission_description.project_into()?,
+            harness: self.harness_kind.project_into()?,
         })
     }
 }
@@ -5219,7 +5244,9 @@ impl OrchestrateSemaEngine<'_> {
             registration.session,
             registration.mission,
             registration.harness,
+            registration.minted_identity,
         )?;
+        self.propagate_identity_to_messenger(&agent.agent_identifier)?;
         let mut assigned_topics = Vec::new();
         for path in selected_paths {
             let mut seated_leaf = None;
@@ -5269,6 +5296,110 @@ impl OrchestrateSemaEngine<'_> {
             .tables()
             .attach_agent_reachability(agent_identifier, reachability.clone())?;
         self.propagate_registration_to_router(agent_identifier, &reachability)?;
+        self.propagate_reachability_to_messenger(agent_identifier, &reachability)?;
+        Ok(())
+    }
+
+    /// Allocate an agent identity ahead of launch: the orchestrator is the
+    /// mint (psyche-ruled 2026-07-17). The reservation is seated `Allocated`
+    /// in orchestrate's registry, pushed into the messenger's durable
+    /// registry, and returned so the launcher can hand it to the process in
+    /// its initial prompt. Registration with the pre-minted identity later
+    /// binds it `Active`.
+    fn mint_agent_identity(
+        &mut self,
+        request: ordinary_contract::AgentIdentityMintRequest,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        let agent = self.service.tables().allocate_orchestrator_agent(
+            request.session,
+            request.mission,
+            request.harness,
+        )?;
+        self.propagate_identity_to_messenger(&agent.agent_identifier)?;
+        Ok(ordinary_contract::OrchestrateReply::AgentIdentityMinted(
+            ordinary_contract::AgentIdentityMinted {
+                agent_identifier: agent.agent_identifier,
+            },
+        ))
+    }
+
+    /// Push a minted or registered identity into the messenger's durable
+    /// registry so the messenger holds the consumer view of identity. The
+    /// messenger is a co-resident peer, so this is best-effort: an
+    /// unreachable or refusing messenger is recorded as a divergence, never a
+    /// failure of the mint or registration itself. When no messenger socket
+    /// is configured, the push is skipped with no divergence.
+    fn propagate_identity_to_messenger(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+    ) -> Result<()> {
+        let Some(socket_path) = self.service.messenger_registration_endpoint() else {
+            return Ok(());
+        };
+        match MessengerRegistryPush::new(socket_path.to_path_buf()).seat_identity(agent_identifier)
+        {
+            Ok(()) => Ok(()),
+            Err(degradation) => {
+                self.record_messenger_push_divergence(agent_identifier, degradation)
+            }
+        }
+    }
+
+    /// Push a discovered reachability into the messenger's delivery registry
+    /// as an endpoint binding, carrying the pid + start-time pin. Best-effort
+    /// like the identity push.
+    fn propagate_reachability_to_messenger(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+        reachability: &StoredAgentReachability,
+    ) -> Result<()> {
+        let Some(socket_path) = self.service.messenger_registration_endpoint() else {
+            return Ok(());
+        };
+        match MessengerRegistryPush::new(socket_path.to_path_buf())
+            .bind_endpoint(agent_identifier, reachability)
+        {
+            Ok(()) => Ok(()),
+            Err(degradation) => {
+                self.record_messenger_push_divergence(agent_identifier, degradation)
+            }
+        }
+    }
+
+    /// Record a messenger-push degradation as a divergence: the messenger
+    /// downstream leg failed while the identity operation itself succeeded.
+    fn record_messenger_push_divergence(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+        degradation: MessengerRegistrationDegradation,
+    ) -> Result<()> {
+        let (reason, detail) = match degradation {
+            MessengerRegistrationDegradation::Unreachable(detail) => (
+                ordinary_contract::ApplicationFailureReason::Unreachable,
+                format!(
+                    "messenger registry push for agent {} degraded: {detail}",
+                    agent_identifier.as_str()
+                ),
+            ),
+            MessengerRegistrationDegradation::Rejected(detail) => (
+                ordinary_contract::ApplicationFailureReason::Rejected,
+                format!(
+                    "messenger refused registry push for agent {}: {detail}",
+                    agent_identifier.as_str()
+                ),
+            ),
+        };
+        let failure = ordinary_contract::ApplicationFailure {
+            component: ordinary_contract::DownstreamComponent::Message,
+            reason,
+            detail: ordinary_contract::ScopeReason::from_text(detail)?,
+        };
+        self.service
+            .tables()
+            .append_divergence(ordinary_contract::PartialApplied {
+                succeeded: Vec::new(),
+                failed: vec![failure],
+            })?;
         Ok(())
     }
 

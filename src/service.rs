@@ -45,6 +45,13 @@ pub struct OrchestrateService {
     /// registration then lands without router propagation and no degradation is
     /// recorded. The router is a co-resident peer, so propagation is best-effort.
     router_registration_endpoint: Option<std::path::PathBuf>,
+    /// The messenger working socket minted identities and discovered endpoints
+    /// are pushed to — the orchestrator is the mint, the messenger's registry
+    /// is the durable consumer view. `None` when the daemon was not configured
+    /// with a messenger socket (or in tests): identities then land in
+    /// orchestrate's own registry only, with no degradation recorded. The
+    /// messenger is a co-resident peer, so the push is best-effort.
+    messenger_registration_endpoint: Option<std::path::PathBuf>,
     /// The daemon-lifecycle deadline worker. It receives state-derived expiry
     /// deadlines after lane mutations and re-enters through Signal at expiry;
     /// it never opens or mutates the store itself.
@@ -77,6 +84,7 @@ impl OrchestrateService {
             public_sockets: PublicSocketRetirement::none(),
             pending_caller_process_id: None,
             router_registration_endpoint: None,
+            messenger_registration_endpoint: None,
             lane_reclaimer: None,
             harness_liveness: HarnessLivenessReconciliation::from_process_environment(),
             harness_liveness_watch: None,
@@ -206,6 +214,24 @@ impl OrchestrateService {
     /// configured.
     pub(crate) fn router_registration_endpoint(&self) -> Option<&std::path::Path> {
         self.router_registration_endpoint.as_deref()
+    }
+
+    /// Register the messenger working socket minted identities and discovered
+    /// endpoints are pushed to. The daemon's `build_runtime` calls this with
+    /// the configured path; tests and messenger-less deployments leave it
+    /// unset, so identities land in orchestrate's registry only.
+    pub fn with_messenger_registration_endpoint(
+        mut self,
+        endpoint: Option<std::path::PathBuf>,
+    ) -> Self {
+        self.messenger_registration_endpoint = endpoint;
+        self
+    }
+
+    /// The messenger working socket to push identities and endpoints to, when
+    /// configured.
+    pub(crate) fn messenger_registration_endpoint(&self) -> Option<&std::path::Path> {
+        self.messenger_registration_endpoint.as_deref()
     }
 
     /// Record the peer process identifier for the working request about to be

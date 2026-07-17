@@ -19,6 +19,7 @@ pub mod orchestrator_agent_identifier;
 pub mod repository;
 pub mod role;
 pub mod router_registration;
+pub mod messenger_registration;
 #[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
@@ -68,13 +69,16 @@ pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use router_registration::{RouterActorRegistration, RouterRegistrationDegradation};
+pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegistryPush};
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, AgentRegistrationRejectionReason,
+    ActivityFilter, ActivityQuery, ActivitySubmission, AgentIdentityMintRequest,
+    AgentIdentityMinted, AgentRegistrationRejectionReason,
     ApplicationFailure, ApplicationFailureReason, ApplicationSuccess, BranchName,
     DownstreamComponent, DurationNanos, HarnessKind, LaneAssignment, LaneAuthority, LaneDetails,
     LaneIdentifier, LaneName, LaneOwner, LaneRegistration, LaneResourceClaim, LaneStatus,
-    LanesObserved, MissionDescription, Observation, ObservationClosed, ObservationEvent,
+    LanesObserved, MintedIdentitySelection, MissionDescription, Observation, ObservationClosed,
+    ObservationEvent,
     ObservationOpened, ObservationSubscription, ObservationToken, OperationKind, OrchestrateReply,
     OrchestrateRequest, OrchestratorAgentIdentifier, OrchestratorAgentRegistration,
     OrchestratorAgentStatus, OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,

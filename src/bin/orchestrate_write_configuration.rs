@@ -20,10 +20,11 @@ use thiserror::Error;
 /// The seven required path arguments (signal, store, three sockets, two roots).
 const REQUIRED_ARGUMENT_COUNT: usize = 7;
 
-/// One optional trailing argument: the co-resident router working socket to
-/// propagate discovered registrations to. Absent, the daemon lands registrations
-/// without router propagation.
-const MAXIMUM_ARGUMENT_COUNT: usize = 8;
+/// Two optional trailing arguments, in order: the co-resident router working
+/// socket to propagate discovered registrations to, then the co-resident
+/// messenger working socket minted identities and discovered endpoints are
+/// pushed to. Either absent leaves that propagation leg off.
+const MAXIMUM_ARGUMENT_COUNT: usize = 9;
 
 fn main() -> ExitCode {
     match DaemonConfigurationWriter::from_environment().run() {
@@ -61,6 +62,7 @@ struct DaemonConfigurationArguments {
     workspace_root: RuntimePath,
     git_index_root: RuntimePath,
     router_working_socket_path: Option<RuntimePath>,
+    messenger_working_socket_path: Option<RuntimePath>,
 }
 
 impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
@@ -84,6 +86,10 @@ impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
             git_index_root: ArgumentPath::required("git_index_root", &mut paths)?,
             router_working_socket_path: ArgumentPath::optional(
                 "router_working_socket_path",
+                &mut paths,
+            )?,
+            messenger_working_socket_path: ArgumentPath::optional(
+                "messenger_working_socket_path",
                 &mut paths,
             )?,
         })
@@ -112,9 +118,17 @@ impl DaemonConfigurationArguments {
             wire_path(self.workspace_root.as_path())?,
             wire_path(self.git_index_root.as_path())?,
         );
-        Ok(match &self.router_working_socket_path {
+        let configuration = match &self.router_working_socket_path {
             Some(router_working_socket_path) => configuration
                 .with_router_working_socket_path(wire_path(router_working_socket_path.as_path())?),
+            None => configuration,
+        };
+        Ok(match &self.messenger_working_socket_path {
+            Some(messenger_working_socket_path) => {
+                configuration.with_messenger_working_socket_path(wire_path(
+                    messenger_working_socket_path.as_path(),
+                )?)
+            }
             None => configuration,
         })
     }

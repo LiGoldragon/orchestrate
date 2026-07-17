@@ -103,6 +103,11 @@ impl ComponentDaemon for OrchestrateDaemon {
             configuration
                 .router_working_socket_path()
                 .map(|path| PathBuf::from(path.as_str())),
+        )
+        .with_messenger_registration_endpoint(
+            configuration
+                .messenger_working_socket_path()
+                .map(|path| PathBuf::from(path.as_str())),
         );
         Ok(service)
     }

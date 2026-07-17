@@ -136,11 +136,6 @@ pub enum Error {
     #[error("no feature worktree available for repository {repository}: {reason}")]
     FeatureWorktreeUnavailable { repository: String, reason: String },
 
-    #[error(
-        "agent-identity mint is not yet implemented by this daemon; the mint-relocation packet lands the engine side"
-    )]
-    MintAuthorityPending,
-
     #[error("no worktree is registered for owning lane {lane}")]
     WorktreeLaneNotFound { lane: String },
 
@@ -187,6 +182,12 @@ pub enum Error {
 
     #[error("orchestrator agent identifier randomness failed: {message}")]
     OrchestratorAgentIdentifierRandomness { message: String },
+
+    #[error(
+        "pre-minted agent identity {identifier} is not in the registry; \
+         mint it with MintAgentIdentity before registering with it"
+    )]
+    UnknownPreMintedAgentIdentity { identifier: String },
 }
 
 impl Error {
@@ -203,7 +204,9 @@ impl Error {
     pub fn is_caller_rejection(&self) -> bool {
         matches!(
             self,
-            Error::SignalOrchestrate(_) | Error::LaneNotRegistered { .. }
+            Error::SignalOrchestrate(_)
+                | Error::LaneNotRegistered { .. }
+                | Error::UnknownPreMintedAgentIdentity { .. }
         )
     }
 }

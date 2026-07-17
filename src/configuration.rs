@@ -24,6 +24,12 @@ pub struct DaemonConfiguration {
     /// delivery target. `None` (the default, and the shape an older deployment
     /// writes) leaves registration landing without router propagation.
     pub router_working_socket_path: Option<WirePath>,
+    /// The co-resident messenger's working socket, when configured. The
+    /// orchestrator is the mint: every minted or registered identity is pushed
+    /// into the messenger's durable registry over this socket, and discovered
+    /// reachability follows as an endpoint binding. `None` (the default) leaves
+    /// identities unpushed — the messenger learns nothing.
+    pub messenger_working_socket_path: Option<WirePath>,
 }
 
 impl DaemonConfiguration {
@@ -43,6 +49,7 @@ impl DaemonConfiguration {
             workspace_root,
             git_index_root,
             router_working_socket_path: None,
+            messenger_working_socket_path: None,
         }
     }
 
@@ -57,6 +64,21 @@ impl DaemonConfiguration {
 
     pub fn router_working_socket_path(&self) -> Option<&WirePath> {
         self.router_working_socket_path.as_ref()
+    }
+
+    /// Set the co-resident messenger working socket the daemon pushes minted
+    /// identities and discovered endpoints to. Absent it, identities land in
+    /// orchestrate's own registry only.
+    pub fn with_messenger_working_socket_path(
+        mut self,
+        messenger_working_socket_path: WirePath,
+    ) -> Self {
+        self.messenger_working_socket_path = Some(messenger_working_socket_path);
+        self
+    }
+
+    pub fn messenger_working_socket_path(&self) -> Option<&WirePath> {
+        self.messenger_working_socket_path.as_ref()
     }
 
     /// Encode the configuration to the binary rkyv form the daemon accepts as

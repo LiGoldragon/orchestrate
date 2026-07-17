@@ -376,6 +376,7 @@ mod tests {
     use std::process::{Child, Command};
 
     use signal_orchestrate::{
+        MintedIdentitySelection,
         HarnessKind, MissionDescription, Observation as ContractObservation, OrchestrateReply,
         OrchestrateRequest, SessionIdentifier,
     };
@@ -458,6 +459,7 @@ mod tests {
                     SessionIdentifier::from_camel_case_name(session).expect("session"),
                     MissionDescription::from_text("liveness fixture").expect("mission"),
                     HarnessKind::Codex,
+                MintedIdentitySelection::None,
                 )
                 .expect("register agent")
         };
@@ -581,6 +583,7 @@ mod tests {
                 SessionIdentifier::from_camel_case_name("ObservedDeath").expect("session"),
                 MissionDescription::from_text("killed mid-test").expect("mission"),
                 HarnessKind::Codex,
+                MintedIdentitySelection::None,
             )
             .expect("register agent");
         service

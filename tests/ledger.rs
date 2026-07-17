@@ -1478,6 +1478,7 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
             session("KeepSession"),
             MissionDescription::from_text("stay active").expect("mission"),
             HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
         )
         .expect("register fresh agent");
     // A leaked Active agent, idle far past the liveness window: reaper retires it.
@@ -1486,6 +1487,7 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
             session("LeakSession"),
             MissionDescription::from_text("leaked agent").expect("mission"),
             HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
         )
         .expect("register idle agent");
     // An already-Retired agent past its terminal retention: reaper deletes it.
@@ -1494,6 +1496,7 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
             session("DoneSession"),
             MissionDescription::from_text("finished agent").expect("mission"),
             HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
         )
         .expect("register retired agent");
     tables
@@ -1582,6 +1585,7 @@ fn bounded_reaper_reaps_aged_empty_topics_and_keeps_populated_topics() {
             session("TopicSession"),
             MissionDescription::from_text("hold the topic").expect("mission"),
             HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
         )
         .expect("register agent");
     // Keep the agent live at the future instant so the topic stays populated.
@@ -2517,4 +2521,106 @@ fn narrow_path_conflict_stays_a_plain_claim_rejection() {
         }))
         .expect("designer claim");
     assert!(matches!(rejected, OrchestrateReply::ClaimRejection(_)));
+}
+
+// ─── Orchestrator identity mint (mint-relocation) ─────
+
+#[test]
+fn minted_identity_is_allocated_then_bound_active_by_preminted_registration() {
+    let mut fixture = Fixture::new("orchestrator-mint-preminted-bind");
+
+    // The orchestrator mints ahead of launch: the reservation carries the
+    // launch intent and sits `Allocated` in the directory.
+    let minted = fixture
+        .handle(OrchestrateRequest::MintAgentIdentity(
+            orchestrate::AgentIdentityMintRequest {
+                session: session("PreLaunchMint"),
+                mission: MissionDescription::from_text("launch a worker").expect("mission"),
+                harness: HarnessKind::Claude,
+            },
+        ))
+        .expect("mint reply");
+    let OrchestrateReply::AgentIdentityMinted(minted) = minted else {
+        panic!("expected AgentIdentityMinted");
+    };
+    assert_eq!(minted.agent_identifier.as_str().len(), 4);
+    let directory = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Agents))
+        .expect("observe agents");
+    let OrchestrateReply::AgentDirectory(directory) = directory else {
+        panic!("expected agent directory");
+    };
+    assert_eq!(directory.agents.len(), 1);
+    assert_eq!(
+        directory.agents[0].status,
+        orchestrate::OrchestratorAgentStatus::Allocated
+    );
+
+    // Registration with the pre-minted identity binds, it does not mint: the
+    // same identifier turns `Active` and no second row appears.
+    let registered = fixture
+        .handle(OrchestrateRequest::RegisterAgent(
+            OrchestratorAgentRegistration {
+                session: session("PreLaunchMint"),
+                mission: MissionDescription::from_text("launch a worker").expect("mission"),
+                harness: HarnessKind::Claude,
+                topic_selection: TopicSelection::Explicit(vec![
+                    OrchestratorTopicPath::from_wire_token("workers").expect("topic path"),
+                ]),
+                minted_identity: signal_orchestrate::MintedIdentitySelection::PreMinted(
+                    minted.agent_identifier.clone(),
+                ),
+            },
+        ))
+        .expect("preminted registration reply");
+    let OrchestrateReply::AgentRegistered(registered) = registered else {
+        panic!("expected AgentRegistered");
+    };
+    assert_eq!(registered.agent_identifier, minted.agent_identifier);
+    let directory = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Agents))
+        .expect("observe agents");
+    let OrchestrateReply::AgentDirectory(directory) = directory else {
+        panic!("expected agent directory");
+    };
+    assert_eq!(directory.agents.len(), 1);
+    assert_eq!(
+        directory.agents[0].status,
+        orchestrate::OrchestratorAgentStatus::Active
+    );
+}
+
+#[test]
+fn registering_with_an_unknown_preminted_identity_is_a_typed_caller_rejection() {
+    let mut fixture = Fixture::new("orchestrator-unknown-preminted");
+
+    let error = fixture
+        .handle(OrchestrateRequest::RegisterAgent(
+            OrchestratorAgentRegistration {
+                session: session("UnknownPreMint"),
+                mission: MissionDescription::from_text("bind a ghost identity").expect("mission"),
+                harness: HarnessKind::Codex,
+                topic_selection: TopicSelection::Explicit(vec![
+                    OrchestratorTopicPath::from_wire_token("workers").expect("topic path"),
+                ]),
+                minted_identity: signal_orchestrate::MintedIdentitySelection::PreMinted(
+                    orchestrate::OrchestratorAgentIdentifier::from_wire_token("zzzz")
+                        .expect("identifier"),
+                ),
+            },
+        ))
+        .expect_err("unknown pre-minted identity must be refused");
+    assert!(
+        error.is_caller_rejection(),
+        "unknown pre-minted identity rides the typed refusal channel, got {error:?}"
+    );
+
+    // The refused registration seated nothing.
+    let directory = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Agents))
+        .expect("observe agents");
+    let OrchestrateReply::AgentDirectory(directory) = directory else {
+        panic!("expected agent directory");
+    };
+    assert!(directory.agents.is_empty());
 }

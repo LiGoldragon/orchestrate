@@ -15,7 +15,8 @@ use signal_harness::{ModelResolved, ModelUnavailable};
 use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
-    MissionDescription, OrchestratorAgentIdentifier, OrchestratorAgentStatus, OrchestratorTopic,
+    MintedIdentitySelection, MissionDescription, OrchestratorAgentIdentifier,
+    OrchestratorAgentStatus, OrchestratorTopic,
     OrchestratorTopicPath, PartialApplied, PurposeText, PushedState, RepositoryName,
     ResolvedWorkflowRunRequest, Role, RoleName, ScopeReason, ScopeReference, SessionIdentifier,
     TimestampNanos, TopicName, WirePath, WorkflowRunHandle, Worktree, WorktreeStatus,
@@ -896,8 +897,9 @@ impl OrchestrateTables {
         self.record(self.orchestrator_agents, agent_identifier.as_str())
     }
 
-    /// Mint a fresh identity against the live registry key set. The store owns
-    /// minting; callers never supply an identifier.
+    /// Mint a fresh identity against the live registry key set. The
+    /// orchestrator is the mint (psyche-ruled 2026-07-17); the registry's key
+    /// set — including `Allocated` reservations — is the uniqueness domain.
     pub fn mint_orchestrator_agent_identifier(&self) -> Result<OrchestratorAgentIdentifier> {
         let used = self
             .orchestrator_agent_records()?
@@ -906,15 +908,58 @@ impl OrchestrateTables {
         OrchestratorAgentIdentifierMint::from_identifiers(used).next_identifier()
     }
 
-    /// Mint an identity, stamp the registration time, and seat the agent as
-    /// `Active` with no reachability yet (the discovery lane fills that in).
-    pub fn register_orchestrator_agent(
+    /// Allocate an identity ahead of launch: mint against the live key set and
+    /// seat the row `Allocated`, carrying the launch intent (session, mission,
+    /// harness) so the reservation is honest from birth. Registration with the
+    /// pre-minted identity later binds the row `Active`.
+    pub fn allocate_orchestrator_agent(
         &self,
         session: SessionIdentifier,
         mission: MissionDescription,
         harness: HarnessKind,
     ) -> Result<StoredOrchestratorAgent> {
         let agent_identifier = self.mint_orchestrator_agent_identifier()?;
+        let allocated_at = self.current_timestamp()?;
+        let agent = StoredOrchestratorAgent {
+            agent_identifier,
+            session,
+            mission,
+            harness,
+            reachability: None,
+            registered_at: allocated_at,
+            last_activity: allocated_at,
+            status: OrchestratorAgentStatus::Allocated,
+        };
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(agent)
+    }
+
+    /// Register an agent on the orchestrator seat. `None` keeps the
+    /// self-registration path: mint at registration, seat `Active` with no
+    /// reachability yet (the discovery lane fills that in). `PreMinted` binds
+    /// the named identity: registration binds, it does not mint — the existing
+    /// row (any status, including a `Dead` generation being cold-respawned)
+    /// is rebound `Active` with the registering payload as truth, fresh
+    /// stamps, and reachability cleared for rediscovery. An unknown pre-minted
+    /// identity is a typed error.
+    pub fn register_orchestrator_agent(
+        &self,
+        session: SessionIdentifier,
+        mission: MissionDescription,
+        harness: HarnessKind,
+        minted_identity: MintedIdentitySelection,
+    ) -> Result<StoredOrchestratorAgent> {
+        let agent_identifier = match minted_identity {
+            MintedIdentitySelection::None => self.mint_orchestrator_agent_identifier()?,
+            MintedIdentitySelection::PreMinted(agent_identifier) => {
+                if self.orchestrator_agent_record(&agent_identifier)?.is_none() {
+                    return Err(crate::Error::UnknownPreMintedAgentIdentity {
+                        identifier: agent_identifier.as_str().to_string(),
+                    });
+                }
+                agent_identifier
+            }
+        };
         let registered_at = self.current_timestamp()?;
         let agent = StoredOrchestratorAgent {
             agent_identifier,
@@ -1926,15 +1971,15 @@ impl<'store> OrchestrateStoreMigration<'store> {
             ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
         ) {
             Ok(agents) => Ok(agents),
-            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
-                ..
-            })) => Ok(self
-                .read_agents_under_identity::<StoredOrchestratorAgentV7>(
-                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
-                )?
-                .into_iter()
-                .map(StoredOrchestratorAgentV7::into_current)
-                .collect()),
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch { .. })) => {
+                Ok(self
+                    .read_agents_under_identity::<StoredOrchestratorAgentV7>(
+                        ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+                    )?
+                    .into_iter()
+                    .map(StoredOrchestratorAgentV7::into_current)
+                    .collect())
+            }
             Err(error) => Err(error),
         }
     }
@@ -2210,7 +2255,9 @@ mod tests {
         let mut minted = std::collections::BTreeSet::new();
         for _ in 0..16 {
             let agent = tables
-                .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+                .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
+                MintedIdentitySelection::None,
+            )
                 .expect("register agent");
             assert_eq!(agent.status, OrchestratorAgentStatus::Active);
             assert!(agent.reachability.is_none());
@@ -2236,7 +2283,9 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-agent-reachability");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
         let agent = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex)
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex,
+                MintedIdentitySelection::None,
+            )
             .expect("register agent");
 
         let discovered = StoredOrchestratorAgent {
@@ -2319,7 +2368,9 @@ mod tests {
         );
 
         let agent = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
+                MintedIdentitySelection::None,
+            )
             .expect("register agent");
         tables
             .seat_agent_on_topic(agent.agent_identifier.clone(), topic.path.clone())
@@ -2344,10 +2395,14 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-triage-audit");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
         let sender = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude)
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
+                MintedIdentitySelection::None,
+            )
             .expect("register sender");
         let recipient = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex)
+            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex,
+                MintedIdentitySelection::None,
+            )
             .expect("register recipient");
 
         let routed = tables
@@ -2663,6 +2718,7 @@ mod tests {
                 SessionIdentifier::from_camel_case_name("PostMigration").expect("session"),
                 MissionDescription::from_text("seats after the migration").expect("mission"),
                 HarnessKind::Codex,
+                MintedIdentitySelection::None,
             )
             .expect("register agent after migration");
         assert_eq!(
@@ -2845,6 +2901,7 @@ mod tests {
                 SessionIdentifier::from_camel_case_name("DeathTransition").expect("session"),
                 MissionDescription::from_text("dies in this test").expect("mission"),
                 HarnessKind::Codex,
+                MintedIdentitySelection::None,
             )
             .expect("register agent");
 
@@ -2873,6 +2930,7 @@ mod tests {
                 SessionIdentifier::from_camel_case_name("RetiredStaysRetired").expect("session"),
                 MissionDescription::from_text("retires normally").expect("mission"),
                 HarnessKind::Codex,
+                MintedIdentitySelection::None,
             )
             .expect("register second agent");
         tables

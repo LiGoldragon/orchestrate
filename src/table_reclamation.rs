@@ -142,7 +142,10 @@ impl BoundedTableReaper {
         for agent in tables.orchestrator_agent_records()? {
             let idle_nanos = agent.idle_age_at(self.now).value();
             match agent.status {
-                OrchestratorAgentStatus::Active
+                // An `Allocated` reservation whose launch never happened ages
+                // out on the same idle window as an idle `Active` agent: the
+                // registry is a live view, not an archive of stale mints.
+                OrchestratorAgentStatus::Active | OrchestratorAgentStatus::Allocated
                     if idle_nanos >= ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS =>
                 {
                     tables.retire_orchestrator_agent(&agent.agent_identifier)?;

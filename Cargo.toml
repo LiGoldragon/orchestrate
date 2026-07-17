@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.9.0"
+version      = "0.10.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -50,6 +50,7 @@ nota-text = [
 sema                        = { git = "https://github.com/LiGoldragon/sema.git", branch = "main" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
+signal-message = { git = "https://github.com/LiGoldragon/signal-message.git", branch = "main", default-features = false }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "main" }
 meta-signal-harness = { git = "https://github.com/LiGoldragon/meta-signal-harness.git", branch = "main" }
 signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
