@@ -381,7 +381,10 @@ impl LaneReaper {
     fn reap_reason(&self, lane: &StoredLaneRegistration) -> Option<LaneReapReason> {
         let idle_nanos = self.now.value().saturating_sub(lane.updated_at.value());
         match lane.status {
-            LaneStatus::Active => {
+            // A `Suspect` lane is open work inside its grace window; until the
+            // abandonment machinery lands its own grace timing, it is kept on
+            // the same generous window as `Active` — never reaped early.
+            LaneStatus::Active | LaneStatus::Suspect => {
                 (idle_nanos >= ACTIVE_LANE_IDLE_LIMIT_NANOS).then_some(LaneReapReason::ActiveIdle)
             }
             LaneStatus::Released | LaneStatus::HandoverEnded => (idle_nanos
@@ -392,7 +395,7 @@ impl LaneReaper {
 
     fn deadline_for(lane: &StoredLaneRegistration) -> TimestampNanos {
         let retention = match lane.status {
-            LaneStatus::Active => ACTIVE_LANE_IDLE_LIMIT_NANOS,
+            LaneStatus::Active | LaneStatus::Suspect => ACTIVE_LANE_IDLE_LIMIT_NANOS,
             LaneStatus::Released | LaneStatus::HandoverEnded => TERMINAL_LANE_RETENTION_NANOS,
         };
         TimestampNanos::new(lane.updated_at.value().saturating_add(retention))

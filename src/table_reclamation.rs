@@ -31,10 +31,12 @@ use crate::{OrchestrateTables, Result};
 /// long. Tunable.
 pub const ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 
-/// How long a `Retired` orchestrator agent is retained after retirement before
-/// the reaper hard-deletes it and its topic seats. A short post-retirement
-/// window mirroring the terminal-lane retention: retired work is finished, kept
-/// briefly for post-mortem, then gone. Tunable.
+/// How long a terminal (`Retired` or `Dead`) orchestrator agent is retained
+/// after its terminal transition before the reaper hard-deletes it and its
+/// topic seats. A short post-terminal window mirroring the terminal-lane
+/// retention: finished or dead work is kept briefly for post-mortem, then gone.
+/// The death transition re-stamps `last_activity`, so a dead agent's window is
+/// measured from the death observation. Tunable.
 pub const RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS: u64 = 60 * 60 * 1_000_000_000;
 
 /// How long a workflow model-resolution row is retained after it was stamped
@@ -152,6 +154,12 @@ impl BoundedTableReaper {
                     tables.remove_orchestrator_agent(&agent.agent_identifier)?;
                     reclamation.reaped_retired_agents += 1;
                 }
+                OrchestratorAgentStatus::Dead
+                    if idle_nanos >= RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS =>
+                {
+                    tables.remove_orchestrator_agent(&agent.agent_identifier)?;
+                    reclamation.reaped_dead_agents += 1;
+                }
                 _ => {}
             }
         }
@@ -259,7 +267,9 @@ impl BoundedTableReaper {
     ) -> TimestampNanos {
         let window = match status {
             OrchestratorAgentStatus::Active => ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS,
-            OrchestratorAgentStatus::Retired => RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS,
+            OrchestratorAgentStatus::Retired | OrchestratorAgentStatus::Dead => {
+                RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS
+            }
         };
         TimestampNanos::new(last_activity.value().saturating_add(window))
     }
@@ -271,6 +281,7 @@ impl BoundedTableReaper {
 pub struct BoundedTableReclamation {
     pub retired_idle_agents: u32,
     pub reaped_retired_agents: u32,
+    pub reaped_dead_agents: u32,
     pub reaped_orphan_memberships: u32,
     pub reaped_empty_topics: u32,
     pub reaped_workflow_resolutions: u32,
@@ -284,6 +295,7 @@ impl BoundedTableReclamation {
 
     pub fn total_removed(&self) -> u32 {
         self.reaped_retired_agents
+            + self.reaped_dead_agents
             + self.reaped_orphan_memberships
             + self.reaped_empty_topics
             + self.reaped_workflow_resolutions

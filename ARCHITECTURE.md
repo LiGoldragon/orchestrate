@@ -399,6 +399,20 @@ Task scopes render in bracketed human form:
   the relative-age display surfaces. Until that smarter handling exists, the
   reaper keeps every store bounded. Windows are tunable constants in
   `src/table_reclamation.rs`.
+- Harness liveness is kernel-pushed, not aged (`src/harness_liveness.rs`,
+  layer 1 of the coordination-liveliness design): the daemon holds a `pidfd`
+  on every `Active` agent's discovered harness process (the pid pinned by its
+  `/proc` start time, so a recycled pid is never mistaken for the agent's
+  harness), and a process exit makes the pidfd readable — the
+  `HarnessLivenessWatch` worker re-enters through the ordinary Signal path,
+  exactly like the lane reclaimer. The truth transition never trusts the wake:
+  at the head of every ordinary turn `HarnessLivenessReconciliation` reads
+  `/proc` and marks the typed `OrchestratorAgentStatus::Dead` on every `Active`
+  agent whose pinned generation is gone. `Dead` is terminal beside `Retired`
+  (same retention, distinct meaning: dead agents are the messenger's
+  killed-mark source and are bounced-to, never respawn-delivered). Agents
+  without discovered reachability have no pid to watch and stay on the
+  idle-age backstop until the activity-read layer lands.
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path

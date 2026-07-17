@@ -44,6 +44,15 @@ where
 {
 }
 
+// Bumped 8 -> 9 for the orchestrator-agent death state: the agent status
+// vocabulary gained `Dead` (kernel exit-push liveness), so the agent family's
+// declared identity advances to v9. The row layout is byte-compatible — the
+// status enum's existing discriminants are unchanged and the variant was
+// appended last — but the family identity is version-derived, so a v8 store's
+// agent registry re-registers under a stale identity and must migrate: read the
+// rows (their bytes decode as the current shape), retire the stale identity,
+// re-insert. Every other family stays pinned at its own last-layout version.
+//
 // Bumped 7 -> 8 for the orchestrator-agent activity stamp: the agent registry
 // gained a `last_activity` field so the interim table reaper can reap an agent
 // by its own idle age, exactly as the lane reaper reaps a lane. Only the
@@ -63,9 +72,13 @@ where
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
 // topic membership, and triage audit log. The orchestrator topic tree starts
 // empty; there is no seeded topic.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(8);
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(9);
+/// The version the agent family carried before the death-state bump; a store
+/// whose agent registry sits under this identity migrates its rows forward
+/// (they are byte-compatible with the current shape).
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH: SchemaVersion = SchemaVersion::new(8);
 /// The version at which every orchestrator-seat family except the agent registry
-/// was introduced; those families' layouts are unchanged at v8, so their family
+/// was introduced; those families' layouts are unchanged since, so their family
 /// hashes stay pinned here.
 const ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY: SchemaVersion = SchemaVersion::new(7);
 const ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT: SchemaVersion = SchemaVersion::new(6);
@@ -944,6 +957,28 @@ impl OrchestrateTables {
         Ok(Some(agent))
     }
 
+    /// Mark an `Active` agent `Dead` — its harness process generation is known
+    /// exited — re-stamping `last_activity` so the terminal retention window is
+    /// measured from the death observation. The transition fires once: an agent
+    /// already terminal (`Retired` or `Dead`) is left untouched, so repeated
+    /// reconciliation passes never extend a dead agent's retention. Returns the
+    /// marked row, or `None` when the identifier is absent or not `Active`.
+    pub fn mark_orchestrator_agent_dead(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<Option<StoredOrchestratorAgent>> {
+        let Some(mut agent) = self.orchestrator_agent_record(agent_identifier)? else {
+            return Ok(None);
+        };
+        if agent.status != OrchestratorAgentStatus::Active {
+            return Ok(None);
+        }
+        agent.status = OrchestratorAgentStatus::Dead;
+        agent.last_activity = self.current_timestamp()?;
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(Some(agent))
+    }
+
     /// Retire every `Active` agent registered to a session, returning how many
     /// were retired. Clearing a session is an explicit end-of-life for the agents
     /// that registered under it, so their retirement need not wait for the idle
@@ -1806,6 +1841,7 @@ impl<'store> OrchestrateStoreMigration<'store> {
         found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY
+            || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH
     }
 
     fn apply(&self, repair: StoreRepair) -> Result<RepairOutcome> {
@@ -1844,19 +1880,16 @@ impl<'store> OrchestrateStoreMigration<'store> {
         Ok(())
     }
 
-    /// Migrate the orchestrator-agent registry forward across the `last_activity`
-    /// layout bump, carrying its rows rather than discarding them. Three steps:
-    /// read the prior-shape rows under their old family identity; retire the stale
-    /// family so a fresh registration under the current identity is accepted;
-    /// re-open the store and re-insert the carried rows in the current shape
-    /// through the ordinary write path (which logs them under the current family
-    /// so the versioned history stays consistent). Every other family is untouched.
+    /// Migrate the orchestrator-agent registry forward across a family-identity
+    /// bump, carrying its rows rather than discarding them. Three steps: read
+    /// the prior-shape rows under whichever old family identity the stale
+    /// catalog still names; retire the stale family so a fresh registration
+    /// under the current identity is accepted; re-open the store and re-insert
+    /// the carried rows in the current shape through the ordinary write path
+    /// (which logs them under the current family so the versioned history stays
+    /// consistent). Every other family is untouched.
     fn migrate_agent_registry(&self) -> Result<OrchestrateTables> {
-        let carried: Vec<StoredOrchestratorAgent> = self
-            .read_prior_shape_agents()?
-            .into_iter()
-            .map(StoredOrchestratorAgentV7::into_current)
-            .collect();
+        let carried = self.read_prior_shape_agents()?;
         self.retire_stale_agent_family()?;
         let tables = OrchestrateTables::open_current(self.store)?;
         for agent in &carried {
@@ -1865,20 +1898,56 @@ impl<'store> OrchestrateStoreMigration<'store> {
         Ok(tables)
     }
 
-    /// Read the orchestrator-agent rows in their prior on-disk shape by registering
-    /// the table under its pre-bump (`v7`) family identity, which matches the
-    /// identity the stale catalog still names. The rows decode as
-    /// [`StoredOrchestratorAgentV7`] — their genuine layout — so the read is
-    /// well-typed rather than a reinterpretation of current-shape bytes.
-    fn read_prior_shape_agents(&self) -> Result<Vec<StoredOrchestratorAgentV7>> {
+    /// Read the orchestrator-agent rows in their prior on-disk shape by
+    /// registering the table under the stale family identity the catalog still
+    /// names, newest known prior generation first. A v8 store's rows are
+    /// byte-compatible with the current shape (the death-state bump only
+    /// appended a status variant), so they decode as [`StoredOrchestratorAgent`]
+    /// directly; a v7 store's rows carry their genuine pre-`last_activity`
+    /// layout and decode as [`StoredOrchestratorAgentV7`]. Each generation is
+    /// tried under its own identity, so the read is well-typed rather than a
+    /// reinterpretation of mismatched bytes.
+    fn read_prior_shape_agents(&self) -> Result<Vec<StoredOrchestratorAgent>> {
+        match self.read_agents_under_identity::<StoredOrchestratorAgent>(
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
+        ) {
+            Ok(agents) => Ok(agents),
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                ..
+            })) => Ok(self
+                .read_agents_under_identity::<StoredOrchestratorAgentV7>(
+                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+                )?
+                .into_iter()
+                .map(StoredOrchestratorAgentV7::into_current)
+                .collect()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Register the agent table under one prior family identity and read every
+    /// row in that generation's own decoded shape. A store whose catalog names a
+    /// different identity rejects the registration with a family-identity
+    /// mismatch, which the caller uses to try the next known generation.
+    fn read_agents_under_identity<PriorShape>(
+        &self,
+        version: SchemaVersion,
+    ) -> Result<Vec<PriorShape>>
+    where
+        PriorShape: sema_engine::EngineStoredValue,
+        PriorShape::Archived: rkyv::Deserialize<PriorShape, HighDeserializer<rancor::Error>>
+            + for<'validation> CheckBytes<
+                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
+            >,
+    {
         let mut engine = Engine::open(OrchestrateTables::engine_open(self.store))?;
-        let prior_agents = engine.register_table(OrchestrateTables::family_descriptor::<
-            StoredOrchestratorAgentV7,
-        >(
-            ORCHESTRATOR_AGENTS,
-            "orchestrator-agent",
-            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
-        ))?;
+        let prior_agents = engine.register_table(
+            OrchestrateTables::family_descriptor::<PriorShape>(
+                ORCHESTRATOR_AGENTS,
+                "orchestrator-agent",
+                version,
+            ),
+        )?;
         Ok(engine
             .match_records(QueryPlan::all(prior_agents))?
             .records()
@@ -2702,6 +2771,128 @@ mod tests {
     /// v7-layout rows written through the engine's own path, not current-shape bytes
     /// relabelled. A claim is seated too, so the migration can be shown to leave
     /// other families untouched.
+    #[test]
+    fn store_with_pre_death_agent_registry_migrates_rows_forward() {
+        let temporary = TemporaryStore::new("orchestrate-agent-death-migration");
+        let agent_identifier =
+            OrchestratorAgentIdentifierMint::from_identifiers(std::iter::empty::<String>())
+                .next_identifier()
+                .expect("mint agent identifier");
+        let pre_death_agent = StoredOrchestratorAgent {
+            agent_identifier: agent_identifier.clone(),
+            session: SessionIdentifier::from_camel_case_name("PreDeathAgent").expect("session"),
+            mission: MissionDescription::from_text("holds a seat before the death bump")
+                .expect("mission"),
+            harness: HarnessKind::Codex,
+            reachability: None,
+            registered_at: TimestampNanos::new(800),
+            last_activity: TimestampNanos::new(850),
+            status: OrchestratorAgentStatus::Active,
+        };
+
+        // Build the exact store the v8 (pre-death-state) build wrote: the agent
+        // rows are byte-compatible with the current shape but registered under
+        // the stale v8 family identity.
+        build_pre_death_store(&temporary.location(), &pre_death_agent);
+
+        let raw = OrchestrateTables::open_current(&temporary.location());
+        assert!(
+            matches!(
+                &raw,
+                Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                    table,
+                    ..
+                })) if table.as_str() == ORCHESTRATOR_AGENTS.as_str()
+            ),
+            "expected a stale-identity rejection for orchestrator_agents from the plain open path"
+        );
+
+        let migrated =
+            OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
+        let agents = migrated
+            .orchestrator_agent_records()
+            .expect("agents after migration");
+        assert_eq!(
+            agents.len(),
+            1,
+            "the v8 agent row must be carried forward, not dropped"
+        );
+        assert_eq!(agents[0].agent_identifier, agent_identifier);
+        assert_eq!(agents[0].last_activity, TimestampNanos::new(850));
+        assert_eq!(agents[0].status, OrchestratorAgentStatus::Active);
+    }
+
+    #[test]
+    fn mark_dead_transitions_an_active_agent_once() {
+        let temporary = TemporaryStore::new("orchestrate-mark-dead");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("store opens");
+        let agent = tables
+            .register_orchestrator_agent(
+                SessionIdentifier::from_camel_case_name("DeathTransition").expect("session"),
+                MissionDescription::from_text("dies in this test").expect("mission"),
+                HarnessKind::Codex,
+            )
+            .expect("register agent");
+
+        let marked = tables
+            .mark_orchestrator_agent_dead(&agent.agent_identifier)
+            .expect("mark dead")
+            .expect("active agent transitions");
+        assert_eq!(marked.status, OrchestratorAgentStatus::Dead);
+        assert!(
+            marked.last_activity.value() > agent.last_activity.value(),
+            "death re-stamps last_activity so retention is measured from the observation"
+        );
+
+        // The transition fires once: a second mark is a no-op that never
+        // extends the dead agent's retention window.
+        assert!(
+            tables
+                .mark_orchestrator_agent_dead(&agent.agent_identifier)
+                .expect("second mark")
+                .is_none()
+        );
+
+        // A retired agent is terminal and is never re-marked dead.
+        let retired = tables
+            .register_orchestrator_agent(
+                SessionIdentifier::from_camel_case_name("RetiredStaysRetired").expect("session"),
+                MissionDescription::from_text("retires normally").expect("mission"),
+                HarnessKind::Codex,
+            )
+            .expect("register second agent");
+        tables
+            .retire_orchestrator_agent(&retired.agent_identifier)
+            .expect("retire");
+        assert!(
+            tables
+                .mark_orchestrator_agent_dead(&retired.agent_identifier)
+                .expect("mark retired")
+                .is_none()
+        );
+    }
+
+    fn build_pre_death_store(location: &StoreLocation, agent: &StoredOrchestratorAgent) {
+        let mut engine =
+            Engine::open(OrchestrateTables::engine_open(location)).expect("open engine");
+        let pre_death_agents = engine
+            .register_table(OrchestrateTables::family_descriptor::<
+                StoredOrchestratorAgent,
+            >(
+                ORCHESTRATOR_AGENTS,
+                "orchestrator-agent",
+                ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
+            ))
+            .expect("register pre-death agents");
+        engine
+            .assert_keyed(KeyedAssertion::new(
+                pre_death_agents,
+                RecordKey::new(agent.agent_identifier.as_str()),
+                agent.clone(),
+            ))
+            .expect("seat pre-death agent");
+    }
+
     fn build_prior_shape_store(
         location: &StoreLocation,
         claim: &StoredClaim,

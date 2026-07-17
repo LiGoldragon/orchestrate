@@ -94,6 +94,7 @@ impl ComponentDaemon for OrchestrateDaemon {
             layout,
         )?
         .with_lane_reclamation_socket(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
+        .with_harness_liveness_watch(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
         .with_public_socket_retirement(PublicSocketRetirement::new(
             PathBuf::from(configuration.ordinary_socket_path.as_str()),
             PathBuf::from(configuration.meta_socket_path.as_str()),

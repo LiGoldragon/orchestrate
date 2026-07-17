@@ -38,6 +38,7 @@ use meta_signal_orchestrate::schema::lib::{
     LaneRegistrationMode as SchemaLaneRegistrationMode,
     LaneRegistrationRequest as SchemaLaneRegistrationRequest, Output as MetaSchemaOutput,
     Role as SchemaRole, SessionIdentifier as SchemaSessionIdentifier,
+    SignalFrameError as MetaSignalFrameError,
 };
 use signal_orchestrate::schema::lib::{
     Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
@@ -880,7 +881,7 @@ fn upgrade_socket_rejects_ordinary_frame() {
 }
 
 #[test]
-fn meta_socket_rejects_ordinary_frame() {
+fn meta_socket_answers_ordinary_frame_with_typed_refusal() {
     let fixture = DaemonFixture::start("orchestrate-ordinary-reject");
     let frame = OrchestrateFrame::new(OrchestrateFrameBody::Request {
         exchange: exchange(),
@@ -893,8 +894,14 @@ fn meta_socket_rejects_ordinary_frame() {
     stream
         .write_all(&frame.encode_length_prefixed().expect("encode frame"))
         .expect("write frame");
-    let mut prefix = [0_u8; 4];
-    assert!(stream.read_exact(&mut prefix).is_err());
+    // A foreign frame that reaches the meta engine is answered with a
+    // delivered typed refusal — never a silent close, which callers cannot
+    // distinguish from daemon death.
+    let bytes = read_length_prefixed_response(&mut stream);
+    match MetaSchemaOutput::decode_signal_frame(&bytes[4..]) {
+        Err(MetaSignalFrameError::EngineRefused { .. }) => {}
+        other => panic!("expected delivered meta engine refusal, got {other:?}"),
+    }
 }
 
 #[test]
@@ -919,7 +926,7 @@ fn ordinary_socket_rejects_mismatched_short_header_before_dispatch() {
 }
 
 #[test]
-fn meta_socket_rejects_mismatched_short_header_before_dispatch() {
+fn meta_socket_answers_mismatched_short_header_with_typed_refusal() {
     let fixture = DaemonFixture::start("orchestrate-meta-header");
     let frame = MetaOrchestrateFrame::with_short_header(
         ShortHeader::new(0),
@@ -935,8 +942,14 @@ fn meta_socket_rejects_mismatched_short_header_before_dispatch() {
     stream
         .write_all(&frame.encode_length_prefixed().expect("encode frame"))
         .expect("write frame");
-    let mut prefix = [0_u8; 4];
-    assert!(stream.read_exact(&mut prefix).is_err());
+    // Under the refusal contract a zero short header is a live variant
+    // header; the mismatched body reaches the engine and is answered with a
+    // delivered typed refusal instead of a silent close.
+    let bytes = read_length_prefixed_response(&mut stream);
+    match MetaSchemaOutput::decode_signal_frame(&bytes[4..]) {
+        Err(MetaSignalFrameError::EngineRefused { .. }) => {}
+        other => panic!("expected delivered meta engine refusal, got {other:?}"),
+    }
 }
 
 #[test]

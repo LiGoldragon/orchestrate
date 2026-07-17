@@ -14,9 +14,10 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LaneReclaimer, LegacyLockImport, LockProjection, MetaRequestExecution, MirrorSnapshot,
-    MirrorVersions, OrchestrateLayout, OrchestrateRequestExecution, OrchestrateTables,
-    PublicSocketRetirement, Result, RoleRegistry, StoreLocation, StoredDivergence,
+    Error, HarnessLivenessReconciliation, HarnessLivenessWatch, LaneReclaimer, LegacyLockImport,
+    LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
+    OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, RoleRegistry,
+    StoreLocation, StoredDivergence, WatchedHarnessProcess,
     handover::{HandoverClockReading, HandoverState},
 };
 
@@ -48,6 +49,15 @@ pub struct OrchestrateService {
     /// deadlines after lane mutations and re-enters through Signal at expiry;
     /// it never opens or mutates the store itself.
     lane_reclaimer: Option<LaneReclaimer>,
+    /// The engine-side harness liveness truth read, run at the head of every
+    /// ordinary turn: an `Active` agent whose pinned harness process generation
+    /// is gone from `/proc` is marked with the typed `Dead` status.
+    harness_liveness: HarnessLivenessReconciliation,
+    /// The daemon-lifecycle kernel exit watcher. It holds a pidfd per watched
+    /// harness process and re-enters through Signal when the kernel pushes an
+    /// exit; it never opens or mutates the store itself. `None` in tests and
+    /// store-only openings.
+    harness_liveness_watch: Option<HarnessLivenessWatch>,
 }
 
 impl OrchestrateService {
@@ -68,6 +78,8 @@ impl OrchestrateService {
             pending_caller_process_id: None,
             router_registration_endpoint: None,
             lane_reclaimer: None,
+            harness_liveness: HarnessLivenessReconciliation::from_process_environment(),
+            harness_liveness_watch: None,
         };
         // Reap dead durable state at startup: every daemon restart (each deploy)
         // hard-deletes terminal lane records past retention, Active lanes idle
@@ -91,6 +103,23 @@ impl OrchestrateService {
         Ok(self)
     }
 
+    /// Attach the kernel exit watcher to this daemon's ordinary socket and arm
+    /// it from durable state: every `Active` agent's pinned harness process is
+    /// watched immediately, so a harness that dies while the daemon runs is
+    /// pushed dead by the kernel rather than aged out by the idle backstop.
+    pub fn with_harness_liveness_watch(
+        mut self,
+        ordinary_socket_path: std::path::PathBuf,
+    ) -> Result<Self> {
+        let watch = HarnessLivenessWatch::spawn(
+            ordinary_socket_path,
+            std::path::PathBuf::from("/proc"),
+        )?;
+        watch.reconcile(WatchedHarnessProcess::desired_set(&self.tables)?);
+        self.harness_liveness_watch = Some(watch);
+        Ok(self)
+    }
+
     /// Publish the current earliest expiry after an engine turn. The worker
     /// waits for this exact deadline and sends one internal event when it is
     /// due; no human observation or background polling is involved.
@@ -99,6 +128,18 @@ impl OrchestrateService {
             return Ok(());
         };
         reclaimer.reschedule(self.next_reclamation_deadline()?);
+        Ok(())
+    }
+
+    /// Push the desired harness watch set after an engine turn: the exit
+    /// watcher opens pidfds for newly registered reachability and drops fds
+    /// whose agents went terminal. State flows engine → watcher only; the
+    /// watcher's own signal back is the ordinary Signal re-entry.
+    pub(crate) fn reschedule_harness_liveness_watch(&self) -> Result<()> {
+        let Some(watch) = &self.harness_liveness_watch else {
+            return Ok(());
+        };
+        watch.reconcile(WatchedHarnessProcess::desired_set(&self.tables)?);
         Ok(())
     }
 
@@ -130,6 +171,11 @@ impl OrchestrateService {
     /// deadline worker's timed wakes.
     pub(crate) fn reconcile_bounded_state(&self) -> Result<()> {
         let now = self.tables.current_timestamp()?;
+        // Liveness truth first: an `Active` agent whose pinned harness process
+        // generation is gone from `/proc` becomes typed `Dead` this turn — the
+        // kernel exit watcher only wakes the turn, the transition is always
+        // derived here from process truth.
+        self.harness_liveness.reconcile(&self.tables)?;
         let lane_reconciliation = crate::LaneRegistry::new(&self.tables).reconcile()?;
         self.tables.remove_claims_without_lanes()?;
         let table_reclamation = crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;

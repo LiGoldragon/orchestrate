@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=288252e4a9b9d0a651519f94740bf2f823c7c2a4#288252e4a9b9d0a651519f94740bf2f823c7c2a4"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#1ef0ab7160610cfbbe0d9be9d10b04a1bed3794d"
 dependencies = [
  "nota",
  "rkyv",
@@ -464,7 +464,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "criome",
  "getrandom",
@@ -474,6 +474,7 @@ dependencies = [
  "redb",
  "relative-age-display",
  "rkyv",
+ "rustix",
  "schema",
  "schema-rust 0.7.1",
  "sema",
@@ -844,7 +845,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.6.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=348ea22989ee35192861c436d34de92b0d43104f#348ea22989ee35192861c436d34de92b0d43104f"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#8c2ca59f176bd7fd2987f87766e9330cb15043bf"
 dependencies = [
  "nota",
  "rkyv",
