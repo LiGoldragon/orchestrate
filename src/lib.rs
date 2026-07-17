@@ -1,4 +1,5 @@
 pub mod activity;
+pub mod age_projection;
 pub mod agent_reachability;
 pub mod claim;
 pub mod configuration;
@@ -22,6 +23,7 @@ pub mod schema;
 pub mod service;
 pub mod signal_transport;
 pub mod socket_retirement;
+pub mod table_reclamation;
 pub mod tables;
 pub mod upgrade_frame;
 pub mod workflow;
@@ -29,6 +31,7 @@ pub mod worktree;
 pub mod worktree_projection;
 
 pub use activity::ActivityLedger;
+pub use age_projection::{LaneAgeLine, LaneAgeReport};
 pub use agent_reachability::{
     AgentReachabilityDiscovery, AncestorProcess, ProcessAncestryWalk, ProcessStat,
     TerminalCellSessionIndex, TerminalCellSessionRecord,
@@ -68,22 +71,24 @@ pub use signal_orchestrate::{
     LaneIdentifier, LaneName, LaneOwner, LaneRegistration, LaneResourceClaim, LaneStatus,
     LanesObserved, MissionDescription, Observation, ObservationClosed, ObservationEvent,
     ObservationOpened, ObservationSubscription, ObservationToken, OperationKind, OrchestrateReply,
-    OrchestrateRequest, OrchestratorAgentRegistration, OrchestratorTopicPath, PartialApplied,
-    PurposeText, PushedState, RepositoryName, ResolvedWorkflowRunRequest, Role, RoleClaim,
-    RoleHandoff, RoleIdentifier, RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason,
-    ScopeReference, SessionIdentifier, SessionName, SessionsObserved, TaskToken, TimestampNanos,
+    OrchestrateRequest, OrchestratorAgentIdentifier, OrchestratorAgentRegistration,
+    OrchestratorAgentStatus, OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,
+    RepositoryName, ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier,
+    RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
+    SessionIdentifier, SessionName, SessionsObserved, TaskToken, TeardownRefusal, TimestampNanos,
     TopicAssignmentSource, TopicName, TopicSelection, WirePath, WorkflowReceiptProduced,
     WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
     WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
     WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    TeardownRefusal, WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree,
-    WorktreeConclusion, WorktreeConclusionRequest, WorktreeConcluded, WorktreeRequest,
-    WorktreeRequestRejected, WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus,
-    WorktreeTeardownRefused, WorktreesObserved,
+    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeConcluded,
+    WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected,
+    WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
+    WorktreesObserved,
 };
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
+pub use table_reclamation::{BoundedTableReaper, BoundedTableReclamation};
 pub use tables::{
     CURRENT_ACTIVITY_LIMIT, CURRENT_DIVERGENCE_LIMIT, CURRENT_ORCHESTRATOR_TRIAGE_LIMIT,
     OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,

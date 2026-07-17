@@ -85,7 +85,13 @@ impl WorktreeFixture {
         run_jj(&path, &["config", "set", "--repo", "user.name", "smoke"]);
         run_jj(
             &path,
-            &["config", "set", "--repo", "user.email", "smoke@example.invalid"],
+            &[
+                "config",
+                "set",
+                "--repo",
+                "user.email",
+                "smoke@example.invalid",
+            ],
         );
         std::fs::write(path.join("base.txt"), "base\n").expect("base file");
         run_jj(&path, &["describe", "-m", "base commit"]);
@@ -105,10 +111,12 @@ impl WorktreeFixture {
     }
 
     fn conclude(&mut self, lane: &str, disposition: WorktreeConclusion) -> OrchestrateReply {
-        self.handle(OrchestrateRequest::ConcludeWorktree(WorktreeConclusionRequest {
-            owning_lane: LaneName::from_text(lane).expect("lane name"),
-            disposition,
-        }))
+        self.handle(OrchestrateRequest::ConcludeWorktree(
+            WorktreeConclusionRequest {
+                owning_lane: LaneName::from_text(lane).expect("lane name"),
+                disposition,
+            },
+        ))
         .expect("conclude worktree")
     }
 
@@ -297,7 +305,10 @@ fn request_scaffolds_workspace_and_registers_row() {
         .join("orchestrate")
         .join("feature-lifecycle");
     assert!(destination.join(".jj").exists(), "workspace .jj must exist");
-    assert_eq!(scaffolded.worktree.path.as_str(), destination.to_string_lossy());
+    assert_eq!(
+        scaffolded.worktree.path.as_str(),
+        destination.to_string_lossy()
+    );
 
     let worktrees = observe_worktrees(&mut fixture);
     assert_eq!(worktrees.len(), 1);
@@ -344,7 +355,10 @@ fn conclude_merged_refuses_unmerged_work_and_preserves_directory() {
         refused.reason,
         orchestrate::TeardownRefusal::UnmergedWorkPresent
     );
-    assert!(destination.join(".jj").exists(), "refused teardown keeps dir");
+    assert!(
+        destination.join(".jj").exists(),
+        "refused teardown keeps dir"
+    );
     let worktrees = observe_worktrees(&mut fixture);
     assert_eq!(worktrees[0].status, WorktreeStatus::Active);
 }
@@ -370,7 +384,10 @@ fn conclude_merged_tears_down_when_ancestor_of_main() {
         !destination.exists(),
         "merged teardown removes the worktree directory"
     );
-    assert_eq!(observe_worktrees(&mut fixture)[0].status, WorktreeStatus::Recycled);
+    assert_eq!(
+        observe_worktrees(&mut fixture)[0].status,
+        WorktreeStatus::Recycled
+    );
 }
 
 #[test]
@@ -389,7 +406,11 @@ fn conclude_rejected_salvages_to_remote_then_tears_down() {
         .env("JJ_EMAIL", "smoke@example.invalid")
         .output()
         .expect("run jj git init remote");
-    assert!(status.status.success(), "remote init: {}", String::from_utf8_lossy(&status.stderr));
+    assert!(
+        status.status.success(),
+        "remote init: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
     run_jj(
         &source,
         &[

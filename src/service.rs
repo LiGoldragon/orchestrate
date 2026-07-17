@@ -2,7 +2,9 @@ use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest};
 use signal_frame::{
     AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, RequestRejectionReason, SubReply,
 };
-use signal_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied};
+use signal_orchestrate::{
+    ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied, TimestampNanos,
+};
 use signal_version_handover::{
     CompletionReport, DivergenceAcknowledgement, HandoverAcceptance, HandoverFinalization,
     HandoverMarker, HandoverRejection, HandoverRejectionReason, MarkerRequest,
@@ -57,18 +59,7 @@ impl OrchestrateService {
         let tables = OrchestrateTables::open(store)?;
         RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
         LegacyLockImport::new(&tables, &layout).import_if_store_has_no_claims()?;
-        // Reap dead lane records at startup: every daemon restart (each deploy)
-        // hard-deletes terminal records past retention and Active lanes idle past
-        // the liveness window, so a store that accumulated leaked and terminal
-        // lanes while an older daemon ran comes up reflecting only real lanes.
-        let reconciliation = crate::LaneRegistry::new(&tables).reconcile()?;
-        tables.remove_claims_without_lanes()?;
-        // A reap that flagged orphaned worktrees `Abandoned` changed the
-        // worktree table, so refresh the GC manifest at startup.
-        if reconciliation.flagged_abandoned_worktrees > 0 {
-            crate::WorktreeProjection::new(&tables, &layout).project()?;
-        }
-        Ok(Self {
+        let service = Self {
             tables,
             layout,
             next_observation_token: 1,
@@ -77,7 +68,16 @@ impl OrchestrateService {
             pending_caller_process_id: None,
             router_registration_endpoint: None,
             lane_reclaimer: None,
-        })
+        };
+        // Reap dead durable state at startup: every daemon restart (each deploy)
+        // hard-deletes terminal lane records past retention, Active lanes idle
+        // past the liveness window, retired/idle orchestrator agents, orphaned
+        // topic seats, empty topics, aged workflow model resolutions, and worktree
+        // rows whose checkout has vanished — so a store that accumulated leaked
+        // and terminal records while an older daemon ran comes up reflecting only
+        // real state.
+        service.reconcile_bounded_state()?;
+        Ok(service)
     }
 
     /// Attach lifecycle-driven lane expiry work to this daemon's ordinary
@@ -86,7 +86,7 @@ impl OrchestrateService {
         mut self,
         ordinary_socket_path: std::path::PathBuf,
     ) -> Result<Self> {
-        let deadline = crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?;
+        let deadline = self.next_reclamation_deadline()?;
         self.lane_reclaimer = Some(LaneReclaimer::spawn(ordinary_socket_path, deadline));
         Ok(self)
     }
@@ -98,7 +98,49 @@ impl OrchestrateService {
         let Some(reclaimer) = &self.lane_reclaimer else {
             return Ok(());
         };
-        reclaimer.reschedule(crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?);
+        reclaimer.reschedule(self.next_reclamation_deadline()?);
+        Ok(())
+    }
+
+    /// The earliest durable expiry across every deadline-driven store: the lane
+    /// registry and the interim-bounded orchestrator-seat and workflow-resolution
+    /// tables. The single reclamation worker sleeps to this instant and re-enters
+    /// through the ordinary Signal path — no interval scan.
+    fn next_reclamation_deadline(&self) -> Result<Option<TimestampNanos>> {
+        let lane_deadline = crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?;
+        let now = self.tables.current_timestamp()?;
+        let table_deadline = crate::BoundedTableReaper::new(now).next_deadline(&self.tables)?;
+        Ok(match (lane_deadline, table_deadline) {
+            (Some(lane), Some(table)) => Some(if lane.value() <= table.value() {
+                lane
+            } else {
+                table
+            }),
+            (Some(lane), None) => Some(lane),
+            (None, table) => table,
+        })
+    }
+
+    /// Reap every dead durable record in one pass — dead lanes, orphaned claims,
+    /// retired and idle orchestrator agents, orphaned topic seats, empty topics,
+    /// aged workflow model resolutions, and worktree rows whose checkout vanished.
+    /// This runs at startup and on every ordinary engine turn, reflecting the
+    /// same reconcile-on-read discipline the lane registry already applies, so
+    /// the interim-bounded stores never accumulate dead records between the
+    /// deadline worker's timed wakes.
+    pub(crate) fn reconcile_bounded_state(&self) -> Result<()> {
+        let now = self.tables.current_timestamp()?;
+        let lane_reconciliation = crate::LaneRegistry::new(&self.tables).reconcile()?;
+        self.tables.remove_claims_without_lanes()?;
+        let table_reclamation = crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;
+        // A lane reap that flagged orphaned worktrees `Abandoned`, or a terminal
+        // worktree tombstone reaped past its retention, changed the worktree
+        // table, so refresh the GC manifest to match.
+        if lane_reconciliation.flagged_abandoned_worktrees > 0
+            || table_reclamation.reaped_terminal_worktrees > 0
+        {
+            crate::WorktreeProjection::new(&self.tables, &self.layout).project()?;
+        }
         Ok(())
     }
 

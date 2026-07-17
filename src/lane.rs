@@ -101,6 +101,12 @@ impl<'tables> LaneRegistry<'tables> {
         for lane in &cleared_lanes {
             self.tables.remove_claims_for_lane(&lane.assignment.lane)?;
         }
+        // Clearing a session ends the agents that registered under it. Retire
+        // them here as an explicit lifecycle event; the interim table reaper then
+        // deletes each retired agent (and its topic seats) after the terminal
+        // retention window, exactly as it does for a lane.
+        self.tables
+            .retire_session_orchestrator_agents(&request.session)?;
         Ok(MetaOrchestrateReply::SessionCleared(SessionCleared {
             session: request.session,
             cleared_lanes: cleared_lanes.len() as u32,

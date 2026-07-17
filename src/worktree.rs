@@ -18,10 +18,9 @@ use meta_signal_orchestrate::{
 };
 use signal_orchestrate::{
     BranchName, LaneName, OrchestrateReply, PurposeText, PushedState, RepositoryName,
-    TeardownRefusal, TimestampNanos, WirePath, Worktree, WorktreeConclusion,
-    WorktreeConclusionRequest, WorktreeConcluded, WorktreeRequest, WorktreeRequestRejected,
-    WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
-    WorktreesObserved,
+    TeardownRefusal, TimestampNanos, WirePath, Worktree, WorktreeConcluded, WorktreeConclusion,
+    WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected, WorktreeRequestRejection,
+    WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused, WorktreesObserved,
 };
 
 use crate::{
@@ -221,7 +220,10 @@ impl<'tables> WorktreeRegistry<'tables> {
                 },
             ));
         }
-        let repository_checkout = self.layout.git_index_root().join(stored.repository.as_str());
+        let repository_checkout = self
+            .layout
+            .git_index_root()
+            .join(stored.repository.as_str());
         let workspace = Self::workspace_name(&destination);
         let branch = stored.branch.as_str().to_owned();
         let teardown_error = |path: &std::path::Path| {

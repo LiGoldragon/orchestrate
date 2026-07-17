@@ -10,8 +10,8 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use nota::{NotaDecodeError, NotaSource};
-use orchestrate::{OrdinarySignalTransport, TransportError};
-use signal_orchestrate::schema::lib::Input;
+use orchestrate::{LaneAgeReport, OrdinarySignalTransport, TransportError};
+use signal_orchestrate::schema::lib::{Input, Output};
 use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
@@ -42,6 +42,13 @@ impl OrchestrateCli {
         let input = RequestText::new(self.argument_text()?).parse()?;
         let (_route, output) =
             OrdinarySignalTransport::connect(self.socket_path()?)?.exchange(&input)?;
+        // A lane observation carries per-record ages as raw nanosecond counts on
+        // the wire. Stdout stays the pure NOTA reply so machine readers can decode
+        // it unchanged; the human-readable relative-age summary ("3.42 days", not
+        // a nanosecond integer) goes to stderr, the human-diagnostic channel.
+        if let Output::LanesObserved(lanes) = &output {
+            eprint!("{}", LaneAgeReport::from_observation(lanes).render());
+        }
         println!("{output}");
         Ok(())
     }

@@ -43,15 +43,24 @@ where
 {
 }
 
+// Bumped 7 -> 8 for the orchestrator-agent activity stamp: the agent registry
+// gained a `last_activity` field so the interim table reaper can reap an agent
+// by its own idle age, exactly as the lane reaper reaps a lane. Only the
+// orchestrator-agent family layout changed, so only its family hash advances to
+// v8; every other family stays pinned to the version at which its own layout was
+// last set (stable claim/role/lane/worktree tables at v5, workflow model
+// resolutions at v6, the topic tree / topic membership / triage audit at v7).
+// Migration forward is purely additive per family: an older store keeps every
+// unchanged family's data and re-opens the changed agent family empty.
+//
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
-// topic membership, and triage audit log. Each table's family schema hash is
-// pinned to the version at which it was introduced (stable claim/role/lane/
-// worktree tables at v5, workflow model resolutions at v6, orchestrator-seat
-// tables at v7) so bumping the store version never disturbs an older table's
-// family hash. Migration forward is purely additive: an older store gains the
-// empty new tables. The orchestrator topic tree starts empty; there is no
-// seeded topic.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(7);
+// topic membership, and triage audit log. The orchestrator topic tree starts
+// empty; there is no seeded topic.
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(8);
+/// The version at which every orchestrator-seat family except the agent registry
+/// was introduced; those families' layouts are unchanged at v8, so their family
+/// hashes stay pinned here.
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY: SchemaVersion = SchemaVersion::new(7);
 const ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT: SchemaVersion = SchemaVersion::new(6);
 // Bumped 5 -> 6 for workflow model-resolution attempts. Existing v5 stores
 // remain the lane-owned claim baseline; the new table records resolved or
@@ -188,6 +197,14 @@ pub enum StoredWorkflowModelResolutionOutcome {
 /// One registered agent, keyed by its minted [`OrchestratorAgentIdentifier`].
 /// `reachability` is populated later by the discovery lane; it is `None` at
 /// registration because reachability is discovered, never caller-declared.
+///
+/// `last_activity` is the reaper's idle-age clock, mirroring a lane's
+/// `updated_at`: it starts at `registered_at` and is refreshed on every real use
+/// of the agent (reachability discovery, a triage message it sends), so a
+/// genuinely active agent never ages out. The interim table reaper retires an
+/// `Active` agent idle past the liveness window and deletes a `Retired` agent
+/// past its terminal retention, and the retirement transition re-stamps
+/// `last_activity` so the terminal window is measured from retirement.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredOrchestratorAgent {
     pub agent_identifier: OrchestratorAgentIdentifier,
@@ -196,7 +213,16 @@ pub struct StoredOrchestratorAgent {
     pub harness: HarnessKind,
     pub reachability: Option<StoredAgentReachability>,
     pub registered_at: TimestampNanos,
+    pub last_activity: TimestampNanos,
     pub status: OrchestratorAgentStatus,
+}
+
+impl StoredOrchestratorAgent {
+    /// The elapsed idle age against an observation instant, read from the
+    /// last-activity stamp — the reaper's sole liveness signal for an agent.
+    pub fn idle_age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
+        TimestampInterval::new(self.last_activity, observed_at).duration()
+    }
 }
 
 /// Where and how a registered agent is reached, discovered at registration by
@@ -342,22 +368,22 @@ impl OrchestrateTables {
         let orchestrator_topics = engine.register_table(Self::family_descriptor(
             ORCHESTRATOR_TOPICS,
             "orchestrator-topic",
-            ORCHESTRATE_SCHEMA_VERSION,
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
         ))?;
         let orchestrator_topic_membership = engine.register_table(Self::family_descriptor(
             ORCHESTRATOR_TOPIC_MEMBERSHIP,
             "orchestrator-topic-membership",
-            ORCHESTRATE_SCHEMA_VERSION,
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
         ))?;
         let orchestrator_triage_audit = engine.register_table(Self::family_descriptor(
             ORCHESTRATOR_TRIAGE_AUDIT,
             "orchestrator-triage",
-            ORCHESTRATE_SCHEMA_VERSION,
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
         ))?;
         let orchestrator_triage_next_slot = engine.register_table(Self::family_descriptor(
             ORCHESTRATOR_TRIAGE_NEXT_SLOT,
             "orchestrator-triage-slot",
-            ORCHESTRATE_SCHEMA_VERSION,
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
         ))?;
         Ok(Self {
             engine,
@@ -597,8 +623,7 @@ impl OrchestrateTables {
     pub fn mark_worktrees_abandoned_for_lane(&self, owning_lane: &str) -> Result<u32> {
         let mut flagged = 0;
         for mut record in self.worktree_records()? {
-            if record.owning_lane.as_str() == owning_lane
-                && record.status == WorktreeStatus::Active
+            if record.owning_lane.as_str() == owning_lane && record.status == WorktreeStatus::Active
             {
                 record.status = WorktreeStatus::Abandoned;
                 self.insert_worktree(&record)?;
@@ -606,6 +631,11 @@ impl OrchestrateTables {
             }
         }
         Ok(flagged)
+    }
+
+    /// Delete one worktree row, keyed `repository|branch`.
+    pub fn remove_worktree(&self, worktree: &StoredWorktree) -> Result<()> {
+        self.remove_if_present(self.worktrees, worktree.key().as_str())
     }
 
     pub fn replace_worktrees(&self, worktrees: &[StoredWorktree]) -> Result<()> {
@@ -823,10 +853,106 @@ impl OrchestrateTables {
             harness,
             reachability: None,
             registered_at,
+            last_activity: registered_at,
             status: OrchestratorAgentStatus::Active,
         };
         self.insert_orchestrator_agent(&agent)?;
         Ok(agent)
+    }
+
+    /// Refresh an agent's last-activity stamp to now, the way a lane's
+    /// `updated_at` advances on real use, so an actively used agent never ages
+    /// out under the reaper. A no-op when the identifier is absent.
+    pub fn touch_orchestrator_agent(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<()> {
+        let Some(mut agent) = self.orchestrator_agent_record(agent_identifier)? else {
+            return Ok(());
+        };
+        agent.last_activity = self.current_timestamp()?;
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(())
+    }
+
+    /// Mark an `Active` agent `Retired`, re-stamping `last_activity` so the
+    /// terminal retention window is measured from the retirement instant.
+    /// Returns the retired row, or `None` when the identifier is absent.
+    pub fn retire_orchestrator_agent(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<Option<StoredOrchestratorAgent>> {
+        let Some(mut agent) = self.orchestrator_agent_record(agent_identifier)? else {
+            return Ok(None);
+        };
+        agent.status = OrchestratorAgentStatus::Retired;
+        agent.last_activity = self.current_timestamp()?;
+        self.insert_orchestrator_agent(&agent)?;
+        Ok(Some(agent))
+    }
+
+    /// Retire every `Active` agent registered to a session, returning how many
+    /// were retired. Clearing a session is an explicit end-of-life for the agents
+    /// that registered under it, so their retirement need not wait for the idle
+    /// window to elapse.
+    pub fn retire_session_orchestrator_agents(&self, session: &SessionIdentifier) -> Result<u32> {
+        let mut retired = 0;
+        for agent in self.orchestrator_agent_records()? {
+            if agent.session == *session && agent.status == OrchestratorAgentStatus::Active {
+                self.retire_orchestrator_agent(&agent.agent_identifier)?;
+                retired += 1;
+            }
+        }
+        Ok(retired)
+    }
+
+    /// Hard-delete an agent and every topic seat it held — a retired agent's
+    /// memberships are reaped with it, never left orphaned.
+    pub fn remove_orchestrator_agent(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<()> {
+        self.remove_topic_memberships_for_agent(agent_identifier)?;
+        self.remove_if_present(self.orchestrator_agents, agent_identifier.as_str())?;
+        Ok(())
+    }
+
+    /// Delete every topic seat held by one agent, returning how many were
+    /// removed.
+    pub fn remove_topic_memberships_for_agent(
+        &self,
+        agent_identifier: &OrchestratorAgentIdentifier,
+    ) -> Result<u32> {
+        let mut removed = 0;
+        for membership in self.orchestrator_topic_membership_records()? {
+            if membership.agent_identifier == *agent_identifier {
+                self.remove_if_present(
+                    self.orchestrator_topic_membership,
+                    membership.key().as_str(),
+                )?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Delete one topic by its path.
+    pub fn remove_orchestrator_topic(&self, path: &OrchestratorTopicPath) -> Result<()> {
+        self.remove_if_present(self.orchestrator_topics, path.as_str())
+    }
+
+    /// Whether any topic names `path` as its parent — a topic with children is
+    /// structural and is never reaped out from under its subtree.
+    pub fn orchestrator_topic_has_children(&self, path: &OrchestratorTopicPath) -> Result<bool> {
+        Ok(self
+            .orchestrator_topic_records()?
+            .into_iter()
+            .any(|topic| topic.parent.as_ref() == Some(path)))
+    }
+
+    /// Delete one workflow model-resolution row by its run handle.
+    pub fn remove_workflow_model_resolution(&self, handle: &WorkflowRunHandle) -> Result<()> {
+        self.remove_if_present(self.workflow_model_resolutions, handle.run.as_str())
     }
 
     /// Attach discovered reachability to an already-registered agent, returning
@@ -842,6 +968,9 @@ impl OrchestrateTables {
             return Ok(None);
         };
         agent.reachability = Some(reachability);
+        // Reachability discovery is real use of the agent, so it refreshes the
+        // reaper's idle-age clock alongside the reachability write.
+        agent.last_activity = self.current_timestamp()?;
         self.insert_orchestrator_agent(&agent)?;
         Ok(Some(agent))
     }
@@ -976,6 +1105,9 @@ impl OrchestrateTables {
             ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY,
             &slot.next_value(),
         )?;
+        // A triaged message is real activity for its sender, so it refreshes the
+        // sender agent's idle-age clock and keeps a message-active agent alive.
+        self.touch_orchestrator_agent(&record.sender)?;
         self.trim_orchestrator_triage_records()?;
         Ok(record)
     }
@@ -1547,7 +1679,8 @@ impl<'store> OrchestrateStoreMigration<'store> {
                 sema_engine::StorageKernelError::SchemaVersionMismatch { expected, found },
             )) if *expected == ORCHESTRATE_SCHEMA_VERSION
                 && (*found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
-                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT) =>
+                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT
+                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY) =>
             {
                 Some(*found)
             }
@@ -2063,6 +2196,53 @@ mod tests {
                 .expect("agents")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn version_seven_store_migrates_and_preserves_families_pinned_before_agent_activity() {
+        let temporary = TemporaryStore::new("orchestrate-v7-to-v8-migration");
+        let topic_path = OrchestratorTopicPath::from_wire_token("engineering").expect("topic path");
+        let claim = StoredClaim::new(
+            LaneIdentifier::from_wire_token("designer").expect("lane"),
+            ScopeReference::Path(
+                WirePath::from_absolute_path("/tmp/orchestrate-v7-migrate").expect("path"),
+            ),
+            ScopeReason::from_text("owns v7 migration test").expect("reason"),
+            TimestampNanos::new(300),
+        );
+        {
+            let tables =
+                OrchestrateTables::open(&temporary.location()).expect("current store opens");
+            tables
+                .replace_all_claims(std::slice::from_ref(&claim))
+                .expect("insert claim");
+            tables
+                .insert_orchestrator_topic(
+                    topic_path.clone(),
+                    TopicName::from_text("engineering").expect("topic name"),
+                    None,
+                )
+                .expect("insert topic");
+        }
+
+        // Present the store as a genuine pre-agent-activity (v7) store; the topic
+        // and claim families are unchanged at v8, so their family hashes match and
+        // their rows survive the bump.
+        stamp_meta_schema_version(
+            temporary.path.as_path(),
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+        );
+
+        let migrated =
+            OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
+        let claims = migrated.claim_records().expect("claims after migration");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].claimed_at, TimestampNanos::new(300));
+        let topics = migrated
+            .orchestrator_topic_records()
+            .expect("topics after migration");
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].path, topic_path);
     }
 
     fn stamp_meta_schema_version(path: &std::path::Path, version: SchemaVersion) {

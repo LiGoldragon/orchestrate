@@ -365,6 +365,28 @@ Task scopes render in bracketed human form:
   retention window and `Active` lanes idle past a generous liveness window are
   hard-deleted with their claims. Windows are tunable constants in `src/lane.rs`
   (terminal 1h, active idle 24h).
+- The other stores that grew without a removal path are bounded by the same
+  idle-age discipline, in `src/table_reclamation.rs`'s `BoundedTableReaper`: the
+  orchestrator agent registry (an `Active` agent idle past its liveness window
+  retires; a `Retired` agent past its terminal retention is deleted with its
+  topic seats; `last_activity` is refreshed on registration, reachability
+  discovery, and each triaged message it sends, and clearing a session retires
+  its agents), topic membership (reaped with the agent that held it), the topic
+  registry (an empty, childless topic aged past retention is reaped), the
+  workflow model-resolution table (a resolution reaped past its retention), and
+  the worktree index (a concluded tombstone — `Recycled`/`Archived`/`Merged` —
+  reaped past retention, while `Active` work stays and `Abandoned` rows are left
+  for the `ConcludeWorktree` reclaim path). Reconciliation runs at startup and at
+  the head of every ordinary engine turn, and the single reclamation worker's
+  next deadline is the earliest expiry across the lanes and these tables — the
+  same push-not-pull, reaped-only-by-its-own-idle-age invariant, never an
+  interval scan. This reaping is an **interim** mechanism, not the final design:
+  the psyche's standing direction is that these lanes and tables should
+  ultimately be "handled more smartly with a mind combination", and that a store
+  that grows is acceptable only "as long as we also document their age" — which
+  the relative-age display surfaces. Until that smarter handling exists, the
+  reaper keeps every store bounded. Windows are tunable constants in
+  `src/table_reclamation.rs`.
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path

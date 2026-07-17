@@ -1,18 +1,19 @@
 use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
-    ApplicationFailureReason, ApplicationSuccess, CURRENT_ACTIVITY_LIMIT, CreateRoleOrder,
-    DownstreamComponent, HarnessKind, LaneAlreadyRegisteredResolution, LaneAssignment,
-    LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneReconciliation,
-    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, LaneUnregistrationRequest,
-    MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription, Observation,
-    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    ApplicationFailureReason, ApplicationSuccess, BoundedTableReaper, BoundedTableReclamation,
+    CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
+    LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
+    LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
+    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
+    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
     OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
     PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
     Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
     ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
     StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
-    TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
+    TopicName, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
+    WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -1277,6 +1278,287 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
         .map(|claim| claim.lane.as_wire_token().to_string())
         .collect();
     assert_eq!(remaining_claim_lanes, vec!["recent-terminal"]);
+}
+
+const REAP_HOUR_NANOS: u64 = 60 * 60 * 1_000_000_000;
+
+fn backdate_agent_activity(
+    tables: &OrchestrateTables,
+    agent: &orchestrate::OrchestratorAgentIdentifier,
+    hours_ago: u64,
+) {
+    let mut record = tables
+        .orchestrator_agent_record(agent)
+        .expect("read agent")
+        .expect("agent present");
+    let now = tables.current_timestamp().expect("clock").value();
+    record.last_activity = TimestampNanos::new(now - hours_ago * REAP_HOUR_NANOS);
+    tables
+        .insert_orchestrator_agent(&record)
+        .expect("backdate agent activity");
+}
+
+#[test]
+fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topic_seats() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-agent-reap");
+    let now = tables.current_timestamp().expect("clock");
+
+    // A fresh agent: recently registered, kept whatever its future age.
+    let fresh = tables
+        .register_orchestrator_agent(
+            session("KeepSession"),
+            MissionDescription::from_text("stay active").expect("mission"),
+            HarnessKind::Codex,
+        )
+        .expect("register fresh agent");
+    // A leaked Active agent, idle far past the liveness window: reaper retires it.
+    let idle = tables
+        .register_orchestrator_agent(
+            session("LeakSession"),
+            MissionDescription::from_text("leaked agent").expect("mission"),
+            HarnessKind::Codex,
+        )
+        .expect("register idle agent");
+    // An already-Retired agent past its terminal retention: reaper deletes it.
+    let retired = tables
+        .register_orchestrator_agent(
+            session("DoneSession"),
+            MissionDescription::from_text("finished agent").expect("mission"),
+            HarnessKind::Codex,
+        )
+        .expect("register retired agent");
+    tables
+        .retire_orchestrator_agent(&retired.agent_identifier)
+        .expect("retire agent");
+
+    // Seat both the idle and the retired agent on a shared topic, so seat reaping
+    // tracks agent reaping: the deleted agent's seat goes, the surviving (now
+    // retired) agent's seat stays.
+    let topic = OrchestratorTopicPath::from_wire_token("engineering").expect("topic path");
+    tables
+        .ensure_orchestrator_topic(
+            topic.clone(),
+            TopicName::from_text("engineering").expect("topic name"),
+            None,
+        )
+        .expect("create topic");
+    tables
+        .seat_agent_on_topic(idle.agent_identifier.clone(), topic.clone())
+        .expect("seat idle agent");
+    tables
+        .seat_agent_on_topic(retired.agent_identifier.clone(), topic.clone())
+        .expect("seat retired agent");
+
+    backdate_agent_activity(&tables, &idle.agent_identifier, 25);
+    backdate_agent_activity(&tables, &retired.agent_identifier, 2);
+
+    let reclamation: BoundedTableReclamation = BoundedTableReaper::new(now)
+        .reconcile(&tables)
+        .expect("reconcile");
+    assert_eq!(reclamation.retired_idle_agents, 1);
+    assert_eq!(reclamation.reaped_retired_agents, 1);
+
+    let agents = tables.orchestrator_agent_records().expect("agents");
+    let status_of = |identifier: &orchestrate::OrchestratorAgentIdentifier| {
+        agents
+            .iter()
+            .find(|agent| &agent.agent_identifier == identifier)
+            .map(|agent| agent.status)
+    };
+    assert_eq!(
+        status_of(&fresh.agent_identifier),
+        Some(orchestrate::OrchestratorAgentStatus::Active)
+    );
+    assert_eq!(
+        status_of(&idle.agent_identifier),
+        Some(orchestrate::OrchestratorAgentStatus::Retired)
+    );
+    assert_eq!(status_of(&retired.agent_identifier), None);
+
+    // The deleted agent's topic seat is gone; the retired-but-present agent's
+    // seat remains, so the topic is still populated.
+    let members = tables
+        .topic_member_identifiers(&topic)
+        .expect("topic members");
+    assert!(members.contains(&idle.agent_identifier));
+    assert!(!members.contains(&retired.agent_identifier));
+}
+
+#[test]
+fn bounded_reaper_reaps_aged_empty_topics_and_keeps_populated_topics() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-topic-reap");
+    let registered_now = tables.current_timestamp().expect("clock").value();
+    // Reconcile from a future instant so the just-created topics read as aged.
+    let future = TimestampNanos::new(registered_now + 25 * REAP_HOUR_NANOS);
+
+    let empty = OrchestratorTopicPath::from_wire_token("abandoned").expect("empty topic path");
+    tables
+        .ensure_orchestrator_topic(
+            empty.clone(),
+            TopicName::from_text("abandoned").expect("name"),
+            None,
+        )
+        .expect("create empty topic");
+
+    let populated = OrchestratorTopicPath::from_wire_token("staffed").expect("populated path");
+    tables
+        .ensure_orchestrator_topic(
+            populated.clone(),
+            TopicName::from_text("staffed").expect("name"),
+            None,
+        )
+        .expect("create populated topic");
+    let agent = tables
+        .register_orchestrator_agent(
+            session("TopicSession"),
+            MissionDescription::from_text("hold the topic").expect("mission"),
+            HarnessKind::Codex,
+        )
+        .expect("register agent");
+    // Keep the agent live at the future instant so the topic stays populated.
+    let mut agent_record = tables
+        .orchestrator_agent_record(&agent.agent_identifier)
+        .expect("read")
+        .expect("present");
+    agent_record.last_activity = future;
+    tables
+        .insert_orchestrator_agent(&agent_record)
+        .expect("refresh agent");
+    tables
+        .seat_agent_on_topic(agent.agent_identifier.clone(), populated.clone())
+        .expect("seat agent");
+
+    let reclamation = BoundedTableReaper::new(future)
+        .reconcile(&tables)
+        .expect("reconcile");
+    assert_eq!(reclamation.reaped_empty_topics, 1);
+
+    let topic_paths: Vec<String> = tables
+        .orchestrator_topic_records()
+        .expect("topics")
+        .into_iter()
+        .map(|topic| topic.path.as_str().to_string())
+        .collect();
+    assert!(topic_paths.contains(&"staffed".to_string()));
+    assert!(!topic_paths.contains(&"abandoned".to_string()));
+}
+
+#[test]
+fn bounded_reaper_reaps_workflow_model_resolutions_past_retention() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-workflow-reap");
+    let requested = ResolvedWorkflowRunRequest {
+        workflow_run: workflow_resolution_run_request(),
+        model_resolution: ModelResolutionRequest {
+            model: ModelRequest {
+                selector: ModelSelector::Exact(NamedModel::new("gpt-5-codex")),
+                effort: EffortRequest::High,
+            },
+            continuation: ContinuationRequest::Fresh,
+        },
+    };
+    let resolved = ModelResolved {
+        harness: HarnessName::new("codex-main"),
+        harness_kind: ResolvedHarnessKind::Codex,
+        model: NamedModel::new("gpt-5-codex"),
+        effort: EffortRequest::High,
+        continuation: ContinuationHandle::Codex(CodexContinuationIdentifier::new("codex-turn-1")),
+    };
+    let resolver = RecordingModelResolver::new(MetaHarnessReply::ModelResolved(resolved));
+    WorkflowRunner::new(resolver)
+        .expect("runner")
+        .run_resolved_workflow(requested, &tables)
+        .expect("resolved workflow run");
+    assert_eq!(
+        tables
+            .workflow_model_resolution_records()
+            .expect("resolutions")
+            .len(),
+        1
+    );
+
+    let stamped_now = tables.current_timestamp().expect("clock").value();
+    // Inside retention: the resolution survives.
+    let within_retention = TimestampNanos::new(stamped_now + REAP_HOUR_NANOS);
+    let kept = BoundedTableReaper::new(within_retention)
+        .reconcile(&tables)
+        .expect("reconcile within retention");
+    assert_eq!(kept.reaped_workflow_resolutions, 0);
+    assert_eq!(
+        tables
+            .workflow_model_resolution_records()
+            .expect("resolutions")
+            .len(),
+        1
+    );
+
+    // Past retention: the resolution is reaped.
+    let past_retention = TimestampNanos::new(stamped_now + 25 * REAP_HOUR_NANOS);
+    let reaped = BoundedTableReaper::new(past_retention)
+        .reconcile(&tables)
+        .expect("reconcile past retention");
+    assert_eq!(reaped.reaped_workflow_resolutions, 1);
+    assert!(
+        tables
+            .workflow_model_resolution_records()
+            .expect("resolutions")
+            .is_empty()
+    );
+}
+
+#[test]
+fn bounded_reaper_reaps_terminal_worktree_tombstones_and_keeps_active_and_abandoned() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-worktree-reap");
+    let registered_now = tables.current_timestamp().expect("clock").value();
+    let old = TimestampNanos::new(registered_now);
+    // Reconcile from a future instant so every row reads as aged past retention.
+    let future = TimestampNanos::new(registered_now + 25 * REAP_HOUR_NANOS);
+
+    let worktree = |branch: &str, status| orchestrate::StoredWorktree {
+        repository: orchestrate::RepositoryName::from_text("orchestrate").expect("repository"),
+        branch: orchestrate::BranchName::from_text(branch).expect("branch"),
+        path: orchestrate::WirePath::from_absolute_path(format!("/tmp/reap-{branch}"))
+            .expect("path"),
+        owning_lane: orchestrate::LaneName::from_text("designer").expect("lane"),
+        status,
+        purpose: orchestrate::PurposeText::from_text("interim reaping fixture").expect("purpose"),
+        last_activity: old,
+        pushed_state: orchestrate::PushedState::AncestorOfMain,
+    };
+
+    // Active work is never reaped by age; an Abandoned row awaits ConcludeWorktree
+    // reclaim and is left in place; only concluded tombstones age out.
+    tables
+        .insert_worktree(&worktree(
+            "live-feature",
+            orchestrate::WorktreeStatus::Active,
+        ))
+        .expect("insert active");
+    tables
+        .insert_worktree(&worktree(
+            "leaked-feature",
+            orchestrate::WorktreeStatus::Abandoned,
+        ))
+        .expect("insert abandoned");
+    tables
+        .insert_worktree(&worktree(
+            "done-feature",
+            orchestrate::WorktreeStatus::Recycled,
+        ))
+        .expect("insert recycled");
+
+    let reclamation = BoundedTableReaper::new(future)
+        .reconcile(&tables)
+        .expect("reconcile");
+    assert_eq!(reclamation.reaped_terminal_worktrees, 1);
+
+    let mut remaining: Vec<String> = tables
+        .worktree_records()
+        .expect("worktrees")
+        .into_iter()
+        .map(|worktree| worktree.branch.as_str().to_string())
+        .collect();
+    remaining.sort();
+    assert_eq!(remaining, vec!["leaked-feature", "live-feature"]);
 }
 
 #[test]

@@ -354,6 +354,13 @@ impl<'service> OrchestrateSemaEngine<'service> {
         input: sema_schema::SemaWriteInput,
     ) -> Result<sema_schema::SemaWriteOutput> {
         // The actor mailbox serialises every write; no sequence lock is needed.
+        // Reconcile the interim-bounded stores at the head of every ordinary turn
+        // — including the reclamation worker's timed `Observe Lanes` re-entry — so
+        // dead lanes, agents, topic seats, topics, workflow resolutions, and
+        // vanished worktree rows are reaped by their own idle age before the turn
+        // reads or writes. Reaping only removes records already past their window,
+        // never a record a live request targets.
+        self.service.reconcile_bounded_state()?;
         match input {
             sema_schema::SemaWriteInput::ApplyOrdinary(input) => {
                 let request = input.into_payload().project_into()?;
