@@ -50,8 +50,13 @@ where
 // v8; every other family stays pinned to the version at which its own layout was
 // last set (stable claim/role/lane/worktree tables at v5, workflow model
 // resolutions at v6, the topic tree / topic membership / triage audit at v7).
-// Migration forward is purely additive per family: an older store keeps every
-// unchanged family's data and re-opens the changed agent family empty.
+// Migration forward is additive for every unchanged family — an older store
+// keeps its data — but the agent family's own layout changed, so its stored
+// catalog identity no longer matches the declared one. A store carrying the
+// agent registry under the old identity (whether it just bumped its file version
+// or was already re-stamped) cannot re-register it additively; the migration
+// drops and recreates that one ephemeral family and its rows re-establish from
+// running harnesses. See `OrchestrateStoreMigration`.
 //
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
 // topic membership, and triage audit log. The orchestrator topic tree starts
@@ -97,6 +102,14 @@ pub const CURRENT_ORCHESTRATOR_TRIAGE_LIMIT: usize = 256;
 
 const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
 const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
+/// The sema-engine catalog table: one row per registered family, keyed by table
+/// name, whose value is the rkyv-encoded family identity (name plus schema hash).
+/// The engine reads this at open to reconstruct its family inventory, so a
+/// migration that must retire a stale family identity edits this row directly.
+/// The value type mirrors sema's `&[u8]` storage encoding; a migration only
+/// removes a keyed row, so the value bytes are never decoded here.
+const SEMA_ENGINE_CATALOG: redb::TableDefinition<&str, &[u8]> =
+    redb::TableDefinition::new("__sema_engine_catalog");
 
 pub struct OrchestrateTables {
     engine: Engine,
@@ -1649,6 +1662,25 @@ impl StoreClock {
     }
 }
 
+/// One recoverable on-disk store defect the current build knows how to clear in
+/// place before re-opening. An open error that maps to no variant is never
+/// repaired — it surfaces unchanged so a genuinely incompatible store fails
+/// closed rather than being silently mutated.
+enum StoreRepair {
+    /// The sema file is stamped at a known prior schema version whose every
+    /// intervening family layout is additive up to the current version. Re-stamp
+    /// the file to the current version: unchanged families keep their rows, and
+    /// families introduced since open empty on the next registration.
+    StampSchemaVersion(SchemaVersion),
+    /// The ephemeral orchestrator-agent registry is registered under a stale
+    /// family schema hash — the agent layout changed (the `last_activity` stamp)
+    /// but the catalog still names the old identity, so re-registration under the
+    /// current identity is rejected. Agent-registry rows are ephemeral and
+    /// re-established by running harnesses, so drop the family and let the re-open
+    /// register it fresh under the current hash. Every other family is untouched.
+    DropStaleAgentRegistry,
+}
+
 struct OrchestrateStoreMigration<'store> {
     store: &'store StoreLocation,
 }
@@ -1658,33 +1690,68 @@ impl<'store> OrchestrateStoreMigration<'store> {
         Self { store }
     }
 
+    /// Clear recognised store defects and open. A single store can need more than
+    /// one repair before it opens — a genuine prior-version file that also carries
+    /// the stale agent registry is first re-stamped to the current version, then
+    /// re-opened, which now surfaces the stale-identity rejection, which the agent
+    /// drop clears. Each repair unblocks the next open; the same defect recurring
+    /// after its own repair means the repair did not take, so the loop refuses to
+    /// spin and surfaces the error.
     fn open_after_migration(&self, error: crate::Error) -> Result<OrchestrateTables> {
-        match self.migratable_found_version(&error) {
-            Some(found) => {
-                self.stamp_current_schema_version(found)?;
-                OrchestrateTables::open_current(self.store)
+        let mut pending = error;
+        let mut applied: Vec<std::mem::Discriminant<StoreRepair>> = Vec::new();
+        loop {
+            let Some(repair) = self.repair_for(&pending) else {
+                return Err(pending);
+            };
+            if applied.contains(&std::mem::discriminant(&repair)) {
+                return Err(pending);
             }
-            None => Err(error),
+            applied.push(std::mem::discriminant(&repair));
+            self.apply(&repair)?;
+            match OrchestrateTables::open_current(self.store) {
+                Ok(tables) => return Ok(tables),
+                Err(next) => pending = next,
+            }
         }
     }
 
-    /// A store mismatch is a forward-additive migration when the store is at a
-    /// known prior version (v5 claim baseline or v6 workflow-resolution
-    /// baseline) and this build expects the current version. Every intervening
-    /// table is additive and created empty on open, so a v5 store may migrate
-    /// straight to the current version without an intermediate stop.
-    fn migratable_found_version(&self, error: &crate::Error) -> Option<SchemaVersion> {
+    /// The repair, if any, that clears this open error. A prior-version schema
+    /// stamp is additive-forward when the store sits at a known prior version and
+    /// this build expects the current one; every intervening table is additive and
+    /// opens empty, so a v5 store may migrate straight to the current version. A
+    /// family-identity rejection is repairable only for the ephemeral
+    /// orchestrator-agent registry, whose rows are recreated by running harnesses;
+    /// any other family under a stale identity is a real incompatibility that
+    /// fails closed.
+    fn repair_for(&self, error: &crate::Error) -> Option<StoreRepair> {
         match error {
             crate::Error::SemaEngine(sema_engine::Error::Sema(
                 sema_engine::StorageKernelError::SchemaVersionMismatch { expected, found },
             )) if *expected == ORCHESTRATE_SCHEMA_VERSION
-                && (*found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
-                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT
-                    || *found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY) =>
+                && Self::is_additive_prior_version(*found) =>
             {
-                Some(*found)
+                Some(StoreRepair::StampSchemaVersion(*found))
+            }
+            crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                table, ..
+            }) if table.as_str() == ORCHESTRATOR_AGENTS.as_str() => {
+                Some(StoreRepair::DropStaleAgentRegistry)
             }
             _ => None,
+        }
+    }
+
+    fn is_additive_prior_version(found: SchemaVersion) -> bool {
+        found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS
+            || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT
+            || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY
+    }
+
+    fn apply(&self, repair: &StoreRepair) -> Result<()> {
+        match repair {
+            StoreRepair::StampSchemaVersion(found) => self.stamp_current_schema_version(*found),
+            StoreRepair::DropStaleAgentRegistry => self.drop_stale_agent_registry(),
         }
     }
 
@@ -1692,38 +1759,64 @@ impl<'store> OrchestrateStoreMigration<'store> {
         let storage =
             sema::Sema::open_with_schema(self.store.as_path(), &sema::Schema { version: found })?;
         drop(storage);
-        let database = redb::Database::create(self.store.as_path()).map_err(|source| {
-            crate::Error::StoreMigration {
-                message: source.to_string(),
-            }
-        })?;
-        let transaction =
-            database
-                .begin_write()
-                .map_err(|source| crate::Error::StoreMigration {
-                    message: source.to_string(),
-                })?;
+        let database =
+            redb::Database::create(self.store.as_path()).map_err(Self::store_migration_error)?;
+        let transaction = database
+            .begin_write()
+            .map_err(Self::store_migration_error)?;
         {
-            let mut table = transaction.open_table(SEMA_META).map_err(|source| {
-                crate::Error::StoreMigration {
-                    message: source.to_string(),
-                }
-            })?;
+            let mut table = transaction
+                .open_table(SEMA_META)
+                .map_err(Self::store_migration_error)?;
             table
                 .insert(
                     SEMA_SCHEMA_VERSION_KEY,
                     ORCHESTRATE_SCHEMA_VERSION.value() as u64,
                 )
-                .map_err(|source| crate::Error::StoreMigration {
-                    message: source.to_string(),
-                })?;
+                .map_err(Self::store_migration_error)?;
+        }
+        transaction.commit().map_err(Self::store_migration_error)?;
+        Ok(())
+    }
+
+    /// Retire the ephemeral orchestrator-agent registry so the next open registers
+    /// it fresh under the current family hash. Two edits under one transaction: the
+    /// family's catalog registration is removed so re-registration sees an unbound
+    /// family, and its data table is dropped so no stale-layout rows survive. Every
+    /// other family's registration and rows are untouched — only the one table
+    /// named by the identity mismatch is retired.
+    ///
+    /// The versioned commit log is a hash chain and is deliberately left intact:
+    /// its historical agent-registry entries stay valid links, and orchestrate
+    /// takes no checkpoints, so those entries are never materialized against the
+    /// live catalog. See `NON_IDEAL_AGENTS.md` for the log-scrub follow-up.
+    fn drop_stale_agent_registry(&self) -> Result<()> {
+        let database =
+            redb::Database::create(self.store.as_path()).map_err(Self::store_migration_error)?;
+        let transaction = database
+            .begin_write()
+            .map_err(Self::store_migration_error)?;
+        {
+            let mut catalog = transaction
+                .open_table(SEMA_ENGINE_CATALOG)
+                .map_err(Self::store_migration_error)?;
+            catalog
+                .remove(ORCHESTRATOR_AGENTS.as_str())
+                .map_err(Self::store_migration_error)?;
         }
         transaction
-            .commit()
-            .map_err(|source| crate::Error::StoreMigration {
-                message: source.to_string(),
-            })?;
+            .delete_table(redb::TableDefinition::<&str, &[u8]>::new(
+                ORCHESTRATOR_AGENTS.as_str(),
+            ))
+            .map_err(Self::store_migration_error)?;
+        transaction.commit().map_err(Self::store_migration_error)?;
         Ok(())
+    }
+
+    fn store_migration_error(source: impl std::fmt::Display) -> crate::Error {
+        crate::Error::StoreMigration {
+            message: source.to_string(),
+        }
     }
 }
 
@@ -2243,6 +2336,125 @@ mod tests {
             .expect("topics after migration");
         assert_eq!(topics.len(), 1);
         assert_eq!(topics[0].path, topic_path);
+    }
+
+    #[test]
+    fn store_with_stale_hash_agent_registry_drops_and_recreates_only_that_family() {
+        let temporary = TemporaryStore::new("orchestrate-stale-agent-registry-migration");
+        let claim = StoredClaim::new(
+            LaneIdentifier::from_wire_token("designer").expect("lane"),
+            ScopeReference::Path(
+                WirePath::from_absolute_path("/tmp/orchestrate-stale-agent").expect("path"),
+            ),
+            ScopeReason::from_text("owns stale-agent migration test").expect("reason"),
+            TimestampNanos::new(400),
+        );
+        let session =
+            SessionIdentifier::from_camel_case_name("StaleAgentRegistry").expect("session");
+        {
+            let tables =
+                OrchestrateTables::open(&temporary.location()).expect("current store opens");
+            tables
+                .replace_all_claims(std::slice::from_ref(&claim))
+                .expect("insert claim");
+            tables
+                .register_orchestrator_agent(
+                    session.clone(),
+                    MissionDescription::from_text("holds a seat before the bump").expect("mission"),
+                    HarnessKind::Codex,
+                )
+                .expect("register agent");
+            assert_eq!(
+                tables
+                    .orchestrator_agent_records()
+                    .expect("agents present")
+                    .len(),
+                1
+            );
+        }
+
+        // Reproduce the wedged production store: the agent registry's real rows stay,
+        // but its catalog identity is rewound to the pre-activity (v7) family hash —
+        // exactly the stale identity a store written before the `last_activity` bump
+        // carries. The sema file itself is already at the current version, matching a
+        // store the current build has opened once and stamped forward.
+        downgrade_agent_registry_to_stale_hash(temporary.path.as_path());
+
+        // The plain open path the daemon runs at startup is what crash-loops on the
+        // wedged store: registering the agent family under the current identity is
+        // rejected against the stale catalog identity, and no other family is at fault.
+        let raw = OrchestrateTables::open_current(&temporary.location());
+        let stale_rejection = matches!(
+            &raw,
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                table,
+                ..
+            })) if table.as_str() == ORCHESTRATOR_AGENTS.as_str()
+        );
+        assert!(
+            stale_rejection,
+            "expected a stale-identity rejection for orchestrator_agents from the plain open path"
+        );
+
+        // The repaired open drops and recreates only the agent registry.
+        let migrated =
+            OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
+
+        // Every other family survives untouched: the pre-migration claim is still there.
+        let claims = migrated.claim_records().expect("claims after migration");
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].claimed_at, TimestampNanos::new(400));
+        assert_eq!(claims[0].lane, claim.lane);
+
+        // The agent registry is dropped and recreated empty — the stale rows are gone —
+        // and it is immediately usable: a fresh registration under the current hash
+        // succeeds and reads back.
+        assert!(
+            migrated
+                .orchestrator_agent_records()
+                .expect("agents readable")
+                .is_empty(),
+            "the stale agent rows must be dropped, not carried forward"
+        );
+        let reregistered = migrated
+            .register_orchestrator_agent(
+                session,
+                MissionDescription::from_text("re-seats after the drop").expect("mission"),
+                HarnessKind::Codex,
+            )
+            .expect("register agent after migration");
+        let agents = migrated
+            .orchestrator_agent_records()
+            .expect("agents after re-register");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].agent_identifier, reregistered.agent_identifier);
+    }
+
+    /// Rewind the orchestrator-agent catalog registration to the pre-activity (v7)
+    /// family hash, leaving its data rows in place, so the store carries the exact
+    /// stale-identity table that wedged production. Writes the catalog row through
+    /// the same rkyv encoding the engine reads at open.
+    fn downgrade_agent_registry_to_stale_hash(path: &std::path::Path) {
+        let stale_identity = OrchestrateTables::family_descriptor::<StoredOrchestratorAgent>(
+            ORCHESTRATOR_AGENTS,
+            "orchestrator-agent",
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+        )
+        .family_identity();
+        let registration = sema_engine::TableRegistration::new(stale_identity);
+        let encoded =
+            rkyv::to_bytes::<rancor::Error>(&registration).expect("encode stale registration");
+        let database = redb::Database::create(path).expect("open store database");
+        let transaction = database.begin_write().expect("begin write");
+        {
+            let mut catalog = transaction
+                .open_table(SEMA_ENGINE_CATALOG)
+                .expect("open catalog table");
+            catalog
+                .insert(ORCHESTRATOR_AGENTS.as_str(), encoded.as_slice())
+                .expect("rewrite catalog identity");
+        }
+        transaction.commit().expect("commit catalog downgrade");
     }
 
     fn stamp_meta_schema_version(path: &std::path::Path, version: SchemaVersion) {
