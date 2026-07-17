@@ -40,7 +40,20 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
-          nativeCheckInputs = [ pkgs.jujutsu ];
+          # `jj` pushes the salvage bookmark through the `git` CLI subprocess,
+          # so both binaries must be on the check PATH.
+          nativeCheckInputs = [
+            pkgs.jujutsu
+            pkgs.git
+          ];
+          # The worktree tests shell out to `jj`, which needs a writable config
+          # home: `jj config set --repo` and any later op on a repo-configured
+          # checkout read/write the per-repo "secure config" under
+          # `$HOME/.config/jj/repos/…`. The hermetic sandbox sets
+          # `HOME=/homeless-shelter`, which is unwritable, so give the check a
+          # fresh writable HOME inside the sandbox. Fully hermetic: no network,
+          # and the salvage test's "remote" is a local throwaway repo.
+          preCheck = "export HOME=$(mktemp -d)";
         };
         packageArgs = commonArgs // {
           cargoExtraArgs = "--features nota-text";
