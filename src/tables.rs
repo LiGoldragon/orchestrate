@@ -55,8 +55,9 @@ where
 // catalog identity no longer matches the declared one. A store carrying the
 // agent registry under the old identity (whether it just bumped its file version
 // or was already re-stamped) cannot re-register it additively; the migration
-// drops and recreates that one ephemeral family and its rows re-establish from
-// running harnesses. See `OrchestrateStoreMigration`.
+// reads that family's rows in their prior shape, retires the stale identity, and
+// re-inserts the rows in the current shape, so the agent registry is carried
+// forward rather than lost. See `OrchestrateStoreMigration`.
 //
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
 // topic membership, and triage audit log. The orchestrator topic tree starts
@@ -235,6 +236,44 @@ impl StoredOrchestratorAgent {
     /// last-activity stamp — the reaper's sole liveness signal for an agent.
     pub fn idle_age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
         TimestampInterval::new(self.last_activity, observed_at).duration()
+    }
+}
+
+/// The prior on-disk shape of an orchestrator-agent row — the layout a store
+/// written before the `last_activity` bump carries, registered under the
+/// `orchestrate-orchestrator-agent-v7` family identity. It is byte-identical to
+/// [`StoredOrchestratorAgent`] minus the trailing `last_activity` field, so the
+/// store migration can register the table under its prior identity, read the old
+/// rows in their own layout, and carry them forward. Read-only: nothing writes
+/// this shape in normal operation; it exists solely to decode a legacy store.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredOrchestratorAgentV7 {
+    pub agent_identifier: OrchestratorAgentIdentifier,
+    pub session: SessionIdentifier,
+    pub mission: MissionDescription,
+    pub harness: HarnessKind,
+    pub reachability: Option<StoredAgentReachability>,
+    pub registered_at: TimestampNanos,
+    pub status: OrchestratorAgentStatus,
+}
+
+impl StoredOrchestratorAgentV7 {
+    /// Carry a prior-shape row to the current shape. The `last_activity` reaper
+    /// clock the bump introduced starts at `registered_at` for a freshly
+    /// registered agent, so a migrated row adopts that same origin — the honest
+    /// default, since a store written before the bump never recorded a distinct
+    /// last-use instant.
+    fn into_current(self) -> StoredOrchestratorAgent {
+        StoredOrchestratorAgent {
+            agent_identifier: self.agent_identifier,
+            session: self.session,
+            mission: self.mission,
+            harness: self.harness,
+            reachability: self.reachability,
+            registered_at: self.registered_at,
+            last_activity: self.registered_at,
+            status: self.status,
+        }
     }
 }
 
@@ -1672,13 +1711,22 @@ enum StoreRepair {
     /// the file to the current version: unchanged families keep their rows, and
     /// families introduced since open empty on the next registration.
     StampSchemaVersion(SchemaVersion),
-    /// The ephemeral orchestrator-agent registry is registered under a stale
-    /// family schema hash — the agent layout changed (the `last_activity` stamp)
-    /// but the catalog still names the old identity, so re-registration under the
-    /// current identity is rejected. Agent-registry rows are ephemeral and
-    /// re-established by running harnesses, so drop the family and let the re-open
-    /// register it fresh under the current hash. Every other family is untouched.
-    DropStaleAgentRegistry,
+    /// The orchestrator-agent registry is registered under a stale family schema
+    /// hash — the agent layout changed (the `last_activity` stamp) but the catalog
+    /// still names the prior identity, so re-registration under the current
+    /// identity is rejected. Migrate the family forward: read the prior-shape rows
+    /// under their old identity, retire the stale family, and re-insert the rows
+    /// in the current shape. Every other family is untouched.
+    MigrateAgentRegistry,
+}
+
+/// What an applied repair yields. Most repairs clear a defect and hand back to
+/// the open loop to re-open; the agent migration opens the store itself as the
+/// final step (it must re-insert the carried rows after the re-open), so it
+/// returns the ready store directly rather than looping again.
+enum RepairOutcome {
+    Reopen,
+    Opened(Box<OrchestrateTables>),
 }
 
 struct OrchestrateStoreMigration<'store> {
@@ -1704,14 +1752,17 @@ impl<'store> OrchestrateStoreMigration<'store> {
             let Some(repair) = self.repair_for(&pending) else {
                 return Err(pending);
             };
-            if applied.contains(&std::mem::discriminant(&repair)) {
+            let discriminant = std::mem::discriminant(&repair);
+            if applied.contains(&discriminant) {
                 return Err(pending);
             }
-            applied.push(std::mem::discriminant(&repair));
-            self.apply(&repair)?;
-            match OrchestrateTables::open_current(self.store) {
-                Ok(tables) => return Ok(tables),
-                Err(next) => pending = next,
+            applied.push(discriminant);
+            match self.apply(repair)? {
+                RepairOutcome::Opened(tables) => return Ok(*tables),
+                RepairOutcome::Reopen => match OrchestrateTables::open_current(self.store) {
+                    Ok(tables) => return Ok(tables),
+                    Err(next) => pending = next,
+                },
             }
         }
     }
@@ -1736,7 +1787,7 @@ impl<'store> OrchestrateStoreMigration<'store> {
             crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
                 table, ..
             }) if table.as_str() == ORCHESTRATOR_AGENTS.as_str() => {
-                Some(StoreRepair::DropStaleAgentRegistry)
+                Some(StoreRepair::MigrateAgentRegistry)
             }
             _ => None,
         }
@@ -1748,10 +1799,15 @@ impl<'store> OrchestrateStoreMigration<'store> {
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY
     }
 
-    fn apply(&self, repair: &StoreRepair) -> Result<()> {
+    fn apply(&self, repair: StoreRepair) -> Result<RepairOutcome> {
         match repair {
-            StoreRepair::StampSchemaVersion(found) => self.stamp_current_schema_version(*found),
-            StoreRepair::DropStaleAgentRegistry => self.drop_stale_agent_registry(),
+            StoreRepair::StampSchemaVersion(found) => {
+                self.stamp_current_schema_version(found)?;
+                Ok(RepairOutcome::Reopen)
+            }
+            StoreRepair::MigrateAgentRegistry => Ok(RepairOutcome::Opened(Box::new(
+                self.migrate_agent_registry()?,
+            ))),
         }
     }
 
@@ -1779,18 +1835,60 @@ impl<'store> OrchestrateStoreMigration<'store> {
         Ok(())
     }
 
-    /// Retire the ephemeral orchestrator-agent registry so the next open registers
-    /// it fresh under the current family hash. Two edits under one transaction: the
+    /// Migrate the orchestrator-agent registry forward across the `last_activity`
+    /// layout bump, carrying its rows rather than discarding them. Three steps:
+    /// read the prior-shape rows under their old family identity; retire the stale
+    /// family so a fresh registration under the current identity is accepted;
+    /// re-open the store and re-insert the carried rows in the current shape
+    /// through the ordinary write path (which logs them under the current family
+    /// so the versioned history stays consistent). Every other family is untouched.
+    fn migrate_agent_registry(&self) -> Result<OrchestrateTables> {
+        let carried: Vec<StoredOrchestratorAgent> = self
+            .read_prior_shape_agents()?
+            .into_iter()
+            .map(StoredOrchestratorAgentV7::into_current)
+            .collect();
+        self.retire_stale_agent_family()?;
+        let tables = OrchestrateTables::open_current(self.store)?;
+        for agent in &carried {
+            tables.insert_orchestrator_agent(agent)?;
+        }
+        Ok(tables)
+    }
+
+    /// Read the orchestrator-agent rows in their prior on-disk shape by registering
+    /// the table under its pre-bump (`v7`) family identity, which matches the
+    /// identity the stale catalog still names. The rows decode as
+    /// [`StoredOrchestratorAgentV7`] — their genuine layout — so the read is
+    /// well-typed rather than a reinterpretation of current-shape bytes.
+    fn read_prior_shape_agents(&self) -> Result<Vec<StoredOrchestratorAgentV7>> {
+        let mut engine = Engine::open(OrchestrateTables::engine_open(self.store))?;
+        let prior_agents = engine.register_table(OrchestrateTables::family_descriptor::<
+            StoredOrchestratorAgentV7,
+        >(
+            ORCHESTRATOR_AGENTS,
+            "orchestrator-agent",
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+        ))?;
+        Ok(engine
+            .match_records(QueryPlan::all(prior_agents))?
+            .records()
+            .to_vec())
+    }
+
+    /// Retire the stale orchestrator-agent family so the next open registers it
+    /// fresh under the current family hash. Two edits under one transaction: the
     /// family's catalog registration is removed so re-registration sees an unbound
-    /// family, and its data table is dropped so no stale-layout rows survive. Every
-    /// other family's registration and rows are untouched — only the one table
-    /// named by the identity mismatch is retired.
+    /// family, and its data table is dropped so no prior-layout rows survive to be
+    /// misread. Only the one table named by the identity mismatch is retired; every
+    /// other family's registration and rows are untouched. Callers read the rows
+    /// first (see [`Self::read_prior_shape_agents`]) so retirement loses nothing.
     ///
     /// The versioned commit log is a hash chain and is deliberately left intact:
     /// its historical agent-registry entries stay valid links, and orchestrate
     /// takes no checkpoints, so those entries are never materialized against the
-    /// live catalog. See `NON_IDEAL_AGENTS.md` for the log-scrub follow-up.
-    fn drop_stale_agent_registry(&self) -> Result<()> {
+    /// live catalog. See `NON_IDEAL_AGENTS.md` for the family-retirement follow-up.
+    fn retire_stale_agent_family(&self) -> Result<()> {
         let database =
             redb::Database::create(self.store.as_path()).map_err(Self::store_migration_error)?;
         let transaction = database
@@ -2339,50 +2437,40 @@ mod tests {
     }
 
     #[test]
-    fn store_with_stale_hash_agent_registry_drops_and_recreates_only_that_family() {
-        let temporary = TemporaryStore::new("orchestrate-stale-agent-registry-migration");
+    fn store_with_prior_shape_agent_registry_migrates_rows_forward() {
+        let temporary = TemporaryStore::new("orchestrate-agent-registry-migration");
         let claim = StoredClaim::new(
             LaneIdentifier::from_wire_token("designer").expect("lane"),
             ScopeReference::Path(
-                WirePath::from_absolute_path("/tmp/orchestrate-stale-agent").expect("path"),
+                WirePath::from_absolute_path("/tmp/orchestrate-prior-agent").expect("path"),
             ),
-            ScopeReason::from_text("owns stale-agent migration test").expect("reason"),
+            ScopeReason::from_text("owns agent migration test").expect("reason"),
             TimestampNanos::new(400),
         );
-        let session =
-            SessionIdentifier::from_camel_case_name("StaleAgentRegistry").expect("session");
-        {
-            let tables =
-                OrchestrateTables::open(&temporary.location()).expect("current store opens");
-            tables
-                .replace_all_claims(std::slice::from_ref(&claim))
-                .expect("insert claim");
-            tables
-                .register_orchestrator_agent(
-                    session.clone(),
-                    MissionDescription::from_text("holds a seat before the bump").expect("mission"),
-                    HarnessKind::Codex,
-                )
-                .expect("register agent");
-            assert_eq!(
-                tables
-                    .orchestrator_agent_records()
-                    .expect("agents present")
-                    .len(),
-                1
-            );
-        }
+        let agent_identifier =
+            OrchestratorAgentIdentifierMint::from_identifiers(std::iter::empty::<String>())
+                .next_identifier()
+                .expect("mint agent identifier");
+        let prior_agent = StoredOrchestratorAgentV7 {
+            agent_identifier: agent_identifier.clone(),
+            session: SessionIdentifier::from_camel_case_name("PriorShapeAgent").expect("session"),
+            mission: MissionDescription::from_text("holds a seat before the bump")
+                .expect("mission"),
+            harness: HarnessKind::Codex,
+            reachability: None,
+            registered_at: TimestampNanos::new(700),
+            status: OrchestratorAgentStatus::Active,
+        };
 
-        // Reproduce the wedged production store: the agent registry's real rows stay,
-        // but its catalog identity is rewound to the pre-activity (v7) family hash —
-        // exactly the stale identity a store written before the `last_activity` bump
-        // carries. The sema file itself is already at the current version, matching a
-        // store the current build has opened once and stamped forward.
-        downgrade_agent_registry_to_stale_hash(temporary.path.as_path());
+        // Build the exact store a version before the `last_activity` bump wrote: the
+        // agent rows are genuine prior-shape (v7) rows under the matching stale family
+        // identity, not current-shape bytes relabelled. The sema file is already at the
+        // current version, matching a store the current build has opened and stamped.
+        build_prior_shape_store(&temporary.location(), &claim, &prior_agent);
 
-        // The plain open path the daemon runs at startup is what crash-loops on the
-        // wedged store: registering the agent family under the current identity is
-        // rejected against the stale catalog identity, and no other family is at fault.
+        // The plain open path the daemon runs at startup crash-loops on the wedged
+        // store: the agent family is registered under the current identity but stored
+        // under the prior one, and no other family is at fault.
         let raw = OrchestrateTables::open_current(&temporary.location());
         let stale_rejection = matches!(
             &raw,
@@ -2396,7 +2484,7 @@ mod tests {
             "expected a stale-identity rejection for orchestrator_agents from the plain open path"
         );
 
-        // The repaired open drops and recreates only the agent registry.
+        // The repaired open migrates the agent family forward.
         let migrated =
             OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
 
@@ -2406,55 +2494,81 @@ mod tests {
         assert_eq!(claims[0].claimed_at, TimestampNanos::new(400));
         assert_eq!(claims[0].lane, claim.lane);
 
-        // The agent registry is dropped and recreated empty — the stale rows are gone —
-        // and it is immediately usable: a fresh registration under the current hash
-        // succeeds and reads back.
-        assert!(
-            migrated
-                .orchestrator_agent_records()
-                .expect("agents readable")
-                .is_empty(),
-            "the stale agent rows must be dropped, not carried forward"
+        // The prior-shape agent row is carried forward — not dropped — in the current
+        // shape, with `last_activity` defaulted to `registered_at`.
+        let agents = migrated
+            .orchestrator_agent_records()
+            .expect("agents after migration");
+        assert_eq!(
+            agents.len(),
+            1,
+            "the prior-shape agent row must be carried forward, not dropped"
         );
-        let reregistered = migrated
+        assert_eq!(agents[0].agent_identifier, agent_identifier);
+        assert_eq!(agents[0].session, prior_agent.session);
+        assert_eq!(agents[0].registered_at, TimestampNanos::new(700));
+        assert_eq!(agents[0].last_activity, TimestampNanos::new(700));
+
+        // The migrated registry is immediately usable: a fresh registration under the
+        // current hash succeeds alongside the carried row.
+        migrated
             .register_orchestrator_agent(
-                session,
-                MissionDescription::from_text("re-seats after the drop").expect("mission"),
+                SessionIdentifier::from_camel_case_name("PostMigration").expect("session"),
+                MissionDescription::from_text("seats after the migration").expect("mission"),
                 HarnessKind::Codex,
             )
             .expect("register agent after migration");
-        let agents = migrated
-            .orchestrator_agent_records()
-            .expect("agents after re-register");
-        assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].agent_identifier, reregistered.agent_identifier);
+        assert_eq!(
+            migrated
+                .orchestrator_agent_records()
+                .expect("agents readable")
+                .len(),
+            2
+        );
     }
 
-    /// Rewind the orchestrator-agent catalog registration to the pre-activity (v7)
-    /// family hash, leaving its data rows in place, so the store carries the exact
-    /// stale-identity table that wedged production. Writes the catalog row through
-    /// the same rkyv encoding the engine reads at open.
-    fn downgrade_agent_registry_to_stale_hash(path: &std::path::Path) {
-        let stale_identity = OrchestrateTables::family_descriptor::<StoredOrchestratorAgent>(
-            ORCHESTRATOR_AGENTS,
-            "orchestrator-agent",
-            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
-        )
-        .family_identity();
-        let registration = sema_engine::TableRegistration::new(stale_identity);
-        let encoded =
-            rkyv::to_bytes::<rancor::Error>(&registration).expect("encode stale registration");
-        let database = redb::Database::create(path).expect("open store database");
-        let transaction = database.begin_write().expect("begin write");
-        {
-            let mut catalog = transaction
-                .open_table(SEMA_ENGINE_CATALOG)
-                .expect("open catalog table");
-            catalog
-                .insert(ORCHESTRATOR_AGENTS.as_str(), encoded.as_slice())
-                .expect("rewrite catalog identity");
-        }
-        transaction.commit().expect("commit catalog downgrade");
+    /// Build a store carrying the orchestrator-agent registry in its prior
+    /// (pre-`last_activity`, v7) shape under the matching stale family identity,
+    /// exactly as a store written before the bump does: the agent rows are genuine
+    /// v7-layout rows written through the engine's own path, not current-shape bytes
+    /// relabelled. A claim is seated too, so the migration can be shown to leave
+    /// other families untouched.
+    fn build_prior_shape_store(
+        location: &StoreLocation,
+        claim: &StoredClaim,
+        agent: &StoredOrchestratorAgentV7,
+    ) {
+        let mut engine =
+            Engine::open(OrchestrateTables::engine_open(location)).expect("open engine");
+        let claims = engine
+            .register_table(OrchestrateTables::stable_family_descriptor::<StoredClaim>(
+                CLAIMS, "claim",
+            ))
+            .expect("register claims");
+        let claim_key = claim.key();
+        engine
+            .assert_keyed(KeyedAssertion::new(
+                claims,
+                RecordKey::new(claim_key.as_str()),
+                claim.clone(),
+            ))
+            .expect("seat claim");
+        let prior_agents = engine
+            .register_table(OrchestrateTables::family_descriptor::<
+                StoredOrchestratorAgentV7,
+            >(
+                ORCHESTRATOR_AGENTS,
+                "orchestrator-agent",
+                ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+            ))
+            .expect("register prior-shape agents");
+        engine
+            .assert_keyed(KeyedAssertion::new(
+                prior_agents,
+                RecordKey::new(agent.agent_identifier.as_str()),
+                agent.clone(),
+            ))
+            .expect("seat prior-shape agent");
     }
 
     fn stamp_meta_schema_version(path: &std::path::Path, version: SchemaVersion) {
