@@ -471,3 +471,168 @@ fn jj_stdout(repository: &std::path::Path, arguments: &[&str]) -> String {
     );
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
+
+/// A throwaway colocated repo wired as `origin` of `source`, used purely as
+/// the push remote for salvage assertions.
+fn add_salvage_remote(fixture: &WorktreeFixture, source: &std::path::Path) -> PathBuf {
+    let remote = fixture._temporary.path().join("salvage-remote");
+    let status = Command::new("jj")
+        .arg("--no-pager")
+        .arg("git")
+        .arg("init")
+        .arg("--colocate")
+        .arg(&remote)
+        .env("JJ_USER", "smoke")
+        .env("JJ_EMAIL", "smoke@example.invalid")
+        .output()
+        .expect("run jj git init remote");
+    assert!(
+        status.status.success(),
+        "remote init: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    run_jj(
+        source,
+        &[
+            "git",
+            "remote",
+            "add",
+            "origin",
+            &format!("{}/.git", remote.to_string_lossy()),
+        ],
+    );
+    remote
+}
+
+fn remote_salvage_description(remote: &std::path::Path, branch: &str) -> String {
+    jj_stdout(
+        remote,
+        &[
+            "log",
+            "--no-graph",
+            "-r",
+            &format!("discard/{branch}"),
+            "-T",
+            "description.first_line()",
+        ],
+    )
+    .trim()
+    .to_owned()
+}
+
+/// The production wedge: a scaffolded worktree rejected untouched, its working
+/// copy still the empty description-less placeholder `jj` parks on. Salvage
+/// must skip the placeholder and land the discard bookmark on the last real
+/// commit instead of failing the push.
+#[test]
+fn conclude_rejected_salvages_untouched_scaffold_placeholder() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-placeholder");
+    let source = fixture.make_source_repository("orchestrate");
+    let remote = add_salvage_remote(&fixture, &source);
+    fixture.request("orchestrate", "placeholder-feature", "operator");
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("placeholder-feature");
+
+    let reply = fixture.conclude("operator", WorktreeConclusion::Rejected);
+    let OrchestrateReply::WorktreeConcluded(concluded) = reply else {
+        panic!("expected WorktreeConcluded, got {reply:?}");
+    };
+    assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
+    assert!(!destination.exists(), "rejected teardown removes the dir");
+    assert_eq!(
+        remote_salvage_description(&remote, "placeholder-feature"),
+        "base commit"
+    );
+}
+
+/// A rejected working copy holding real undescribed changes: salvage must
+/// describe the work instead of dropping it, so the remote discard bookmark
+/// carries the changes.
+#[test]
+fn conclude_rejected_describes_and_salvages_undescribed_changes() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-undescribed");
+    let source = fixture.make_source_repository("orchestrate");
+    let remote = add_salvage_remote(&fixture, &source);
+    fixture.request("orchestrate", "undescribed-feature", "designer");
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("undescribed-feature");
+    std::fs::write(destination.join("finding.txt"), "real work\n").expect("write change");
+
+    let reply = fixture.conclude("designer", WorktreeConclusion::Rejected);
+    assert!(
+        matches!(reply, OrchestrateReply::WorktreeConcluded(_)),
+        "expected WorktreeConcluded, got {reply:?}"
+    );
+    assert_eq!(
+        remote_salvage_description(&remote, "undescribed-feature"),
+        "salvaged rejected working copy"
+    );
+}
+
+/// A retried rejection after a failed attempt left the salvage bookmark parked
+/// on the placeholder commit: the bookmark must move backwards onto the real
+/// commit and the teardown complete.
+#[test]
+fn conclude_rejected_retries_over_leftover_salvage_bookmark() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-retried");
+    let source = fixture.make_source_repository("orchestrate");
+    let remote = add_salvage_remote(&fixture, &source);
+    fixture.request("orchestrate", "retried-feature", "operator");
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("retried-feature");
+    run_jj(
+        &destination,
+        &["bookmark", "create", "discard/retried-feature", "-r", "@"],
+    );
+
+    let reply = fixture.conclude("operator", WorktreeConclusion::Rejected);
+    assert!(
+        matches!(reply, OrchestrateReply::WorktreeConcluded(_)),
+        "expected WorktreeConcluded, got {reply:?}"
+    );
+    assert_eq!(
+        remote_salvage_description(&remote, "retried-feature"),
+        "base commit"
+    );
+}
+
+/// When the salvage push fails (no remote configured), teardown reports the
+/// error, removes nothing, and leaves no local salvage bookmark behind for a
+/// retry to trip over.
+#[test]
+fn conclude_rejected_failed_push_leaves_no_salvage_residue() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-pushfail");
+    let source = fixture.make_source_repository("orchestrate");
+    fixture.request("orchestrate", "pushless-feature", "operator");
+    let destination = fixture
+        .worktree_root
+        .join("orchestrate")
+        .join("pushless-feature");
+
+    let result = fixture.handle(OrchestrateRequest::ConcludeWorktree(
+        WorktreeConclusionRequest {
+            owning_lane: LaneName::from_text("operator").expect("lane name"),
+            disposition: WorktreeConclusion::Rejected,
+        },
+    ));
+    assert!(result.is_err(), "push without a remote must fail teardown");
+    assert!(
+        destination.join(".jj").exists(),
+        "failed teardown keeps the dir"
+    );
+    let bookmarks = jj_stdout(&source, &["bookmark", "list"]);
+    assert!(
+        !bookmarks.contains("discard/pushless-feature"),
+        "no salvage bookmark residue: {bookmarks}"
+    );
+    assert_eq!(
+        observe_worktrees(&mut fixture)[0].status,
+        WorktreeStatus::Active
+    );
+}

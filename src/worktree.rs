@@ -33,6 +33,13 @@ pub struct WorktreeRegistry<'tables> {
 }
 
 impl<'tables> WorktreeRegistry<'tables> {
+    /// The newest commit reachable from `@` that is not an empty
+    /// description-less placeholder — the revision a `Rejected` teardown
+    /// salvages to the remote. Skipping the placeholder matters because `jj`
+    /// parks the working copy on one and refuses to push it.
+    const SALVAGE_REVSET: &'static str =
+        r#"latest(heads(::@ & ~(empty() & description(exact:""))))"#;
+
     pub fn new(tables: &'tables OrchestrateTables, layout: &'tables OrchestrateLayout) -> Self {
         Self { tables, layout }
     }
@@ -191,10 +198,12 @@ impl<'tables> WorktreeRegistry<'tables> {
     /// Mark the worktree owned by `owning_lane` terminal and tear its workspace
     /// down. A `Merged` disposition is gated: teardown is refused (mutating
     /// nothing) unless the work is already an ancestor of `main`. `Rejected`
-    /// preserves the commit only on a remote `discard/<branch>` bookmark, then
-    /// discards everything local. On success the row transitions to
-    /// [`WorktreeStatus::Recycled`]. This is the shared teardown primitive any
-    /// abandonment trigger reuses.
+    /// preserves the newest real commit on a remote `discard/<branch>` bookmark
+    /// — real uncommitted working-copy changes are described first so `jj`
+    /// will push them, and the empty description-less placeholder `jj` parks
+    /// the working copy on is skipped — then discards everything local. On
+    /// success the row transitions to [`WorktreeStatus::Recycled`]. This is
+    /// the shared teardown primitive any abandonment trigger reuses.
     pub fn conclude(&self, order: WorktreeConclusionRequest) -> Result<OrchestrateReply> {
         let mut stored = self
             .tables
@@ -232,13 +241,37 @@ impl<'tables> WorktreeRegistry<'tables> {
         };
         if matches!(order.disposition, WorktreeConclusion::Rejected) {
             let discard = format!("discard/{branch}");
-            Self::jj_effect(&destination, &["bookmark", "set", &discard, "-r", "@"])
+            // `jj git push` refuses description-less commits, and salvage must
+            // not drop real working-copy changes, so name them before pushing.
+            if WorktreePathProbe::from_path(&destination).holds_undescribed_changes()? {
+                Self::jj_effect(
+                    &destination,
+                    &["describe", "-r", "@", "-m", "salvaged rejected working copy"],
+                )
                 .map_err(teardown_error(&destination))?;
+            }
+            // `--allow-backwards`: a retried teardown finds the previous
+            // attempt's leftover bookmark parked on the placeholder commit.
             Self::jj_effect(
                 &destination,
-                &["git", "push", "--bookmark", &discard, "--allow-new"],
+                &[
+                    "bookmark",
+                    "set",
+                    &discard,
+                    "-r",
+                    Self::SALVAGE_REVSET,
+                    "--allow-backwards",
+                ],
             )
             .map_err(teardown_error(&destination))?;
+            if let Err(message) =
+                Self::jj_effect(&destination, &["git", "push", "--bookmark", &discard])
+            {
+                // A failed push must not leave the salvage bookmark behind for
+                // the retry to trip over.
+                let _ = Self::jj_effect(&destination, &["bookmark", "delete", &discard]);
+                return Err(teardown_error(&destination)(message));
+            }
         }
         Self::jj_effect(&repository_checkout, &["workspace", "forget", &workspace])
             .map_err(teardown_error(&destination))?;
@@ -498,9 +531,33 @@ impl WorktreePathProbe {
         Ok(TimestampNanos::new(seconds.saturating_mul(1_000_000_000)))
     }
 
+    /// Whether the working copy holds real changes with no description — work
+    /// `jj git push` would refuse and salvage must therefore describe first.
+    fn holds_undescribed_changes(&self) -> Result<bool> {
+        let output = self.run_jj_snapshotting(&[
+            "log",
+            "--no-graph",
+            "-r",
+            r#"@ & ~empty() & description(exact:"")"#,
+            "-T",
+            "commit_id.short()",
+        ])?;
+        Ok(!output.trim().is_empty())
+    }
+
     fn run_jj(&self, arguments: &[&str]) -> Result<String> {
+        self.run_jj_with(&["--ignore-working-copy"], arguments)
+    }
+
+    /// Reads that ask about uncommitted working-copy state must snapshot the
+    /// working copy instead of ignoring it.
+    fn run_jj_snapshotting(&self, arguments: &[&str]) -> Result<String> {
+        self.run_jj_with(&[], arguments)
+    }
+
+    fn run_jj_with(&self, mode_arguments: &[&str], arguments: &[&str]) -> Result<String> {
         let output = Command::new("jj")
-            .arg("--ignore-working-copy")
+            .args(mode_arguments)
             .arg("--no-pager")
             .arg("--color")
             .arg("never")
