@@ -1280,6 +1280,174 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
     assert_eq!(remaining_claim_lanes, vec!["recent-terminal"]);
 }
 
+fn lane_tables(prefix: &str) -> (TempDir, OrchestrateTables) {
+    let temporary = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("temporary directory");
+    let store = StoreLocation::new(
+        temporary
+            .path()
+            .join("orchestrate.sema")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let tables = OrchestrateTables::open(&store).expect("tables open");
+    (temporary, tables)
+}
+
+fn worker_statuses(tables: &OrchestrateTables) -> Vec<orchestrate::LaneStatus> {
+    tables
+        .lane_records()
+        .expect("lanes")
+        .into_iter()
+        .filter(|record| record.assignment.lane == lane("worker"))
+        .map(|record| record.status)
+        .collect()
+}
+
+// A released record still inside its retention window would linger for post-
+// mortem, but it is finished work: a Fresh registration for the same name must
+// supersede it — dropping the dead record and its stale claims — rather than
+// conflict, so a released name never squats until the reaper catches up.
+#[test]
+fn fresh_register_supersedes_released_record_and_drops_its_stale_claims() {
+    let (_temporary, tables) = lane_tables("orchestrate-fresh-supersede");
+    let registry = LaneRegistry::new(&tables);
+    let now = tables.current_timestamp().expect("clock").value();
+
+    let dead = StoredLaneRegistration::new(
+        lane_registration("SupersedeSession", "worker", role_vector(&["Operator"])).assignment,
+        TimestampNanos::new(now),
+        TimestampNanos::new(now),
+        orchestrate::LaneStatus::Released,
+    );
+    let bystander = StoredLaneRegistration::new(
+        lane_registration("SupersedeSession", "bystander", role_vector(&["Designer"])).assignment,
+        TimestampNanos::new(now),
+        TimestampNanos::new(now),
+        orchestrate::LaneStatus::Released,
+    );
+    tables.insert_lane(&dead).expect("insert dead lane");
+    tables
+        .insert_lane(&bystander)
+        .expect("insert bystander lane");
+    tables
+        .replace_all_claims(&[
+            StoredClaim::new(
+                lane("worker"),
+                path("/tmp/worker-stale"),
+                reason("stale claim on released lane"),
+                TimestampNanos::new(now),
+            ),
+            StoredClaim::new(
+                lane("bystander"),
+                path("/tmp/bystander-keep"),
+                reason("unrelated retained claim"),
+                TimestampNanos::new(now),
+            ),
+        ])
+        .expect("seed claims");
+
+    let request = lane_registration("SupersedeSession", "worker", role_vector(&["Operator"]));
+    let reply = registry
+        .register(request)
+        .expect("fresh register over released record");
+    let MetaOrchestrateReply::LaneRegistered(registered) = reply else {
+        panic!("fresh register over a released record must succeed with LaneRegistered");
+    };
+    assert_eq!(
+        registered.registration.status,
+        orchestrate::LaneStatus::Active
+    );
+
+    // Exactly one "worker" record survives and it is the new Active one: the
+    // dead record is gone, not duplicated.
+    assert_eq!(
+        worker_statuses(&tables),
+        vec![orchestrate::LaneStatus::Active]
+    );
+
+    // The stale "worker" claim is dropped; the unrelated "bystander" record and
+    // its claim keep their full retention, untouched by the targeted supersede.
+    let claim_lanes: Vec<String> = tables
+        .claim_records()
+        .expect("claims")
+        .into_iter()
+        .map(|claim| claim.lane.as_wire_token().to_string())
+        .collect();
+    assert_eq!(claim_lanes, vec!["bystander"]);
+    assert!(
+        tables
+            .lane_records()
+            .expect("lanes")
+            .iter()
+            .any(|record| record.assignment.lane == lane("bystander")
+                && record.status == orchestrate::LaneStatus::Released)
+    );
+}
+
+// Recovery inherits a live lane; over a closed record it genuinely re-registers
+// rather than reporting a hollow success — the reply type distinguishes the two.
+#[test]
+fn recovery_inherits_a_live_lane_and_reactivates_a_released_one() {
+    let (_temporary, tables) = lane_tables("orchestrate-recovery-honesty");
+    let registry = LaneRegistry::new(&tables);
+
+    let fresh = lane_registration("RecoverySession", "worker", role_vector(&["Operator"]));
+    let registered = registry
+        .register(fresh.clone())
+        .expect("initial fresh register");
+    assert!(matches!(
+        registered,
+        MetaOrchestrateReply::LaneRegistered(_)
+    ));
+
+    // Recovery over the live lane inherits it.
+    let mut recovery = fresh.clone();
+    recovery.mode = LaneRegistrationMode::Recovery;
+    let inherited = registry
+        .register(recovery.clone())
+        .expect("recovery over active lane");
+    let MetaOrchestrateReply::LaneAlreadyRegistered(inherited) = inherited else {
+        panic!("recovery over a live lane must inherit it");
+    };
+    assert_eq!(
+        inherited.resolution,
+        LaneAlreadyRegisteredResolution::RecoveryInherited
+    );
+
+    // Release the lane, then Recovery over the released record reactivates it
+    // with a truthful LaneRegistered — never a silent no-op that leaves the lane
+    // Released while claiming success.
+    registry
+        .unregister(LaneUnregistrationRequest {
+            session: session("RecoverySession"),
+            lane: lane("worker"),
+            details: LaneDetails::from_text("released before recovery").expect("details"),
+        })
+        .expect("unregister to released");
+    assert_eq!(
+        worker_statuses(&tables),
+        vec![orchestrate::LaneStatus::Released]
+    );
+
+    let reactivated = registry
+        .register(recovery)
+        .expect("recovery over released record");
+    let MetaOrchestrateReply::LaneRegistered(reactivated) = reactivated else {
+        panic!("recovery over a released record must re-register, not report a hollow success");
+    };
+    assert_eq!(
+        reactivated.registration.status,
+        orchestrate::LaneStatus::Active
+    );
+    assert_eq!(
+        worker_statuses(&tables),
+        vec![orchestrate::LaneStatus::Active]
+    );
+}
+
 const REAP_HOUR_NANOS: u64 = 60 * 60 * 1_000_000_000;
 
 fn backdate_agent_activity(

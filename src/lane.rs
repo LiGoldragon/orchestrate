@@ -39,10 +39,15 @@ impl<'tables> LaneRegistry<'tables> {
             return Err(Error::EmptyLaneRole);
         }
 
-        if let Some(active) = self
-            .tables
-            .lane_record(&request.assignment.session, &request.assignment.lane)?
-        {
+        // Only a live (`Active`) lane holding this identity is a real
+        // registration that can block a `Fresh` request or be inherited by a
+        // `Recovery` one. A terminal record (`Released` / `HandoverEnded`) is
+        // finished work, not a real lane, so it is invisible here and never
+        // blocks — this is why "Fresh follows the closed lane record" is
+        // literally true. Lane identity is global (claims, liveness, and the
+        // reaper all key on the lane alone), so the live-lane check is global
+        // too: no two agents hold the same live lane name.
+        if let Some(active) = self.tables.active_lane_record(&request.assignment.lane)? {
             let resolution = match request.mode {
                 LaneRegistrationMode::Fresh => LaneAlreadyRegisteredResolution::FreshConflict,
                 LaneRegistrationMode::Recovery => {
@@ -67,12 +72,36 @@ impl<'tables> LaneRegistry<'tables> {
             ));
         }
 
+        // No live lane holds this identity. Any record that remains is a dead
+        // terminal one: supersede it in one operation — drop the dead record and
+        // any stale claims it left behind — then register the lane anew below.
+        // Both `Fresh` and `Recovery` converge on this path, so a `Recovery`
+        // that finds only a closed or absent record genuinely re-registers the
+        // lane and answers with a truthful `LaneRegistered`, never a silent
+        // no-op hidden behind a success variant. Only this exact lane identity
+        // is touched, so unrelated terminal records keep their full retention
+        // window for inspection.
+        self.supersede_dead_record(&request.assignment.lane)?;
+
         let registered_at = self.tables.current_timestamp()?;
         let registration = StoredLaneRegistration::active(request.assignment, registered_at);
         self.tables.insert_lane(&registration)?;
         Ok(MetaOrchestrateReply::LaneRegistered(LaneRegistered {
             registration: registration.registration(),
         }))
+    }
+
+    /// Drop the dead terminal record for `lane`, if one remains, along with any
+    /// stale claims it left behind. The caller guarantees no `Active` record
+    /// holds `lane`, so whatever record is found is terminal and superseded, not
+    /// a live lane. Lane identity is global, so a terminal record registered
+    /// under a prior session is superseded too, never left to squat the name.
+    fn supersede_dead_record(&self, lane: &LaneIdentifier) -> Result<()> {
+        if self.tables.first_lane_record(lane)?.is_some() {
+            self.tables.remove_claims_for_lane(lane)?;
+            self.tables.remove_first_lane(lane)?;
+        }
+        Ok(())
     }
 
     pub fn unregister(&self, request: LaneUnregistrationRequest) -> Result<MetaOrchestrateReply> {

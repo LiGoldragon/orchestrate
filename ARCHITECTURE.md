@@ -365,6 +365,18 @@ Task scopes render in bracketed human form:
   retention window and `Active` lanes idle past a generous liveness window are
   hard-deleted with their claims. Windows are tunable constants in `src/lane.rs`
   (terminal 1h, active idle 24h).
+- Because only real lanes count, registration reads a lane's identity, not its
+  history. A terminal record (`Released` / `HandoverEnded`) never blocks: a
+  `Fresh` registration over one supersedes it — the dead record and its stale
+  claims are dropped and the lane is registered anew in one operation — so
+  "Fresh follows the closed lane record" is literally true, and the short
+  retention window keeps a closed record for inspection, never to squat its
+  name. The only real registration that a `Fresh` request conflicts with, or a
+  `Recovery` request inherits, is a live `Active` lane of the same name: `Fresh`
+  is refused (`FreshConflict`), `Recovery` inherits it and refreshes its
+  liveness stamp (`RecoveryInherited`). Over a terminal or absent record both
+  modes converge — the lane is genuinely (re)registered and the reply is a
+  truthful `LaneRegistered`, never a silent no-op behind a success variant.
 - The other stores that grew without a removal path are bounded by the same
   idle-age discipline, in `src/table_reclamation.rs`'s `BoundedTableReaper`: the
   orchestrator agent registry (an `Active` agent idle past its liveness window
