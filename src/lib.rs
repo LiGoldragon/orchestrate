@@ -23,6 +23,7 @@ pub mod schema;
 pub mod service;
 pub mod signal_transport;
 pub mod socket_retirement;
+pub mod store_preserve;
 pub mod table_reclamation;
 pub mod tables;
 pub mod upgrade_frame;
@@ -88,6 +89,7 @@ pub use signal_orchestrate::{
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
+pub use store_preserve::PreMigrationPreserve;
 pub use table_reclamation::{BoundedTableReaper, BoundedTableReclamation};
 pub use tables::{
     CURRENT_ACTIVITY_LIMIT, CURRENT_DIVERGENCE_LIMIT, CURRENT_ORCHESTRATOR_TRIAGE_LIMIT,

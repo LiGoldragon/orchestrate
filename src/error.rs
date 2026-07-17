@@ -81,6 +81,9 @@ pub enum Error {
     #[error("store migration: {message}")]
     StoreMigration { message: String },
 
+    #[error("pre-migration preserve failed for {store}: {message}")]
+    PreMigrationPreserve { store: String, message: String },
+
     #[error("orchestrate service sequence lock was poisoned")]
     ServiceSequencePoisoned,
 

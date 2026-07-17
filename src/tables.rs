@@ -22,6 +22,7 @@ use signal_orchestrate::{
 };
 
 use crate::orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
+use crate::store_preserve::PreMigrationPreserve;
 use crate::{Result, StoreLocation};
 
 trait OrchestrateStoredValue: sema_engine::EngineStoredValue
@@ -1745,6 +1746,11 @@ impl<'store> OrchestrateStoreMigration<'store> {
     /// drop clears. Each repair unblocks the next open; the same defect recurring
     /// after its own repair means the repair did not take, so the loop refuses to
     /// spin and surfaces the error.
+    ///
+    /// Before the first repair mutates the file, the store is copied aside as a
+    /// [`PreMigrationPreserve`]; a preserve failure aborts the migration, so no
+    /// repair ever runs against an unpreserved store. An unrepairable error
+    /// returns before any preserve is taken.
     fn open_after_migration(&self, error: crate::Error) -> Result<OrchestrateTables> {
         let mut pending = error;
         let mut applied: Vec<std::mem::Discriminant<StoreRepair>> = Vec::new();
@@ -1755,6 +1761,9 @@ impl<'store> OrchestrateStoreMigration<'store> {
             let discriminant = std::mem::discriminant(&repair);
             if applied.contains(&discriminant) {
                 return Err(pending);
+            }
+            if applied.is_empty() {
+                PreMigrationPreserve::create(self.store, ORCHESTRATE_SCHEMA_VERSION)?;
             }
             applied.push(discriminant);
             match self.apply(repair)? {
@@ -2434,6 +2443,18 @@ mod tests {
             .expect("topics after migration");
         assert_eq!(topics.len(), 1);
         assert_eq!(topics[0].path, topic_path);
+
+        // The version stamp is a mutating repair, so exactly one pre-migration
+        // preserve must sit beside the store.
+        let preserves = premigration_preserves(temporary.path.as_path());
+        assert_eq!(
+            preserves.len(),
+            1,
+            "a stamped-version migration must leave one pre-migration preserve"
+        );
+        for preserve in preserves {
+            let _ = std::fs::remove_file(preserve);
+        }
     }
 
     #[test]
@@ -2488,6 +2509,49 @@ mod tests {
         let migrated =
             OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
 
+        // Exactly one pre-migration preserve sits beside the store, and it is a
+        // genuine pre-repair rollback point: a writable copy of it is still the
+        // wedged store — the plain open path rejects it with the same
+        // stale-identity error — and the repaired open migrates that copy
+        // forward to the same carried row.
+        let preserves = premigration_preserves(temporary.path.as_path());
+        assert_eq!(
+            preserves.len(),
+            1,
+            "an agent-registry migration must leave one pre-migration preserve"
+        );
+        let replay = TemporaryStore::new("orchestrate-agent-registry-preserve-replay");
+        std::fs::copy(&preserves[0], &replay.path).expect("copy preserve for replay");
+        let replay_raw = OrchestrateTables::open_current(&replay.location());
+        let replay_wedged = matches!(
+            &replay_raw,
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                table,
+                ..
+            })) if table.as_str() == ORCHESTRATOR_AGENTS.as_str()
+        );
+        assert!(
+            replay_wedged,
+            "the preserve must still be the wedged pre-repair store"
+        );
+        let replayed =
+            OrchestrateTables::open(&replay.location()).expect("preserve replay migrates");
+        let replayed_agents = replayed
+            .orchestrator_agent_records()
+            .expect("agents after preserve replay");
+        assert_eq!(
+            replayed_agents.len(),
+            1,
+            "replaying the preserve must carry the same agent row forward"
+        );
+        assert_eq!(replayed_agents[0].agent_identifier, agent_identifier);
+        for preserve in premigration_preserves(replay.path.as_path()) {
+            let _ = std::fs::remove_file(preserve);
+        }
+        for preserve in preserves {
+            let _ = std::fs::remove_file(preserve);
+        }
+
         // Every other family survives untouched: the pre-migration claim is still there.
         let claims = migrated.claim_records().expect("claims after migration");
         assert_eq!(claims.len(), 1);
@@ -2525,6 +2589,111 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn unrepairable_store_fails_closed_without_preserve_or_mutation() {
+        let temporary = TemporaryStore::new("orchestrate-unrepairable-store");
+        {
+            OrchestrateTables::open(&temporary.location()).expect("current store opens");
+        }
+        // v3 predates the additive-forward floor (v5), matching the store
+        // directory's real `v3-backup` file: no repair exists for it.
+        stamp_meta_schema_version(temporary.path.as_path(), SchemaVersion::new(3));
+
+        let outcome = OrchestrateTables::open(&temporary.location());
+        assert!(
+            outcome.is_err(),
+            "a pre-additive-floor store must fail closed"
+        );
+
+        // Fail-closed means unrepaired: no preserve is taken, and a second open
+        // fails identically because nothing about the store was migrated. (The
+        // engine may rewrite its own file header on any open; byte identity is
+        // not the contract at this layer.)
+        assert!(
+            premigration_preserves(temporary.path.as_path()).is_empty(),
+            "an unrepairable store must not leave a pre-migration preserve"
+        );
+        let second = OrchestrateTables::open(&temporary.location());
+        assert!(
+            second.is_err(),
+            "a failed-closed store must still fail on the next open — nothing was repaired"
+        );
+        assert!(
+            premigration_preserves(temporary.path.as_path()).is_empty(),
+            "repeated failed-closed opens must not accumulate preserves"
+        );
+    }
+
+    #[test]
+    fn preserve_failure_aborts_migration_before_any_repair() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "orchestrate-preserve-abort-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).expect("create test directory");
+        let store_path = directory.join("orchestrate.sema");
+        let location = StoreLocation::new(store_path.to_string_lossy().into_owned());
+        {
+            OrchestrateTables::open(&location).expect("current store opens");
+        }
+        stamp_meta_schema_version(
+            store_path.as_path(),
+            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+        );
+
+        // A read-only directory makes the preserve copy fail; the migration must
+        // abort with the typed preserve error instead of repairing unpreserved.
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o555))
+            .expect("make directory read-only");
+        let outcome = OrchestrateTables::open(&location);
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o755))
+            .expect("restore directory permissions");
+
+        let preserve_error = matches!(outcome, Err(crate::Error::PreMigrationPreserve { .. }));
+        let observed = match &outcome {
+            Ok(_) => "Ok(tables)".to_string(),
+            Err(error) => format!("Err({error})"),
+        };
+        assert!(
+            preserve_error,
+            "a failed preserve must abort the migration with the typed preserve error, got {observed}"
+        );
+        assert!(
+            premigration_preserves(store_path.as_path()).is_empty(),
+            "no preserve file may exist after a failed preserve"
+        );
+
+        let _ = std::fs::remove_file(&store_path);
+        let _ = std::fs::remove_dir(&directory);
+    }
+
+    /// The pre-migration preserve files sitting beside `store`, matching the
+    /// `<file>.v<N>-premigration-` naming the migration writes.
+    fn premigration_preserves(store: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let directory = store.parent().expect("store has a parent directory");
+        let file_name = store
+            .file_name()
+            .expect("store has a file name")
+            .to_string_lossy()
+            .into_owned();
+        let prefix = format!("{file_name}.v");
+        let mut preserves = Vec::new();
+        for entry in std::fs::read_dir(directory).expect("read store directory") {
+            let entry = entry.expect("directory entry");
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&prefix) && name.contains("-premigration-") {
+                preserves.push(entry.path());
+            }
+        }
+        preserves
     }
 
     /// Build a store carrying the orchestrator-agent registry in its prior
