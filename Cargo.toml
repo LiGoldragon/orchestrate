@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.7.2"
+version      = "0.8.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -49,8 +49,10 @@ nota-text = [
 [dependencies]
 sema                        = { git = "https://github.com/LiGoldragon/sema.git", branch = "main" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "main" }
+# Train pins (messenger-liveness): OrchestratorAgentStatus::Dead lands on these
+# branches; flip both back to main when the contract change integrates.
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "train/messenger-liveness/agent-death-status" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", branch = "train/messenger-liveness/agent-death-status" }
 meta-signal-harness = { git = "https://github.com/LiGoldragon/meta-signal-harness.git", branch = "main" }
 signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", branch = "main" }
 signal-harness = { git = "https://github.com/LiGoldragon/signal-harness.git", branch = "main" }
@@ -64,6 +66,7 @@ relative-age-display        = { git = "https://github.com/LiGoldragon/relative-a
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 getrandom                   = "0.4"
 redb                        = "4.1"
+rustix                      = { version = "1", features = ["event", "process"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }

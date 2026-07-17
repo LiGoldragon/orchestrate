@@ -386,7 +386,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=main#4d3dfcabc1c8f03c4b0a71c2be2b709ad16dc831"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?branch=train%2Fmessenger-liveness%2Fagent-death-status#6e72874ca784d76151442d06275cba71ca005ce3"
 dependencies = [
  "nota",
  "rkyv",
@@ -464,7 +464,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "criome",
  "getrandom",
@@ -474,6 +474,7 @@ dependencies = [
  "redb",
  "relative-age-display",
  "rkyv",
+ "rustix",
  "schema",
  "schema-rust 0.7.0 (git+https://github.com/LiGoldragon/schema-rust.git?rev=255823ab3d0d6c5cab26e26a8b1d60c63c52c7b4)",
  "sema",
@@ -829,7 +830,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.5.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#9d030d0f56096b56d8315bbd333cd08818606943"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=train%2Fmessenger-liveness%2Fagent-death-status#e6f0d4cc49d98c97366d7b6946e410f700b6453d"
 dependencies = [
  "nota",
  "rkyv",

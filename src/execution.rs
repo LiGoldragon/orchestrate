@@ -513,6 +513,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
         };
         self.service.reschedule_lane_reclamation()?;
+        self.service.reschedule_harness_liveness_watch()?;
         Ok(reply)
     }
 
@@ -573,6 +574,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
         };
         self.service.reschedule_lane_reclamation()?;
+        self.service.reschedule_harness_liveness_watch()?;
         Ok(reply)
     }
 
@@ -2187,6 +2189,7 @@ impl ProjectInto<ordinary_schema::LaneStatus> for ordinary_contract::LaneStatus 
             ordinary_contract::LaneStatus::HandoverEnded => {
                 ordinary_schema::LaneStatus::HandoverEnded
             }
+            ordinary_contract::LaneStatus::Suspect => ordinary_schema::LaneStatus::Suspect,
         })
     }
 }
@@ -2199,6 +2202,7 @@ impl ProjectInto<ordinary_contract::LaneStatus> for ordinary_schema::LaneStatus 
             ordinary_schema::LaneStatus::HandoverEnded => {
                 ordinary_contract::LaneStatus::HandoverEnded
             }
+            ordinary_schema::LaneStatus::Suspect => ordinary_contract::LaneStatus::Suspect,
         })
     }
 }
@@ -4768,6 +4772,9 @@ impl ProjectInto<ordinary_schema::OrchestratorAgentStatus>
             ordinary_contract::OrchestratorAgentStatus::Retired => {
                 ordinary_schema::OrchestratorAgentStatus::Retired
             }
+            ordinary_contract::OrchestratorAgentStatus::Dead => {
+                ordinary_schema::OrchestratorAgentStatus::Dead
+            }
         })
     }
 }
@@ -4782,6 +4789,9 @@ impl ProjectInto<ordinary_contract::OrchestratorAgentStatus>
             }
             ordinary_schema::OrchestratorAgentStatus::Retired => {
                 ordinary_contract::OrchestratorAgentStatus::Retired
+            }
+            ordinary_schema::OrchestratorAgentStatus::Dead => {
+                ordinary_contract::OrchestratorAgentStatus::Dead
             }
         })
     }

@@ -8,6 +8,7 @@ pub mod divergence;
 pub mod error;
 pub mod execution;
 pub mod handover;
+pub mod harness_liveness;
 pub mod lane;
 pub mod lane_reclamation;
 pub mod layout;
@@ -46,6 +47,9 @@ pub use execution::{
     OrchestrateSemaEngine,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
+pub use harness_liveness::{
+    HarnessLivenessReconciliation, HarnessLivenessWatch, WatchedHarnessProcess,
+};
 pub use lane::{LaneReapReason, LaneReconciliation, LaneRegistry};
 pub use lane_reclamation::LaneReclaimer;
 pub use layout::OrchestrateLayout;
