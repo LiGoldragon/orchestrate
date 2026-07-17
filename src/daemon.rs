@@ -23,7 +23,8 @@ use triad_runtime::{
 };
 
 use meta_signal_orchestrate::schema::lib::{
-    Input as MetaInput, Output as MetaOutput, SignalFrameError as MetaSignalFrameError,
+    EngineRefusal as MetaEngineRefusal, Input as MetaInput, Output as MetaOutput,
+    SignalFrameError as MetaSignalFrameError,
 };
 use signal_orchestrate::schema::lib::{Input, Output, SignalFrameError};
 
@@ -139,7 +140,27 @@ impl ComponentDaemon for OrchestrateDaemon {
             .await?
             .into_bytes();
         let (_route, input) = MetaInput::decode_signal_frame(&frame)?;
-        let output: MetaOutput = engine.handle_signal_meta_input(input).await?;
+        // Answer every decoded meta request with a complete frame: the
+        // ordinary output, or the typed refusal when the engine failed — a
+        // closed socket with no reply is indistinguishable from daemon death
+        // on the caller side (the working tier gets the same behavior from
+        // the generated spine).
+        let output: MetaOutput = match engine.handle_signal_meta_input(input).await {
+            Ok(output) => output,
+            Err(error) => {
+                let refusal = MetaEngineRefusal::rejected(error.to_string());
+                if let Ok(refusal_frame) = refusal.encode_signal_frame() {
+                    let _ = LengthPrefixedCodec::default()
+                        .write_body_async(
+                            connection.stream_mut(),
+                            &LengthPrefixedFrameBody::new(refusal_frame),
+                        )
+                        .await;
+                    let _ = connection.stream_mut().flush().await;
+                }
+                return Err(error.into());
+            }
+        };
         LengthPrefixedCodec::default()
             .write_body_async(
                 connection.stream_mut(),

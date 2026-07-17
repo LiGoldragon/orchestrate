@@ -61,3 +61,14 @@ sequence atomic (defer or roll back the format/layout stamp until family
 registration succeeds), or accept family descriptors at open so identity is
 validated before any write. This is a sema-engine finding, reported upstream, not
 patched around here.
+
+## Upgrade tier still closes without a reply on engine error
+
+The working tier (generated spine, schema-rust 0.7.1) and the meta tier
+(hand-written handler) now answer every decoded request with a complete frame —
+ordinary output or the typed `EngineRefusal` under the reserved all-ones short
+header — so callers can distinguish an engine error from daemon death. The
+upgrade tier still propagates engine errors without writing a reply because it
+speaks the shared version-handover *contract* wire, not a schema-emitted frame;
+its refusal shape belongs to that shared contract. Fix belongs in the
+version-handover contract crate, not here.
