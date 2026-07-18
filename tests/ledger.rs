@@ -1,6 +1,6 @@
 use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
-    ActivityFilter, ActivityQuery, ActivitySubmission, ApplicationFailure,
+    ActivityFilter, ActivityQuery, ActivitySubmission, AgentActivityRead, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, BoundedTableReaper, BoundedTableReclamation,
     CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
     LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
@@ -2623,4 +2623,131 @@ fn registering_with_an_unknown_preminted_identity_is_a_typed_caller_rejection() 
         panic!("expected agent directory");
     };
     assert!(directory.agents.is_empty());
+}
+
+/// Write a fixture `/proc/<pid>/stat` whose parent pid (field 4) and start time
+/// (field 22) land where the activity read's parser reads them.
+fn write_process_stat(process_root: &std::path::Path, pid: u32, parent_pid: u32, start: u64) {
+    let directory = process_root.join(pid.to_string());
+    std::fs::create_dir_all(&directory).expect("proc pid directory");
+    let mut fields = vec!["R".to_string(), parent_pid.to_string()];
+    fields.extend(std::iter::repeat_n("0".to_string(), 17));
+    fields.push(start.to_string());
+    std::fs::write(
+        directory.join("stat"),
+        format!("{pid} (harness) {}", fields.join(" ")),
+    )
+    .expect("write stat");
+}
+
+fn terminal_cell_reachability(target: &std::path::Path, pid: u32, start: u64) -> orchestrate::StoredAgentReachability {
+    orchestrate::StoredAgentReachability {
+        endpoint_kind: orchestrate::StoredAgentEndpointKind::TerminalCell,
+        target: target.to_string_lossy().into_owned(),
+        harness_pid: pid,
+        harness_start_time: start,
+    }
+}
+
+#[test]
+fn bounded_reaper_refreshes_idle_aged_agent_with_live_command_child() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-busy-refresh");
+    let process_root = tempfile::TempDir::new().expect("proc root");
+    // The harness (pid 100) holds a live command child (pid 101): an agent
+    // inside one long-running command, silent for a day.
+    write_process_stat(process_root.path(), 100, 1, 5);
+    write_process_stat(process_root.path(), 101, 100, 6);
+
+    let busy = tables
+        .register_orchestrator_agent(
+            session("BusyBuild"),
+            MissionDescription::from_text("hours-long build").expect("mission"),
+            HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
+        )
+        .expect("register busy agent");
+    // The session directory does not exist: output silence — the child is the
+    // only evidence.
+    tables
+        .attach_agent_reachability(
+            &busy.agent_identifier,
+            terminal_cell_reachability(
+                std::path::Path::new("/nonexistent-session/data.sock"),
+                100,
+                5,
+            ),
+        )
+        .expect("attach reachability");
+    backdate_agent_activity(&tables, &busy.agent_identifier, 25);
+    let backdated = tables
+        .orchestrator_agent_record(&busy.agent_identifier)
+        .expect("read")
+        .expect("present")
+        .last_activity;
+
+    let now = tables.current_timestamp().expect("clock");
+    let reclamation = BoundedTableReaper::new(now)
+        .with_activity_read(AgentActivityRead::new(process_root.path()))
+        .reconcile(&tables)
+        .expect("reconcile");
+
+    assert_eq!(reclamation.refreshed_busy_agents, 1);
+    assert_eq!(reclamation.retired_idle_agents, 0);
+    let refreshed = tables
+        .orchestrator_agent_record(&busy.agent_identifier)
+        .expect("read")
+        .expect("present");
+    assert_eq!(
+        refreshed.status,
+        orchestrate::OrchestratorAgentStatus::Active,
+        "a live command child keeps the agent Active however long it has run"
+    );
+    assert!(
+        refreshed.last_activity.value() > backdated.value(),
+        "positive activity re-arms the idle deadline"
+    );
+}
+
+#[test]
+fn bounded_reaper_retires_idle_aged_agent_with_no_observed_activity() {
+    let (_temporary, tables) = workflow_resolution_tables("orchestrate-stale-retire");
+    let process_root = tempfile::TempDir::new().expect("proc root");
+    // The harness (pid 100) is alive but childless: no command in flight.
+    write_process_stat(process_root.path(), 100, 1, 5);
+    // The session directory exists but holds nothing: no artifact evidence.
+    let session_directory = tempfile::TempDir::new().expect("session dir");
+
+    let stale = tables
+        .register_orchestrator_agent(
+            session("StaleHarness"),
+            MissionDescription::from_text("abandoned at a prompt").expect("mission"),
+            HarnessKind::Codex,
+            signal_orchestrate::MintedIdentitySelection::None,
+        )
+        .expect("register stale agent");
+    tables
+        .attach_agent_reachability(
+            &stale.agent_identifier,
+            terminal_cell_reachability(&session_directory.path().join("data.sock"), 100, 5),
+        )
+        .expect("attach reachability");
+    backdate_agent_activity(&tables, &stale.agent_identifier, 25);
+
+    let now = tables.current_timestamp().expect("clock");
+    let reclamation = BoundedTableReaper::new(now)
+        .with_activity_read(AgentActivityRead::new(process_root.path()))
+        .reconcile(&tables)
+        .expect("reconcile");
+
+    assert_eq!(reclamation.refreshed_busy_agents, 0);
+    assert_eq!(reclamation.retired_idle_agents, 1);
+    assert_eq!(
+        tables
+            .orchestrator_agent_record(&stale.agent_identifier)
+            .expect("read")
+            .expect("present")
+            .status,
+        orchestrate::OrchestratorAgentStatus::Retired,
+        "silent and childless past the idle window retires as before"
+    );
 }

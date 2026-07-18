@@ -21,6 +21,7 @@ use signal_orchestrate::{
     OrchestratorAgentIdentifier, OrchestratorAgentStatus, TimestampNanos, WorktreeStatus,
 };
 
+use crate::activity_read::{AgentActivityAssessment, AgentActivityRead};
 use crate::{OrchestrateTables, Result};
 
 /// How long an `Active` orchestrator agent may sit idle — no registration,
@@ -64,11 +65,22 @@ pub const WORKTREE_TERMINAL_RETENTION_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 /// a single reconciliation instant, by each record's own idle age.
 pub struct BoundedTableReaper {
     now: TimestampNanos,
+    activity: AgentActivityRead,
 }
 
 impl BoundedTableReaper {
     pub fn new(now: TimestampNanos) -> Self {
-        Self { now }
+        Self {
+            now,
+            activity: AgentActivityRead::from_process_environment(),
+        }
+    }
+
+    /// Point the retire-decision activity read at fixture roots instead of the
+    /// live host's `/proc`.
+    pub fn with_activity_read(mut self, activity: AgentActivityRead) -> Self {
+        self.activity = activity;
+        self
     }
 
     /// Reap every dead record across the interim-bounded stores in one pass and
@@ -142,10 +154,31 @@ impl BoundedTableReaper {
         for agent in tables.orchestrator_agent_records()? {
             let idle_nanos = agent.idle_age_at(self.now).value();
             match agent.status {
-                // An `Allocated` reservation whose launch never happened ages
-                // out on the same idle window as an idle `Active` agent: the
-                // registry is a live view, not an archive of stale mints.
-                OrchestratorAgentStatus::Active | OrchestratorAgentStatus::Allocated
+                // The idle-aged retire decision is the activity-read moment
+                // (liveliness design §3.3): before retiring, read the agent's
+                // real latest activity. A live command child or a session
+                // artifact written after the stamp is positive liveness — the
+                // stamp refreshes and the idle deadline re-arms; a silent,
+                // childless agent retires as before.
+                OrchestratorAgentStatus::Active
+                    if idle_nanos >= ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS =>
+                {
+                    match self.activity.assess(&agent) {
+                        AgentActivityAssessment::ActivityObserved(_) => {
+                            tables.touch_orchestrator_agent(&agent.agent_identifier)?;
+                            reclamation.refreshed_busy_agents += 1;
+                        }
+                        AgentActivityAssessment::NoActivityObserved => {
+                            tables.retire_orchestrator_agent(&agent.agent_identifier)?;
+                            reclamation.retired_idle_agents += 1;
+                        }
+                    }
+                }
+                // An `Allocated` reservation whose launch never happened has no
+                // process or session to read; it ages out on the same idle
+                // window: the registry is a live view, not an archive of stale
+                // mints.
+                OrchestratorAgentStatus::Allocated
                     if idle_nanos >= ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS =>
                 {
                     tables.retire_orchestrator_agent(&agent.agent_identifier)?;
@@ -287,6 +320,9 @@ impl BoundedTableReaper {
 /// test) can witness exactly what the reaper removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BoundedTableReclamation {
+    /// Idle-aged `Active` agents whose activity read found a live command
+    /// child or a fresh session artifact: refreshed instead of retired.
+    pub refreshed_busy_agents: u32,
     pub retired_idle_agents: u32,
     pub reaped_retired_agents: u32,
     pub reaped_dead_agents: u32,

@@ -412,7 +412,19 @@ Task scopes render in bracketed human form:
   (same retention, distinct meaning: dead agents are the messenger's
   killed-mark source and are bounced-to, never respawn-delivered). Agents
   without discovered reachability have no pid to watch and stay on the
-  idle-age backstop until the activity-read layer lands.
+  idle-age backstop.
+- The idle-aged retire decision reads real activity first
+  (`src/activity_read.rs`, layer 3 of the coordination-liveliness design,
+  psyche-ruled: "better to actually read the agent's latest activity; a single
+  command could take hours"). When an `Active` agent's idle age reaches the
+  reaper's retire decision — and only then; nothing scans on a clock —
+  `AgentActivityRead` reads the agent's genuine latest activity: a live
+  descendant of the pinned harness process (a running command, however long)
+  or a terminal-cell session artifact written after the stored stamp is
+  positive liveness that refreshes `last_activity` and re-arms the idle
+  deadline; a silent, childless agent retires as before. The descendant scan
+  only trusts a live generation pin, so a recycled pid's children are never
+  attributed to the agent.
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path
