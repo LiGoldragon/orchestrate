@@ -267,6 +267,14 @@ The daemon binds a separate socket and actor for this surface.
 Durable state lives in one `orchestrate.sema` opened through
 `sema-engine`. No other component opens that database directly.
 
+`orchestrate.sema` runs the sema-engine local-checkpoint recovery
+topology: this daemon has no mirror, and its store carries no live
+outbox obligation. Any historical outbox rows in it are vestige of
+pre-topology engine generations that wrote the outbox unconditionally;
+local-checkpoint compaction trims them and never blocks on them. The
+version-handover `Mirror` payload elsewhere in this document is
+unrelated — an in-process upgrade snapshot, not the mirror daemon.
+
 Policy tables change only through meta-signal contract operations
 after first-start bootstrap. The daemon lowers those operations to
 Sema effects internally:
