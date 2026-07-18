@@ -124,6 +124,13 @@ impl orchestrate::HarnessModelResolver for RecordingModelResolver {
         self.captured.borrow_mut().push(request);
         Ok(self.reply.clone())
     }
+
+    fn launch_session(
+        &self,
+        _request: meta_signal_harness::SessionLaunchRequest,
+    ) -> orchestrate::Result<MetaHarnessReply> {
+        Err(orchestrate::Error::HarnessResolverNotConfigured)
+    }
 }
 
 impl LayoutFixture {
@@ -2728,6 +2735,100 @@ fn minted_identity_is_allocated_then_bound_active_by_preminted_registration() {
     assert_eq!(
         directory.agents[0].status,
         orchestrate::OrchestratorAgentStatus::Active
+    );
+}
+
+#[test]
+fn launching_an_unknown_agent_is_a_typed_refusal() {
+    let mut fixture = Fixture::new("orchestrator-launch-unknown");
+
+    let reply = fixture
+        .handle(OrchestrateRequest::LaunchAgent(
+            orchestrate::AgentLaunchRequest {
+                agent_identifier: orchestrate::OrchestratorAgentIdentifier::from_wire_token("zzzz")
+                    .expect("identifier"),
+            },
+        ))
+        .expect("launch reply");
+    let OrchestrateReply::AgentLaunchRefused(refused) = reply else {
+        panic!("expected AgentLaunchRefused, got {reply:?}");
+    };
+    assert_eq!(
+        refused.reason,
+        signal_orchestrate::AgentLaunchRefusalReason::UnknownAgent
+    );
+}
+
+#[test]
+fn launching_an_allocated_agent_without_a_harness_daemon_refuses_unreachable() {
+    let mut fixture = Fixture::new("orchestrator-launch-unreachable");
+
+    let minted = fixture
+        .handle(OrchestrateRequest::MintAgentIdentity(
+            orchestrate::AgentIdentityMintRequest {
+                session: session("LaunchUnreachable"),
+                mission: MissionDescription::from_text("launch a worker").expect("mission"),
+                harness: HarnessKind::Claude,
+            },
+        ))
+        .expect("mint reply");
+    let OrchestrateReply::AgentIdentityMinted(minted) = minted else {
+        panic!("expected AgentIdentityMinted");
+    };
+
+    // The allocated gate passes; the commander then fails to reach a harness
+    // daemon (none serves the socket in this fixture), and the failure is a
+    // delivered typed refusal, never an error-shaped close.
+    let reply = fixture
+        .handle(OrchestrateRequest::LaunchAgent(
+            orchestrate::AgentLaunchRequest {
+                agent_identifier: minted.agent_identifier,
+            },
+        ))
+        .expect("launch reply");
+    let OrchestrateReply::AgentLaunchRefused(refused) = reply else {
+        panic!("expected AgentLaunchRefused, got {reply:?}");
+    };
+    assert_eq!(
+        refused.reason,
+        signal_orchestrate::AgentLaunchRefusalReason::HarnessUnreachable
+    );
+}
+
+#[test]
+fn launching_an_active_agent_is_refused_not_allocated() {
+    let mut fixture = Fixture::new("orchestrator-launch-active");
+
+    let registered = fixture
+        .handle(OrchestrateRequest::RegisterAgent(
+            OrchestratorAgentRegistration {
+                session: session("LaunchActive"),
+                mission: MissionDescription::from_text("already running").expect("mission"),
+                harness: HarnessKind::Claude,
+                topic_selection: TopicSelection::Explicit(vec![
+                    OrchestratorTopicPath::from_wire_token("workers").expect("topic path"),
+                ]),
+                minted_identity: signal_orchestrate::MintedIdentitySelection::None,
+            },
+        ))
+        .expect("registration reply");
+    let OrchestrateReply::AgentRegistered(registered) = registered else {
+        panic!("expected AgentRegistered");
+    };
+
+    let reply = fixture
+        .handle(OrchestrateRequest::LaunchAgent(
+            orchestrate::AgentLaunchRequest {
+                agent_identifier: registered.agent_identifier,
+            },
+        ))
+        .expect("launch reply");
+    let OrchestrateReply::AgentLaunchRefused(refused) = reply else {
+        panic!("expected AgentLaunchRefused, got {reply:?}");
+    };
+    assert_eq!(
+        refused.reason,
+        signal_orchestrate::AgentLaunchRefusalReason::AgentNotAllocated
     );
 }
 

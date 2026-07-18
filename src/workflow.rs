@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use meta_signal_harness::{
     MetaHarnessFrame, MetaHarnessFrameBody, MetaHarnessReply, MetaHarnessRequest,
-    ModelResolutionRequest,
+    ModelResolutionRequest, SessionLaunchRequest,
 };
 use signal_criome::{
     EvaluationDecision, ObjectDigest, OperationDigest, WorkflowProvenanceDigest, WorkflowReceipt,
@@ -28,6 +28,11 @@ const META_HARNESS_SOCKET_VARIABLE: &str = "HARNESS_META_SOCKET";
 
 pub trait HarnessModelResolver {
     fn resolve_model(&self, request: ModelResolutionRequest) -> Result<MetaHarnessReply>;
+
+    /// Command the harness component to launch a session carrying a
+    /// pre-minted agent identity (packet 2.2). Rides the same owner-only
+    /// meta-harness channel as model resolution.
+    fn launch_session(&self, request: SessionLaunchRequest) -> Result<MetaHarnessReply>;
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +47,7 @@ pub struct WorkflowRunner<Resolver> {
 #[derive(Debug, Clone)]
 pub struct FixtureModelResolver {
     reply: Option<MetaHarnessReply>,
+    launch_reply: Option<MetaHarnessReply>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,13 +276,29 @@ where
 
 impl FixtureModelResolver {
     pub fn new(reply: Option<MetaHarnessReply>) -> Self {
-        Self { reply }
+        Self {
+            reply,
+            launch_reply: None,
+        }
+    }
+
+    pub fn with_launch_reply(launch_reply: MetaHarnessReply) -> Self {
+        Self {
+            reply: None,
+            launch_reply: Some(launch_reply),
+        }
     }
 }
 
 impl HarnessModelResolver for FixtureModelResolver {
     fn resolve_model(&self, _request: ModelResolutionRequest) -> Result<MetaHarnessReply> {
         self.reply
+            .clone()
+            .ok_or(Error::HarnessResolverNotConfigured)
+    }
+
+    fn launch_session(&self, _request: SessionLaunchRequest) -> Result<MetaHarnessReply> {
+        self.launch_reply
             .clone()
             .ok_or(Error::HarnessResolverNotConfigured)
     }
@@ -337,11 +359,11 @@ impl MetaHarnessResolver {
     }
 }
 
-impl HarnessModelResolver for MetaHarnessResolver {
-    fn resolve_model(&self, request: ModelResolutionRequest) -> Result<MetaHarnessReply> {
+impl MetaHarnessResolver {
+    fn submit(&self, request: MetaHarnessRequest) -> Result<MetaHarnessReply> {
         let frame = MetaHarnessFrame::new(MetaHarnessFrameBody::Request {
             exchange: self.exchange(),
-            request: signal_frame::Request::from_payload(MetaHarnessRequest::ResolveModel(request)),
+            request: signal_frame::Request::from_payload(request),
         });
         let mut stream = UnixStream::connect(&self.socket_path)?;
         self.codec
@@ -352,5 +374,15 @@ impl HarnessModelResolver for MetaHarnessResolver {
             .read_body(&mut stream)
             .map_err(Error::HarnessTransportFrame)?;
         self.reply_from_frame(MetaHarnessFrame::decode(body.bytes())?)
+    }
+}
+
+impl HarnessModelResolver for MetaHarnessResolver {
+    fn resolve_model(&self, request: ModelResolutionRequest) -> Result<MetaHarnessReply> {
+        self.submit(MetaHarnessRequest::ResolveModel(request))
+    }
+
+    fn launch_session(&self, request: SessionLaunchRequest) -> Result<MetaHarnessReply> {
+        self.submit(MetaHarnessRequest::LaunchSession(request))
     }
 }

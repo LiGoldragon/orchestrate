@@ -33,6 +33,7 @@ pub enum Error {
     #[error("harness model resolver is not configured")]
     HarnessResolverNotConfigured,
 
+
     #[error("harness model resolution operation was unimplemented: {operation}")]
     HarnessResolutionUnimplemented { operation: String },
 

@@ -78,6 +78,7 @@ pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegi
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentIdentityMintRequest,
+    AgentLaunchRefusalReason, AgentLaunchRefused, AgentLaunchRequest, AgentLaunched,
     AgentIdentityMinted, AgentRegistrationRejectionReason,
     ApplicationFailure, ApplicationFailureReason, ApplicationSuccess, BranchName,
     DownstreamComponent, DurationNanos, HarnessKind, LaneAssignment, LaneAuthority, LaneDetails,
@@ -117,6 +118,6 @@ pub use tables::{
     StoredWorkflowModelResolutionOutcome, StoredWorkflowRunResolution, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;
-pub use workflow::{HarnessModelResolver, WorkflowRunner};
+pub use workflow::{HarnessModelResolver, MetaHarnessResolver, WorkflowRunner};
 pub use worktree::WorktreeRegistry;
 pub use worktree_projection::WorktreeProjection;

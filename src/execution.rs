@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use meta_signal_orchestrate as meta_contract;
 use meta_signal_orchestrate::schema::lib as meta_schema;
 use signal_frame::{
@@ -8,11 +10,13 @@ use signal_orchestrate as ordinary_contract;
 use signal_orchestrate::schema::lib as ordinary_schema;
 
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
+use crate::agent_reachability::ProcessStat;
 use crate::{
-    ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, LaneRegistry,
-    MessengerRegistrationDegradation, MessengerRegistryPush, OrchestrateService,
-    RepositoryRegistry, Result, RoleRegistry, RouterActorRegistration,
-    RouterRegistrationDegradation, StoredAgentReachability, WorkflowRunner, WorktreeRegistry,
+    ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, HarnessModelResolver,
+    LaneRegistry, MessengerRegistrationDegradation, MessengerRegistryPush, MetaHarnessResolver,
+    OrchestrateService, OrchestratorAgentStatus, RepositoryRegistry, Result, RoleRegistry,
+    RouterActorRegistration, RouterRegistrationDegradation, StoredAgentEndpointKind,
+    StoredAgentReachability, WorkflowRunner, WorktreeRegistry,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,6 +521,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
             ordinary_contract::OrchestrateRequest::MintAgentIdentity(request) => {
                 self.mint_agent_identity(request)?
+            }
+            ordinary_contract::OrchestrateRequest::LaunchAgent(request) => {
+                self.launch_agent(request, &MetaHarnessResolver::from_process())?
             }
         };
         self.service.reschedule_lane_reclamation()?;
@@ -2689,6 +2696,48 @@ impl ProjectInto<ordinary_contract::RepositoryName> for ordinary_schema::Reposit
     }
 }
 
+impl ProjectInto<ordinary_schema::AgentLaunchRefusalReason>
+    for ordinary_contract::AgentLaunchRefusalReason
+{
+    fn project_into(self) -> Result<ordinary_schema::AgentLaunchRefusalReason> {
+        Ok(match self {
+            ordinary_contract::AgentLaunchRefusalReason::UnknownAgent => {
+                ordinary_schema::AgentLaunchRefusalReason::UnknownAgent
+            }
+            ordinary_contract::AgentLaunchRefusalReason::AgentNotAllocated => {
+                ordinary_schema::AgentLaunchRefusalReason::AgentNotAllocated
+            }
+            ordinary_contract::AgentLaunchRefusalReason::HarnessUnreachable => {
+                ordinary_schema::AgentLaunchRefusalReason::HarnessUnreachable
+            }
+            ordinary_contract::AgentLaunchRefusalReason::HarnessRefused => {
+                ordinary_schema::AgentLaunchRefusalReason::HarnessRefused
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::AgentLaunchRefusalReason>
+    for ordinary_schema::AgentLaunchRefusalReason
+{
+    fn project_into(self) -> Result<ordinary_contract::AgentLaunchRefusalReason> {
+        Ok(match self {
+            ordinary_schema::AgentLaunchRefusalReason::UnknownAgent => {
+                ordinary_contract::AgentLaunchRefusalReason::UnknownAgent
+            }
+            ordinary_schema::AgentLaunchRefusalReason::AgentNotAllocated => {
+                ordinary_contract::AgentLaunchRefusalReason::AgentNotAllocated
+            }
+            ordinary_schema::AgentLaunchRefusalReason::HarnessUnreachable => {
+                ordinary_contract::AgentLaunchRefusalReason::HarnessUnreachable
+            }
+            ordinary_schema::AgentLaunchRefusalReason::HarnessRefused => {
+                ordinary_contract::AgentLaunchRefusalReason::HarnessRefused
+            }
+        })
+    }
+}
+
 impl ProjectInto<String> for ordinary_contract::BranchName {
     fn project_into(self) -> Result<String> {
         Ok(self.as_str().to_string())
@@ -3263,6 +3312,9 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::MintAgentIdentity(payload) => {
                 ordinary_schema::Input::mint_agent_identity(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::LaunchAgent(payload) => {
+                ordinary_schema::Input::launch_agent(payload.agent_identifier.project_into()?)
+            }
         })
     }
 }
@@ -3319,6 +3371,13 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
             }
             ordinary_schema::Input::MintAgentIdentity(payload) => {
                 ordinary_contract::OrchestrateRequest::MintAgentIdentity(payload.project_into()?)
+            }
+            ordinary_schema::Input::LaunchAgent(payload) => {
+                ordinary_contract::OrchestrateRequest::LaunchAgent(
+                    ordinary_contract::AgentLaunchRequest {
+                        agent_identifier: payload.into_payload().project_into()?,
+                    },
+                )
             }
         })
     }
@@ -3992,6 +4051,23 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
                     payload.agent_identifier.project_into()?,
                 )
             }
+            ordinary_contract::OrchestrateReply::AgentLaunched(payload) => {
+                ordinary_schema::Output::agent_launched(ordinary_schema::AgentLaunched {
+                    orchestrator_agent_identifier: payload.agent_identifier.project_into()?,
+                    integer: u64::from(payload.child_process_id),
+                    optional_wire_path: payload
+                        .session_directory
+                        .map(|path| path.project_into())
+                        .transpose()?,
+                })
+            }
+            ordinary_contract::OrchestrateReply::AgentLaunchRefused(payload) => {
+                ordinary_schema::Output::agent_launch_refused(ordinary_schema::AgentLaunchRefused {
+                    orchestrator_agent_identifier: payload.agent_identifier.project_into()?,
+                    agent_launch_refusal_reason: payload.reason.project_into()?,
+                    string: payload.detail,
+                })
+            }
         })
     }
 }
@@ -4128,6 +4204,31 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
                 ordinary_contract::OrchestrateReply::AgentIdentityMinted(
                     ordinary_contract::AgentIdentityMinted {
                         agent_identifier: payload.into_payload().project_into()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::AgentLaunched(payload) => {
+                ordinary_contract::OrchestrateReply::AgentLaunched(
+                    ordinary_contract::AgentLaunched {
+                        agent_identifier: payload.orchestrator_agent_identifier.project_into()?,
+                        child_process_id: u32::try_from(payload.integer).map_err(|_| {
+                            Error::UnexpectedHarnessFrame {
+                                got: format!("child pid {} exceeds u32", payload.integer),
+                            }
+                        })?,
+                        session_directory: payload
+                            .optional_wire_path
+                            .map(ProjectInto::project_into)
+                            .transpose()?,
+                    },
+                )
+            }
+            ordinary_schema::Output::AgentLaunchRefused(payload) => {
+                ordinary_contract::OrchestrateReply::AgentLaunchRefused(
+                    ordinary_contract::AgentLaunchRefused {
+                        agent_identifier: payload.orchestrator_agent_identifier.project_into()?,
+                        reason: payload.agent_launch_refusal_reason.project_into()?,
+                        detail: payload.string,
                     },
                 )
             }
@@ -5486,6 +5587,136 @@ impl OrchestrateSemaEngine<'_> {
                 agent_identifier: agent.agent_identifier,
             },
         ))
+    }
+
+    /// Launch a previously allocated agent through the harness component
+    /// (psyche-ruled §0d Q2: the orchestrator mints, then launches through
+    /// the harness). The pre-minted identity rides the initial prompt. A
+    /// launch reply carrying a terminal-cell session directory seeds the
+    /// row's reachability — and the messenger endpoint push — before the
+    /// launched process ever registers.
+    fn launch_agent<Commander: HarnessModelResolver>(
+        &mut self,
+        request: ordinary_contract::AgentLaunchRequest,
+        commander: &Commander,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        let Some(agent) = self
+            .service
+            .tables()
+            .orchestrator_agent_record(&request.agent_identifier)?
+        else {
+            return Ok(Self::agent_launch_refused(
+                request.agent_identifier,
+                ordinary_contract::AgentLaunchRefusalReason::UnknownAgent,
+                "no agent registry row holds this identity".to_string(),
+            ));
+        };
+        if agent.status != OrchestratorAgentStatus::Allocated {
+            return Ok(Self::agent_launch_refused(
+                request.agent_identifier,
+                ordinary_contract::AgentLaunchRefusalReason::AgentNotAllocated,
+                format!("agent status is {:?}, launch needs Allocated", agent.status),
+            ));
+        }
+        let launch = meta_signal_harness::SessionLaunchRequest {
+            harness_kind: match agent.harness {
+                ordinary_contract::HarnessKind::Claude => meta_signal_harness::HarnessKind::Claude,
+                ordinary_contract::HarnessKind::Codex => meta_signal_harness::HarnessKind::Codex,
+            },
+            agent_identity: meta_signal_harness::AgentIdentityToken::new(
+                agent.agent_identifier.as_str(),
+            ),
+            initial_prompt: meta_signal_harness::InitialPrompt::new(format!(
+                "You are agent {}. {}",
+                agent.agent_identifier.as_str(),
+                agent.mission.as_str()
+            )),
+            continuation: meta_signal_harness::ContinuationRequest::Fresh,
+        };
+        let reply = match commander.launch_session(launch) {
+            Ok(reply) => reply,
+            Err(error) => {
+                return Ok(Self::agent_launch_refused(
+                    request.agent_identifier,
+                    ordinary_contract::AgentLaunchRefusalReason::HarnessUnreachable,
+                    error.to_string(),
+                ));
+            }
+        };
+        match reply {
+            meta_signal_harness::MetaHarnessReply::SessionLaunched(launched) => {
+                if let Some(directory) = &launched.session_directory {
+                    self.seed_reachability_from_launch(
+                        &request.agent_identifier,
+                        directory,
+                        launched.child_process_id,
+                    )?;
+                }
+                Ok(ordinary_contract::OrchestrateReply::AgentLaunched(
+                    ordinary_contract::AgentLaunched {
+                        agent_identifier: request.agent_identifier,
+                        child_process_id: launched.child_process_id,
+                        session_directory: launched.session_directory.and_then(|directory| {
+                            ordinary_contract::WirePath::from_absolute_path(directory.as_str())
+                                .ok()
+                        }),
+                    },
+                ))
+            }
+            meta_signal_harness::MetaHarnessReply::SessionLaunchRefused(refused) => {
+                Ok(Self::agent_launch_refused(
+                    request.agent_identifier,
+                    ordinary_contract::AgentLaunchRefusalReason::HarnessRefused,
+                    format!("{:?}: {}", refused.reason, refused.detail),
+                ))
+            }
+            other => Ok(Self::agent_launch_refused(
+                request.agent_identifier,
+                ordinary_contract::AgentLaunchRefusalReason::HarnessRefused,
+                format!("unexpected harness reply: {other:?}"),
+            )),
+        }
+    }
+
+    fn agent_launch_refused(
+        agent_identifier: ordinary_contract::OrchestratorAgentIdentifier,
+        reason: ordinary_contract::AgentLaunchRefusalReason,
+        detail: String,
+    ) -> ordinary_contract::OrchestrateReply {
+        ordinary_contract::OrchestrateReply::AgentLaunchRefused(
+            ordinary_contract::AgentLaunchRefused {
+                agent_identifier,
+                reason,
+                detail,
+            },
+        )
+    }
+
+    /// Seed the allocated row's reachability from launch facts: the endpoint
+    /// is the session's data socket, and the pid pin's start time is read
+    /// from `/proc` so the generation pin carries discovery's semantics.
+    /// Best-effort: a child that vanished before the read leaves the row for
+    /// ordinary registration-time discovery.
+    fn seed_reachability_from_launch(
+        &self,
+        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
+        session_directory: &meta_signal_harness::SessionDirectory,
+        child_process_id: u32,
+    ) -> Result<()> {
+        let Some(stat) = ProcessStat::read(Path::new("/proc"), child_process_id) else {
+            return Ok(());
+        };
+        let reachability = StoredAgentReachability {
+            endpoint_kind: StoredAgentEndpointKind::TerminalCell,
+            target: format!("{}/data.sock", session_directory.as_str()),
+            harness_pid: child_process_id,
+            harness_start_time: stat.start_time_ticks,
+        };
+        self.service
+            .tables()
+            .attach_agent_reachability(agent_identifier, reachability.clone())?;
+        self.propagate_reachability_to_messenger(agent_identifier, &reachability)?;
+        Ok(())
     }
 
     /// Push a minted or registered identity into the messenger's durable
