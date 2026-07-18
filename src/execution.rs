@@ -16,8 +16,20 @@ use crate::{
     LaneRegistry, MessengerRegistrationDegradation, MessengerRegistryPush, MetaHarnessResolver,
     OrchestrateService, OrchestratorAgentStatus, RepositoryRegistry, Result, RoleRegistry,
     RouterActorRegistration, RouterRegistrationDegradation, StoredAgentEndpointKind,
-    StoredAgentReachability, WorkflowRunner, WorktreeRegistry,
+    StoredAgentReachability, StoredGuidanceMagnitude, StoredOrchestratorMessageKind,
+    StoredTriageRejectionReason, StoredTriageVerdict, WorkflowRunner, WorktreeRegistry,
 };
+
+/// The NOTA delivery note an orchestrator message becomes on its messenger
+/// hop: the semantic sender rides here because the messenger's own
+/// provenance names the transport peer (this daemon), not the sending agent.
+#[derive(nota::NotaEncode, Debug, Clone, PartialEq, Eq)]
+struct OrchestratorMessageDeliveryNote {
+    sender: String,
+    kind: signal_orchestrator_message::OrchestratorMessageKind,
+    subject: String,
+    content: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SignalTier {
@@ -524,6 +536,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
             ordinary_contract::OrchestrateRequest::LaunchAgent(request) => {
                 self.launch_agent(request, &MetaHarnessResolver::from_process())?
+            }
+            ordinary_contract::OrchestrateRequest::SendOrchestratorMessage(submission) => {
+                self.send_orchestrator_message(submission)?
             }
         };
         self.service.reschedule_lane_reclamation()?;
@@ -3315,6 +3330,9 @@ impl ProjectInto<ordinary_schema::Input> for ordinary_contract::OrchestrateReque
             ordinary_contract::OrchestrateRequest::LaunchAgent(payload) => {
                 ordinary_schema::Input::launch_agent(payload.agent_identifier.project_into()?)
             }
+            ordinary_contract::OrchestrateRequest::SendOrchestratorMessage(payload) => {
+                ordinary_schema::Input::send_orchestrator_message(payload.project_into()?)
+            }
         })
     }
 }
@@ -3379,7 +3397,145 @@ impl ProjectInto<ordinary_contract::OrchestrateRequest> for ordinary_schema::Inp
                     },
                 )
             }
+            ordinary_schema::Input::SendOrchestratorMessage(payload) => {
+                ordinary_contract::OrchestrateRequest::SendOrchestratorMessage(
+                    payload.project_into()?,
+                )
+            }
         })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorMessageSubmission>
+    for ordinary_contract::OrchestratorMessageSubmission
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorMessageSubmission> {
+        Ok(ordinary_schema::OrchestratorMessageSubmission {
+            orchestrator_agent_identifier: self.sender.project_into()?,
+            orchestrator_message_recipient: self.recipient.project_into()?,
+            orchestrator_message: self.message.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorMessageSubmission>
+    for ordinary_schema::OrchestratorMessageSubmission
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorMessageSubmission> {
+        Ok(ordinary_contract::OrchestratorMessageSubmission {
+            sender: self.orchestrator_agent_identifier.project_into()?,
+            recipient: self.orchestrator_message_recipient.project_into()?,
+            message: self.orchestrator_message.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorMessageRecipient>
+    for ordinary_contract::OrchestratorMessageRecipient
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorMessageRecipient> {
+        Ok(match self {
+            ordinary_contract::OrchestratorMessageRecipient::Agent(agent) => {
+                ordinary_schema::OrchestratorMessageRecipient::Agent(agent.project_into()?)
+            }
+            ordinary_contract::OrchestratorMessageRecipient::Orchestrator => {
+                ordinary_schema::OrchestratorMessageRecipient::Orchestrator
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::OrchestratorMessageRecipient>
+    for ordinary_schema::OrchestratorMessageRecipient
+{
+    fn project_into(self) -> Result<ordinary_contract::OrchestratorMessageRecipient> {
+        Ok(match self {
+            ordinary_schema::OrchestratorMessageRecipient::Agent(agent) => {
+                ordinary_contract::OrchestratorMessageRecipient::Agent(agent.project_into()?)
+            }
+            ordinary_schema::OrchestratorMessageRecipient::Orchestrator => {
+                ordinary_contract::OrchestratorMessageRecipient::Orchestrator
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::OrchestratorMessage>
+    for signal_orchestrator_message::OrchestratorMessage
+{
+    fn project_into(self) -> Result<ordinary_schema::OrchestratorMessage> {
+        Ok(ordinary_schema::OrchestratorMessage {
+            orchestrator_message_kind: match self.kind {
+                signal_orchestrator_message::OrchestratorMessageKind::Guidance(magnitude) => {
+                    ordinary_schema::OrchestratorMessageKind::Guidance(match magnitude {
+                        signal_orchestrator_message::GuidanceMagnitude::Soft => {
+                            ordinary_schema::GuidanceMagnitude::Soft
+                        }
+                        signal_orchestrator_message::GuidanceMagnitude::Standard => {
+                            ordinary_schema::GuidanceMagnitude::Standard
+                        }
+                        signal_orchestrator_message::GuidanceMagnitude::Hard => {
+                            ordinary_schema::GuidanceMagnitude::Hard
+                        }
+                    })
+                }
+                signal_orchestrator_message::OrchestratorMessageKind::Interruption => {
+                    ordinary_schema::OrchestratorMessageKind::Interruption
+                }
+                signal_orchestrator_message::OrchestratorMessageKind::Report => {
+                    ordinary_schema::OrchestratorMessageKind::Report
+                }
+            },
+            message_subject: ordinary_schema::MessageSubject::new(
+                self.subject.as_str().to_string(),
+            ),
+            message_content: ordinary_schema::MessageContent::new(
+                self.content.as_str().to_string(),
+            ),
+        })
+    }
+}
+
+impl ProjectInto<signal_orchestrator_message::OrchestratorMessage>
+    for ordinary_schema::OrchestratorMessage
+{
+    fn project_into(self) -> Result<signal_orchestrator_message::OrchestratorMessage> {
+        let kind = match self.orchestrator_message_kind {
+            ordinary_schema::OrchestratorMessageKind::Guidance(magnitude) => {
+                signal_orchestrator_message::OrchestratorMessageKind::Guidance(match magnitude {
+                    ordinary_schema::GuidanceMagnitude::Soft => {
+                        signal_orchestrator_message::GuidanceMagnitude::Soft
+                    }
+                    ordinary_schema::GuidanceMagnitude::Standard => {
+                        signal_orchestrator_message::GuidanceMagnitude::Standard
+                    }
+                    ordinary_schema::GuidanceMagnitude::Hard => {
+                        signal_orchestrator_message::GuidanceMagnitude::Hard
+                    }
+                })
+            }
+            ordinary_schema::OrchestratorMessageKind::Interruption => {
+                signal_orchestrator_message::OrchestratorMessageKind::Interruption
+            }
+            ordinary_schema::OrchestratorMessageKind::Report => {
+                signal_orchestrator_message::OrchestratorMessageKind::Report
+            }
+        };
+        let subject = signal_orchestrator_message::MessageSubject::new(
+            self.message_subject.into_payload(),
+        )
+        .map_err(|error| Error::SchemaBridge {
+            message: format!("empty orchestrator message subject: {error}"),
+        })?;
+        let content = signal_orchestrator_message::MessageContent::new(
+            self.message_content.into_payload(),
+        )
+        .map_err(|error| Error::SchemaBridge {
+            message: format!("empty orchestrator message content: {error}"),
+        })?;
+        Ok(signal_orchestrator_message::OrchestratorMessage::new(
+            kind, subject, content,
+        ))
     }
 }
 
@@ -4043,6 +4199,51 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::RepositoryMainContended(payload) => {
                 ordinary_schema::Output::repository_main_contended(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::OrchestratorMessageRouted(payload) => {
+                ordinary_schema::Output::orchestrator_message_routed(
+                    ordinary_schema::OrchestratorMessageRouted {
+                        triage_slot_number: ordinary_schema::TriageSlotNumber::new(
+                            payload.triage_slot,
+                        ),
+                        orchestrator_agent_identifiers:
+                            ordinary_schema::OrchestratorAgentIdentifiers::new(
+                                payload
+                                    .recipients
+                                    .into_iter()
+                                    .map(ProjectInto::project_into)
+                                    .collect::<Result<Vec<_>>>()?,
+                            ),
+                        messenger_delivery_state: match payload.messenger_delivery_state {
+                            ordinary_contract::MessengerDeliveryState::Submitted => {
+                                ordinary_schema::MessengerDeliveryState::Submitted
+                            }
+                            ordinary_contract::MessengerDeliveryState::Degraded(detail) => {
+                                ordinary_schema::MessengerDeliveryState::Degraded(
+                                    ordinary_schema::MessengerDegradationDetail::new(
+                                        detail.as_str().to_string(),
+                                    ),
+                                )
+                            }
+                        },
+                    },
+                )
+            }
+            ordinary_contract::OrchestrateReply::OrchestratorMessageRejected(payload) => {
+                ordinary_schema::Output::orchestrator_message_rejected(match payload.rejection {
+                    ordinary_contract::OrchestratorMessageRejection::NoEligibleRecipient => {
+                        ordinary_schema::OrchestratorMessageRejection::NoEligibleRecipient
+                    }
+                    ordinary_contract::OrchestratorMessageRejection::SenderNotRegistered => {
+                        ordinary_schema::OrchestratorMessageRejection::SenderNotRegistered
+                    }
+                    ordinary_contract::OrchestratorMessageRejection::MalformedPayload => {
+                        ordinary_schema::OrchestratorMessageRejection::MalformedPayload
+                    }
+                    ordinary_contract::OrchestratorMessageRejection::MissingCoordinator => {
+                        ordinary_schema::OrchestratorMessageRejection::MissingCoordinator
+                    }
+                })
+            }
             ordinary_contract::OrchestrateReply::RepositoriesObserved(payload) => {
                 ordinary_schema::Output::RepositoriesObserved(payload.project_into()?)
             }
@@ -4198,6 +4399,51 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             ordinary_schema::Output::RepositoryMainContended(payload) => {
                 ordinary_contract::OrchestrateReply::RepositoryMainContended(
                     payload.project_into()?,
+                )
+            }
+            ordinary_schema::Output::OrchestratorMessageRouted(payload) => {
+                ordinary_contract::OrchestrateReply::OrchestratorMessageRouted(
+                    ordinary_contract::OrchestratorMessageRouted {
+                        triage_slot: payload.triage_slot_number.into_payload(),
+                        recipients: payload
+                            .orchestrator_agent_identifiers
+                            .into_payload()
+                            .into_iter()
+                            .map(ProjectInto::project_into)
+                            .collect::<Result<Vec<_>>>()?,
+                        messenger_delivery_state: match payload.messenger_delivery_state {
+                            ordinary_schema::MessengerDeliveryState::Submitted => {
+                                ordinary_contract::MessengerDeliveryState::Submitted
+                            }
+                            ordinary_schema::MessengerDeliveryState::Degraded(detail) => {
+                                ordinary_contract::MessengerDeliveryState::Degraded(
+                                    ordinary_contract::MessengerDegradationDetail::new(
+                                        detail.into_payload(),
+                                    ),
+                                )
+                            }
+                        },
+                    },
+                )
+            }
+            ordinary_schema::Output::OrchestratorMessageRejected(payload) => {
+                ordinary_contract::OrchestrateReply::OrchestratorMessageRejected(
+                    ordinary_contract::OrchestratorMessageRejected {
+                        rejection: match payload.into_payload() {
+                            ordinary_schema::OrchestratorMessageRejection::NoEligibleRecipient => {
+                                ordinary_contract::OrchestratorMessageRejection::NoEligibleRecipient
+                            }
+                            ordinary_schema::OrchestratorMessageRejection::SenderNotRegistered => {
+                                ordinary_contract::OrchestratorMessageRejection::SenderNotRegistered
+                            }
+                            ordinary_schema::OrchestratorMessageRejection::MalformedPayload => {
+                                ordinary_contract::OrchestratorMessageRejection::MalformedPayload
+                            }
+                            ordinary_schema::OrchestratorMessageRejection::MissingCoordinator => {
+                                ordinary_contract::OrchestratorMessageRejection::MissingCoordinator
+                            }
+                        },
+                    },
                 )
             }
             ordinary_schema::Output::AgentIdentityMinted(payload) => {
@@ -5572,6 +5818,163 @@ impl OrchestrateSemaEngine<'_> {
     /// registry, and returned so the launcher can hand it to the process in
     /// its initial prompt. Registration with the pre-minted identity later
     /// binds it `Active`.
+    /// Triage and route one orchestrator message (packet 3.4). The judge is
+    /// shelved: a message to a registered agent routes as-is; an escalation
+    /// (recipient `Orchestrator`) has no coordinator seat to land on and
+    /// refuses typed `MissingCoordinator`. Every triage decision — routed or
+    /// rejected — is committed to the bounded audit table first; the
+    /// messenger hop is best-effort and degrades in the reply, never
+    /// retroactively failing the triage.
+    fn send_orchestrator_message(
+        &mut self,
+        submission: ordinary_contract::OrchestratorMessageSubmission,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        let sender = submission.sender.clone();
+        let stored_kind = Self::stored_message_kind(&submission.message.kind);
+        if self
+            .service
+            .tables()
+            .orchestrator_agent_record(&sender)?
+            .is_none()
+        {
+            self.service.tables().append_orchestrator_triage_record(
+                sender,
+                stored_kind,
+                StoredTriageVerdict::Reject {
+                    reason: StoredTriageRejectionReason::SenderNotRegistered,
+                },
+            )?;
+            return Ok(Self::orchestrator_message_rejected(
+                ordinary_contract::OrchestratorMessageRejection::SenderNotRegistered,
+            ));
+        }
+        match submission.recipient {
+            ordinary_contract::OrchestratorMessageRecipient::Orchestrator => {
+                self.service.tables().append_orchestrator_triage_record(
+                    sender,
+                    stored_kind,
+                    StoredTriageVerdict::Escalate,
+                )?;
+                Ok(Self::orchestrator_message_rejected(
+                    ordinary_contract::OrchestratorMessageRejection::MissingCoordinator,
+                ))
+            }
+            ordinary_contract::OrchestratorMessageRecipient::Agent(recipient) => {
+                if self
+                    .service
+                    .tables()
+                    .orchestrator_agent_record(&recipient)?
+                    .is_none()
+                {
+                    self.service.tables().append_orchestrator_triage_record(
+                        sender,
+                        stored_kind,
+                        StoredTriageVerdict::Reject {
+                            reason: StoredTriageRejectionReason::NoEligibleRecipient,
+                        },
+                    )?;
+                    return Ok(Self::orchestrator_message_rejected(
+                        ordinary_contract::OrchestratorMessageRejection::NoEligibleRecipient,
+                    ));
+                }
+                let record = self.service.tables().append_orchestrator_triage_record(
+                    sender.clone(),
+                    stored_kind,
+                    StoredTriageVerdict::Route {
+                        recipients: vec![recipient.clone()],
+                        retyped: None,
+                    },
+                )?;
+                let messenger_delivery_state =
+                    self.submit_routed_message(&sender, &recipient, &submission.message);
+                Ok(ordinary_contract::OrchestrateReply::OrchestratorMessageRouted(
+                    ordinary_contract::OrchestratorMessageRouted {
+                        triage_slot: record.slot,
+                        recipients: vec![recipient],
+                        messenger_delivery_state,
+                    },
+                ))
+            }
+        }
+    }
+
+    fn orchestrator_message_rejected(
+        rejection: ordinary_contract::OrchestratorMessageRejection,
+    ) -> ordinary_contract::OrchestrateReply {
+        ordinary_contract::OrchestrateReply::OrchestratorMessageRejected(
+            ordinary_contract::OrchestratorMessageRejected { rejection },
+        )
+    }
+
+    fn stored_message_kind(
+        kind: &signal_orchestrator_message::OrchestratorMessageKind,
+    ) -> StoredOrchestratorMessageKind {
+        match kind {
+            signal_orchestrator_message::OrchestratorMessageKind::Guidance(magnitude) => {
+                StoredOrchestratorMessageKind::Guidance(match magnitude {
+                    signal_orchestrator_message::GuidanceMagnitude::Soft => {
+                        StoredGuidanceMagnitude::Soft
+                    }
+                    signal_orchestrator_message::GuidanceMagnitude::Standard => {
+                        StoredGuidanceMagnitude::Standard
+                    }
+                    signal_orchestrator_message::GuidanceMagnitude::Hard => {
+                        StoredGuidanceMagnitude::Hard
+                    }
+                })
+            }
+            signal_orchestrator_message::OrchestratorMessageKind::Interruption => {
+                StoredOrchestratorMessageKind::Interruption
+            }
+            signal_orchestrator_message::OrchestratorMessageKind::Report => {
+                StoredOrchestratorMessageKind::Report
+            }
+        }
+    }
+
+    /// The best-effort messenger hop for a routed message. No configured
+    /// messenger socket is a named degradation (not silence); transport and
+    /// refusal degradations carry the push client's detail.
+    fn submit_routed_message(
+        &self,
+        sender: &ordinary_contract::OrchestratorAgentIdentifier,
+        recipient: &ordinary_contract::OrchestratorAgentIdentifier,
+        message: &signal_orchestrator_message::OrchestratorMessage,
+    ) -> ordinary_contract::MessengerDeliveryState {
+        let Some(socket_path) = self.service.messenger_registration_endpoint() else {
+            return ordinary_contract::MessengerDeliveryState::Degraded(
+                ordinary_contract::MessengerDegradationDetail::new(
+                    "no messenger socket configured".to_string(),
+                ),
+            );
+        };
+        let note = OrchestratorMessageDeliveryNote {
+            sender: sender.as_str().to_string(),
+            kind: message.kind.clone(),
+            subject: message.subject.as_str().to_string(),
+            content: message.content.as_str().to_string(),
+        };
+        match MessengerRegistryPush::new(socket_path.to_path_buf())
+            .submit_message(recipient, nota::NotaEncode::to_nota(&note))
+        {
+            Ok(()) => ordinary_contract::MessengerDeliveryState::Submitted,
+            Err(MessengerRegistrationDegradation::Unreachable(detail)) => {
+                ordinary_contract::MessengerDeliveryState::Degraded(
+                    ordinary_contract::MessengerDegradationDetail::new(format!(
+                        "messenger unreachable: {detail}"
+                    )),
+                )
+            }
+            Err(MessengerRegistrationDegradation::Rejected(detail)) => {
+                ordinary_contract::MessengerDeliveryState::Degraded(
+                    ordinary_contract::MessengerDegradationDetail::new(format!(
+                        "messenger refused: {detail}"
+                    )),
+                )
+            }
+        }
+    }
+
     fn mint_agent_identity(
         &mut self,
         request: ordinary_contract::AgentIdentityMintRequest,

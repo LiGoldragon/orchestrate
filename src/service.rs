@@ -230,6 +230,14 @@ impl OrchestrateService {
 
     /// The messenger working socket to push identities and endpoints to, when
     /// configured.
+    /// The bounded triage-audit window, oldest first — the read surface for
+    /// operators and tests witnessing how orchestrator messages were triaged.
+    pub fn orchestrator_triage_records(
+        &self,
+    ) -> crate::Result<Vec<crate::StoredOrchestratorTriageRecord>> {
+        self.tables.orchestrator_triage_records()
+    }
+
     pub(crate) fn messenger_registration_endpoint(&self) -> Option<&std::path::Path> {
         self.messenger_registration_endpoint.as_deref()
     }

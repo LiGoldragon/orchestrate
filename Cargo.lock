@@ -483,7 +483,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.14.1"
+version = "0.15.0"
 dependencies = [
  "criome",
  "getrandom",
@@ -503,6 +503,7 @@ dependencies = [
  "signal-harness",
  "signal-message",
  "signal-orchestrate",
+ "signal-orchestrator-message",
  "signal-router",
  "signal-sema 0.2.0 (git+https://github.com/LiGoldragon/signal-sema.git?branch=main)",
  "signal-version-handover",
@@ -881,8 +882,8 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.9.1"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#a94479fedbddfe616b7fd526d705e187ee2f1338"
+version = "0.10.1"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?branch=main#d5ecda9a3cbd0399d1ab844bac27c437f42c70a9"
 dependencies = [
  "nota 0.5.1",
  "rkyv",
@@ -890,6 +891,17 @@ dependencies = [
  "signal-criome",
  "signal-frame 0.3.0 (git+https://github.com/LiGoldragon/signal-frame.git?branch=main)",
  "signal-harness",
+ "signal-orchestrator-message",
+ "thiserror",
+]
+
+[[package]]
+name = "signal-orchestrator-message"
+version = "0.1.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrator-message.git?branch=main#ff571be972482eda22b53bc3926dbd9f39a54ff2"
+dependencies = [
+ "nota 0.5.1",
+ "rkyv",
  "thiserror",
 ]
 

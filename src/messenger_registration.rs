@@ -26,8 +26,9 @@ use std::time::Duration;
 
 use signal_message::{
     AgentEndpoint, AgentEndpointBinding, AgentEndpointKind, AgentIdentifier,
-    AgentIdentityAssignment, EndpointPath, HarnessPid, HarnessStartTime, Input, Output,
-    ProcessPinSelection, ResumeSelection,
+    AgentIdentityAssignment, EndpointPath, HarnessPid, HarnessStartTime, Input, MessageBody,
+    MessageKind, MessageRecipient, MessageSubmission, Output, ProcessPinSelection,
+    ResumeSelection, ThreadSelection,
 };
 use signal_orchestrate::OrchestratorAgentIdentifier;
 use triad_runtime::{FrameBody as LengthPrefixedFrameBody, LengthPrefixedCodec};
@@ -97,6 +98,33 @@ impl MessengerRegistryPush {
             ),
             other => Err(MessengerRegistrationDegradation::Unreachable(format!(
                 "unexpected messenger reply to BindAgentEndpoint: {other:?}"
+            ))),
+        }
+    }
+
+    /// Submit a routed orchestrator message into the messenger's local
+    /// ledger for delivery to `recipient`'s bound endpoint (or inbox
+    /// parking). The messenger stamps its own transport-level provenance at
+    /// ingress; the semantic sender rides inside `body`, which the caller
+    /// composes as the NOTA delivery note.
+    pub fn submit_message(
+        &self,
+        recipient: &OrchestratorAgentIdentifier,
+        body: String,
+    ) -> Result<(), MessengerRegistrationDegradation> {
+        let submission = MessageSubmission {
+            message_recipient: MessageRecipient::new(recipient.as_str().to_string()),
+            message_kind: MessageKind::Send,
+            message_body: MessageBody::new(body),
+            thread_selection: ThreadSelection::None,
+        };
+        match self.exchange(Input::submit(submission))? {
+            Output::SubmissionAccepted(_) => Ok(()),
+            Output::SubmissionRejected(rejection) => Err(
+                MessengerRegistrationDegradation::Rejected(format!("{rejection:?}")),
+            ),
+            other => Err(MessengerRegistrationDegradation::Unreachable(format!(
+                "unexpected messenger reply to Submit: {other:?}"
             ))),
         }
     }
