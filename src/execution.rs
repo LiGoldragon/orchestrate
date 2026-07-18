@@ -456,6 +456,9 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 ordinary_contract::Observation::Worktrees,
             ) => WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
+                ordinary_contract::Observation::Repositories,
+            ) => RepositoryRegistry::new(self.service.tables(), self.service.layout()).observe()?,
+            ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Topics,
             ) => ordinary_contract::OrchestrateReply::TopicTree(ordinary_contract::TopicTree {
                 topics: self.orchestrator_topics()?,
@@ -873,6 +876,11 @@ vector_wrapper_projection!(
     ordinary_schema::Worktrees,
     ordinary_contract::Worktree,
     ordinary_schema::Worktree
+);
+vector_wrapper_projection!(
+    ordinary_schema::Repositories,
+    ordinary_contract::Repository,
+    ordinary_schema::Repository
 );
 impl ProjectInto<ordinary_schema::WorkflowRunDigest> for ordinary_contract::WorkflowRunDigest {
     fn project_into(self) -> Result<ordinary_schema::WorkflowRunDigest> {
@@ -2506,6 +2514,9 @@ impl ProjectInto<ordinary_schema::Observation> for ordinary_contract::Observatio
             }
             ordinary_contract::Observation::Lanes => ordinary_schema::Observation::Lanes,
             ordinary_contract::Observation::Worktrees => ordinary_schema::Observation::Worktrees,
+            ordinary_contract::Observation::Repositories => {
+                ordinary_schema::Observation::Repositories
+            }
             ordinary_contract::Observation::Topics => ordinary_schema::Observation::Topics,
             ordinary_contract::Observation::Topic(path) => {
                 ordinary_schema::Observation::Topic(path.project_into()?)
@@ -2525,6 +2536,9 @@ impl ProjectInto<ordinary_contract::Observation> for ordinary_schema::Observatio
             }
             ordinary_schema::Observation::Lanes => ordinary_contract::Observation::Lanes,
             ordinary_schema::Observation::Worktrees => ordinary_contract::Observation::Worktrees,
+            ordinary_schema::Observation::Repositories => {
+                ordinary_contract::Observation::Repositories
+            }
             ordinary_schema::Observation::Topics => ordinary_contract::Observation::Topics,
             ordinary_schema::Observation::Topic(path) => {
                 ordinary_contract::Observation::Topic(path.project_into()?)
@@ -2546,6 +2560,125 @@ impl ProjectInto<ordinary_schema::RepositoryName> for ordinary_contract::Reposit
     fn project_into(self) -> Result<ordinary_schema::RepositoryName> {
         let payload: String = self.project_into()?;
         Ok(ordinary_schema::RepositoryName::new(payload))
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryHost> for ordinary_contract::RepositoryHost {
+    fn project_into(self) -> Result<ordinary_schema::RepositoryHost> {
+        Ok(ordinary_schema::RepositoryHost::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryHost> for ordinary_schema::RepositoryHost {
+    fn project_into(self) -> Result<ordinary_contract::RepositoryHost> {
+        ordinary_contract::RepositoryHost::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryOwner> for ordinary_contract::RepositoryOwner {
+    fn project_into(self) -> Result<ordinary_schema::RepositoryOwner> {
+        Ok(ordinary_schema::RepositoryOwner::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryOwner> for ordinary_schema::RepositoryOwner {
+    fn project_into(self) -> Result<ordinary_contract::RepositoryOwner> {
+        ordinary_contract::RepositoryOwner::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryIdentityGap> for ordinary_contract::RepositoryIdentityGap {
+    fn project_into(self) -> Result<ordinary_schema::RepositoryIdentityGap> {
+        Ok(ordinary_schema::RepositoryIdentityGap::new(
+            self.as_str().to_string(),
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryIdentityGap> for ordinary_schema::RepositoryIdentityGap {
+    fn project_into(self) -> Result<ordinary_contract::RepositoryIdentityGap> {
+        ordinary_contract::RepositoryIdentityGap::from_text(self.into_payload())
+            .map_err(Error::SignalOrchestrate)
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryIdentity> for ordinary_contract::RepositoryIdentity {
+    fn project_into(self) -> Result<ordinary_schema::RepositoryIdentity> {
+        Ok(ordinary_schema::RepositoryIdentity {
+            repository_host: self.host.project_into()?,
+            repository_owner: self.owner.project_into()?,
+            repository_name: self.name.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryIdentity> for ordinary_schema::RepositoryIdentity {
+    fn project_into(self) -> Result<ordinary_contract::RepositoryIdentity> {
+        Ok(ordinary_contract::RepositoryIdentity {
+            host: self.repository_host.project_into()?,
+            owner: self.repository_owner.project_into()?,
+            name: self.repository_name.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoryIdentityState>
+    for ordinary_contract::RepositoryIdentityState
+{
+    fn project_into(self) -> Result<ordinary_schema::RepositoryIdentityState> {
+        Ok(match self {
+            ordinary_contract::RepositoryIdentityState::Identified(identity) => {
+                ordinary_schema::RepositoryIdentityState::Identified(identity.project_into()?)
+            }
+            ordinary_contract::RepositoryIdentityState::IdentityUnknown(gap) => {
+                ordinary_schema::RepositoryIdentityState::IdentityUnknown(gap.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoryIdentityState>
+    for ordinary_schema::RepositoryIdentityState
+{
+    fn project_into(self) -> Result<ordinary_contract::RepositoryIdentityState> {
+        Ok(match self {
+            ordinary_schema::RepositoryIdentityState::Identified(identity) => {
+                ordinary_contract::RepositoryIdentityState::Identified(identity.project_into()?)
+            }
+            ordinary_schema::RepositoryIdentityState::IdentityUnknown(gap) => {
+                ordinary_contract::RepositoryIdentityState::IdentityUnknown(gap.project_into()?)
+            }
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::Repository> for ordinary_contract::Repository {
+    fn project_into(self) -> Result<ordinary_schema::Repository> {
+        Ok(ordinary_schema::Repository {
+            repository_identity_state: self.identity.project_into()?,
+            repository_name: self.name.project_into()?,
+            wire_path: self.path.project_into()?,
+            boolean: self.active,
+            timestamp_nanos: self.refreshed_at.project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_contract::Repository> for ordinary_schema::Repository {
+    fn project_into(self) -> Result<ordinary_contract::Repository> {
+        Ok(ordinary_contract::Repository {
+            identity: self.repository_identity_state.project_into()?,
+            name: self.repository_name.project_into()?,
+            path: self.wire_path.project_into()?,
+            active: self.boolean,
+            refreshed_at: self.timestamp_nanos.project_into()?,
+        })
     }
 }
 
@@ -2787,6 +2920,11 @@ impl ProjectInto<ordinary_schema::WorktreeRequestRejection>
             ordinary_contract::WorktreeRequestRejection::WorktreeAlreadyExists => {
                 ordinary_schema::WorktreeRequestRejection::WorktreeAlreadyExists
             }
+            ordinary_contract::WorktreeRequestRejection::RepositoryAbsentLocally(identity) => {
+                ordinary_schema::WorktreeRequestRejection::RepositoryAbsentLocally(
+                    identity.project_into()?,
+                )
+            }
         })
     }
 }
@@ -2801,6 +2939,11 @@ impl ProjectInto<ordinary_contract::WorktreeRequestRejection>
             }
             ordinary_schema::WorktreeRequestRejection::WorktreeAlreadyExists => {
                 ordinary_contract::WorktreeRequestRejection::WorktreeAlreadyExists
+            }
+            ordinary_schema::WorktreeRequestRejection::RepositoryAbsentLocally(identity) => {
+                ordinary_contract::WorktreeRequestRejection::RepositoryAbsentLocally(
+                    identity.project_into()?,
+                )
             }
         })
     }
@@ -2953,6 +3096,22 @@ impl ProjectInto<ordinary_contract::WorktreesObserved> for ordinary_schema::Work
     fn project_into(self) -> Result<ordinary_contract::WorktreesObserved> {
         Ok(ordinary_contract::WorktreesObserved {
             worktrees: self.into_payload().project_into()?,
+        })
+    }
+}
+
+impl ProjectInto<ordinary_schema::RepositoriesObserved> for ordinary_contract::RepositoriesObserved {
+    fn project_into(self) -> Result<ordinary_schema::RepositoriesObserved> {
+        Ok(ordinary_schema::RepositoriesObserved::new(
+            self.repositories.project_into()?,
+        ))
+    }
+}
+
+impl ProjectInto<ordinary_contract::RepositoriesObserved> for ordinary_schema::RepositoriesObserved {
+    fn project_into(self) -> Result<ordinary_contract::RepositoriesObserved> {
+        Ok(ordinary_contract::RepositoriesObserved {
+            repositories: self.into_payload().project_into()?,
         })
     }
 }
@@ -3825,6 +3984,9 @@ impl ProjectInto<ordinary_schema::Output> for ordinary_contract::OrchestrateRepl
             ordinary_contract::OrchestrateReply::RepositoryMainContended(payload) => {
                 ordinary_schema::Output::repository_main_contended(payload.project_into()?)
             }
+            ordinary_contract::OrchestrateReply::RepositoriesObserved(payload) => {
+                ordinary_schema::Output::RepositoriesObserved(payload.project_into()?)
+            }
             ordinary_contract::OrchestrateReply::AgentIdentityMinted(payload) => {
                 ordinary_schema::Output::agent_identity_minted(
                     payload.agent_identifier.project_into()?,
@@ -3863,6 +4025,9 @@ impl ProjectInto<ordinary_contract::OrchestrateReply> for ordinary_schema::Outpu
             }
             ordinary_schema::Output::WorktreesObserved(payload) => {
                 ordinary_contract::OrchestrateReply::WorktreesObserved(payload.project_into()?)
+            }
+            ordinary_schema::Output::RepositoriesObserved(payload) => {
+                ordinary_contract::OrchestrateReply::RepositoriesObserved(payload.project_into()?)
             }
             ordinary_schema::Output::ActivityAcknowledgment(payload) => {
                 ordinary_contract::OrchestrateReply::ActivityAcknowledgment(payload.project_into()?)

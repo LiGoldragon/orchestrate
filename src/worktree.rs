@@ -24,6 +24,7 @@ use signal_orchestrate::{
     WorktreeTeardownRefused, WorktreesObserved,
 };
 
+use crate::repository::RepositoryDirectory;
 use crate::{
     Error, OrchestrateLayout, OrchestrateTables, Result, StoredWorktree, layout::wire_path,
 };
@@ -152,14 +153,43 @@ impl<'tables> WorktreeRegistry<'tables> {
     /// identity. A `jj` failure surfaces as [`Error::WorktreeScaffold`] with no
     /// row committed.
     pub fn request(&self, order: WorktreeRequest) -> Result<OrchestrateReply> {
-        let repository_checkout = self.layout.git_index_root().join(order.repository.as_str());
-        if !Self::is_checkout(&repository_checkout) {
-            return Ok(OrchestrateReply::WorktreeRequestRejected(
-                WorktreeRequestRejected {
-                    reason: WorktreeRequestRejection::RepositoryNotFound,
-                },
-            ));
-        }
+        // Resolution goes through the identity-keyed repository index first;
+        // the filesystem stays the discovery floor for an unrefreshed index.
+        let repositories = self.tables.repository_records()?;
+        let directory = RepositoryDirectory::new(&repositories, self.layout);
+        let repository_checkout = match directory.resolve_name(&order.repository) {
+            Some(row) => {
+                let checkout = std::path::PathBuf::from(row.path.as_str());
+                if !Self::is_checkout(&checkout) {
+                    // The index knows this repository; its local hosting is
+                    // gone. When the real identity is known the refusal names
+                    // it — the typed seam for a future clone-on-demand.
+                    let reason = match &row.identity {
+                        signal_orchestrate::RepositoryIdentityState::Identified(identity) => {
+                            WorktreeRequestRejection::RepositoryAbsentLocally(identity.clone())
+                        }
+                        signal_orchestrate::RepositoryIdentityState::IdentityUnknown(_) => {
+                            WorktreeRequestRejection::RepositoryNotFound
+                        }
+                    };
+                    return Ok(OrchestrateReply::WorktreeRequestRejected(
+                        WorktreeRequestRejected { reason },
+                    ));
+                }
+                checkout
+            }
+            None => {
+                let checkout = self.layout.git_index_root().join(order.repository.as_str());
+                if !Self::is_checkout(&checkout) {
+                    return Ok(OrchestrateReply::WorktreeRequestRejected(
+                        WorktreeRequestRejected {
+                            reason: WorktreeRequestRejection::RepositoryNotFound,
+                        },
+                    ));
+                }
+                checkout
+            }
+        };
         let destination = self
             .layout
             .worktree_index_root()

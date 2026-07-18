@@ -2109,7 +2109,7 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
 
     let repositories = fixture.service.repositories().expect("repositories");
     assert_eq!(repositories.len(), 1);
-    assert_eq!(repositories[0].name, repository_name);
+    assert_eq!(repositories[0].name.as_str(), repository_name);
     assert!(
         fixture
             .workspace
@@ -2117,6 +2117,147 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
             .join(repository_name)
             .exists()
     );
+}
+
+fn add_origin_remote(checkout: &std::path::Path, url: &str) {
+    let remote = std::process::Command::new("jj")
+        .arg("--ignore-working-copy")
+        .arg("-R")
+        .arg(checkout)
+        .args(["git", "remote", "add", "origin", url])
+        .output()
+        .expect("run jj git remote add");
+    assert!(
+        remote.status.success(),
+        "jj git remote add failed: {}",
+        String::from_utf8_lossy(&remote.stderr)
+    );
+}
+
+#[test]
+fn repository_refresh_derives_real_identity_and_observe_round_trips() {
+    let mut fixture = LayoutFixture::new("orchestrate-repository-identity");
+    let checkout = make_contention_repository(&fixture, "identified");
+    add_origin_remote(&checkout, "https://github.com/LiGoldragon/identified.git");
+    std::fs::create_dir_all(fixture.git_index.join("bare-no-remote")).expect("bare directory");
+
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Refresh(
+            RefreshRepositoryIndexOrder {},
+        ))
+        .expect("refresh repositories");
+
+    let observed = fixture
+        .handle(OrchestrateRequest::Observe(Observation::Repositories))
+        .expect("observe repositories");
+    let OrchestrateReply::RepositoriesObserved(reply) = observed else {
+        panic!("expected RepositoriesObserved, got {observed:?}");
+    };
+    assert_eq!(reply.repositories.len(), 2);
+    let bare = &reply.repositories[0];
+    assert_eq!(bare.name.as_str(), "bare-no-remote");
+    assert!(
+        matches!(
+            &bare.identity,
+            orchestrate::RepositoryIdentityState::IdentityUnknown(_)
+        ),
+        "a directory without a readable remote keeps a typed identity gap: {:?}",
+        bare.identity
+    );
+    let identified = &reply.repositories[1];
+    assert_eq!(identified.name.as_str(), "identified");
+    match &identified.identity {
+        orchestrate::RepositoryIdentityState::Identified(identity) => {
+            assert_eq!(
+                identity.canonical_text(),
+                "github.com/LiGoldragon/identified"
+            );
+        }
+        other => panic!("expected identified repository, got {other:?}"),
+    }
+}
+
+#[test]
+fn workspace_link_path_names_the_same_repository_in_contention() {
+    let mut fixture = LayoutFixture::new("orchestrate-link-contention");
+    make_contention_repository(&fixture, "linked");
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Refresh(
+            RefreshRepositoryIndexOrder {},
+        ))
+        .expect("refresh repositories");
+    let index_path = fixture.service.repositories().expect("repositories")[0]
+        .path
+        .as_str()
+        .to_owned();
+    let link_path = fixture
+        .workspace
+        .join("repos")
+        .join("linked")
+        .to_string_lossy()
+        .into_owned();
+
+    // The operator holds the repository main through the git-index path.
+    let accepted = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: operator(),
+            scopes: vec![path(&index_path)],
+            reason: reason("working on main"),
+        }))
+        .expect("operator claim");
+    assert!(matches!(accepted, OrchestrateReply::ClaimAcceptance(_)));
+
+    // The designer reaches the SAME repository through its other local path —
+    // the workspace `repos/<name>` link. Two local paths, one repository: the
+    // claim is answered as repository-main contention, not a plain conflict.
+    let contended = fixture
+        .handle(OrchestrateRequest::Claim(RoleClaim {
+            role: designer(),
+            scopes: vec![path(&link_path)],
+            reason: reason("editing through the workspace link"),
+        }))
+        .expect("designer claim");
+    let OrchestrateReply::RepositoryMainContended(contention) = contended else {
+        panic!("expected RepositoryMainContended, got {contended:?}");
+    };
+    assert_eq!(contention.repository.as_str(), "linked");
+    assert_eq!(contention.holder, operator());
+}
+
+#[test]
+fn worktree_request_names_the_absent_repository_by_identity() {
+    let mut fixture = LayoutFixture::new("orchestrate-absent-repository");
+    let checkout = make_contention_repository(&fixture, "vanishing");
+    add_origin_remote(&checkout, "https://github.com/LiGoldragon/vanishing.git");
+    fixture
+        .handle_meta(MetaOrchestrateRequest::Refresh(
+            RefreshRepositoryIndexOrder {},
+        ))
+        .expect("refresh repositories");
+
+    // The local hosting disappears after indexing; the identity survives in
+    // the registry.
+    std::fs::remove_dir_all(&checkout).expect("remove checkout");
+
+    let reply = fixture
+        .handle(OrchestrateRequest::RequestWorktree(
+            orchestrate::WorktreeRequest {
+                repository: orchestrate::RepositoryName::from_text("vanishing").expect("name"),
+                branch: orchestrate::BranchName::from_text("ghost-branch").expect("branch"),
+                owning_lane: orchestrate::LaneName::from_text("designer").expect("lane"),
+                purpose: orchestrate::PurposeText::from_text("absent repository witness")
+                    .expect("purpose"),
+            },
+        ))
+        .expect("request worktree");
+    let OrchestrateReply::WorktreeRequestRejected(rejected) = reply else {
+        panic!("expected WorktreeRequestRejected, got {reply:?}");
+    };
+    let orchestrate::WorktreeRequestRejection::RepositoryAbsentLocally(identity) = rejected.reason
+    else {
+        panic!("expected RepositoryAbsentLocally, got {:?}", rejected.reason);
+    };
+    assert_eq!(identity.canonical_text(), "github.com/LiGoldragon/vanishing");
 }
 
 #[test]

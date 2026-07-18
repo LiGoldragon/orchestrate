@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rkyv::api::high::HighDeserializer;
@@ -17,7 +18,8 @@ use signal_orchestrate::{
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
     MintedIdentitySelection, MissionDescription, OrchestratorAgentIdentifier,
     OrchestratorAgentStatus, OrchestratorTopic,
-    OrchestratorTopicPath, PartialApplied, PurposeText, PushedState, RepositoryName,
+    OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,
+    RepositoryIdentityState, RepositoryName,
     ResolvedWorkflowRunRequest, Role, RoleName, ScopeReason, ScopeReference, SessionIdentifier,
     TimestampNanos, TopicName, WirePath, WorkflowRunHandle, Worktree, WorktreeStatus,
 };
@@ -73,7 +75,14 @@ where
 // Bumped 6 -> 7 for the orchestrator seat: the agent registry, topic tree,
 // topic membership, and triage audit log. The orchestrator topic tree starts
 // empty; there is no seeded topic.
-const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(10);
+const ORCHESTRATE_SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(11);
+/// The version the repository family carried before the real-identity bump
+/// (psyche-ruled: a repository is identified by where it truly lives —
+/// host/owner/name — and the local path is an incidental hosting preference).
+/// Every other family is unchanged at this version; the repository family's
+/// rows evolve forward through the engine's declared prior, deriving identity
+/// from each recorded checkout's actual remote.
+const ORCHESTRATE_SCHEMA_VERSION_BEFORE_REPOSITORY_IDENTITY: SchemaVersion = SchemaVersion::new(10);
 /// The version the agent family carried before the identity-mint bump (the
 /// `Allocated` status variant, appended last); rows are byte-compatible with
 /// the current shape and migrate forward.
@@ -166,12 +175,72 @@ pub struct StoredRole {
     pub report_lane_path: WirePath,
 }
 
+/// One indexed repository. `identity` is the identifying key — where the
+/// repository truly lives (host/owner/name), derived from the checkout's
+/// actual remote; `name` is the local index alias and `path` the incidental
+/// local hosting. An unreadable identity is kept as a typed
+/// [`RepositoryIdentityState::IdentityUnknown`] gap, never dropped.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredRepository {
+    pub identity: RepositoryIdentityState,
+    pub name: RepositoryName,
+    pub path: WirePath,
+    pub active: bool,
+    pub refreshed_at: TimestampNanos,
+}
+
+/// The repository row as written before the real-identity bump, registered
+/// under the stable `orchestrate-repository-v5` family identity. Read-only:
+/// it exists solely as the declared prior the engine's family evolution
+/// decodes a legacy store's rows through.
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct StoredRepositoryV5 {
     pub name: String,
     pub path: WirePath,
     pub active: bool,
     pub refreshed_at: TimestampNanos,
+}
+
+impl StoredRepositoryV5 {
+    /// Carry a prior-shape row to the current shape, deriving the real
+    /// identity from the recorded checkout's actual remote — a typed
+    /// identity-unknown gap when unreadable. The evolution conversion is
+    /// infallible, so a stored name that cannot form a [`RepositoryName`] is
+    /// carried under a sanitized alias rather than silently dropped; the next
+    /// index refresh replaces the row wholesale from the filesystem.
+    fn into_current(self) -> StoredRepository {
+        let name = RepositoryName::from_text(self.name.as_str()).unwrap_or_else(|_| {
+            let sanitized: String = self
+                .name
+                .chars()
+                .map(|character| {
+                    if character.is_whitespace()
+                        || matches!(character, '/' | '\\' | '[' | ']')
+                    {
+                        '-'
+                    } else {
+                        character
+                    }
+                })
+                .collect();
+            let alias = if sanitized.is_empty() {
+                "unnamed-repository".to_owned()
+            } else {
+                sanitized
+            };
+            RepositoryName::from_text(alias).expect("sanitized repository alias")
+        });
+        let identity =
+            crate::repository::RepositoryIdentityProbe::new(PathBuf::from(self.path.as_str()))
+                .derive();
+        StoredRepository {
+            identity,
+            name,
+            path: self.path,
+            active: self.active,
+            refreshed_at: self.refreshed_at,
+        }
+    }
 }
 
 /// One worktree row, the durable form of a [`Worktree`] (Spirit eh5a). Keyed
@@ -395,7 +464,34 @@ impl OrchestrateTables {
     }
 
     fn open_current(store: &StoreLocation) -> Result<Self> {
-        Self::open_with_agent_descriptor(store, Self::current_agent_descriptor())
+        Self::open_with_descriptors(
+            store,
+            Self::current_agent_descriptor(),
+            Self::current_repository_descriptor(),
+        )
+    }
+
+    /// The current-generation repository descriptor with no declared priors —
+    /// an ordinary open. A store whose catalog names the pre-identity
+    /// repository family refuses here, so the migration path preserves the
+    /// store before any repair mutates it.
+    fn current_repository_descriptor() -> TableDescriptor<StoredRepository> {
+        Self::family_descriptor(REPOSITORIES, "repository", ORCHESTRATE_SCHEMA_VERSION)
+    }
+
+    /// The same descriptor declaring the pre-identity v5 prior for the
+    /// preserved migration re-open: the engine decodes each legacy row as
+    /// [`StoredRepositoryV5`] and carries it through
+    /// [`StoredRepositoryV5::into_current`], deriving the real identity from
+    /// the recorded checkout's actual remote in the same write transaction.
+    fn evolving_repository_descriptor() -> TableDescriptor<StoredRepository> {
+        Self::current_repository_descriptor().with_prior::<StoredRepositoryV5>(
+            Self::family_schema_hash(
+                "repository",
+                ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
+            ),
+            StoredRepositoryV5::into_current,
+        )
     }
 
     /// The current-generation orchestrator-agent descriptor with no declared
@@ -443,9 +539,10 @@ impl OrchestrateTables {
             )
     }
 
-    fn open_with_agent_descriptor(
+    fn open_with_descriptors(
         store: &StoreLocation,
         agent_descriptor: TableDescriptor<StoredOrchestratorAgent>,
+        repository_descriptor: TableDescriptor<StoredRepository>,
     ) -> Result<Self> {
         let mut engine = Engine::open(Self::engine_open(store))?;
         let claims = engine.register_table(Self::stable_family_descriptor(CLAIMS, "claim"))?;
@@ -454,8 +551,7 @@ impl OrchestrateTables {
             LANE_REGISTRY,
             "lane-registry",
         ))?;
-        let repositories =
-            engine.register_table(Self::stable_family_descriptor(REPOSITORIES, "repository"))?;
+        let repositories = engine.register_table(repository_descriptor)?;
         let worktrees =
             engine.register_table(Self::stable_family_descriptor(WORKTREES, "worktree"))?;
         let activities =
@@ -1446,12 +1542,37 @@ impl StoredRole {
 }
 
 impl StoredRepository {
-    pub fn new(name: String, path: WirePath, refreshed_at: TimestampNanos) -> Self {
+    pub fn new(
+        identity: RepositoryIdentityState,
+        name: RepositoryName,
+        path: WirePath,
+        refreshed_at: TimestampNanos,
+    ) -> Self {
         Self {
+            identity,
             name,
             path,
             active: true,
             refreshed_at,
+        }
+    }
+
+    /// The text that keys this repository across local hosting paths: the
+    /// canonical real identity when identified, the local index alias as the
+    /// honest fallback otherwise.
+    pub fn identity_key(&self) -> String {
+        self.identity.key_text(&self.name)
+    }
+}
+
+impl From<StoredRepository> for signal_orchestrate::Repository {
+    fn from(repository: StoredRepository) -> Self {
+        Self {
+            identity: repository.identity,
+            name: repository.name,
+            path: repository.path,
+            active: repository.active,
+            refreshed_at: repository.refreshed_at,
         }
     }
 }
@@ -1847,6 +1968,11 @@ enum StoreRepair {
     /// under their old identity, retire the stale family, and re-insert the rows
     /// in the current shape. Every other family is untouched.
     MigrateAgentRegistry,
+    /// The repository index is registered under its pre-real-identity family
+    /// hash. Same evolution path: the engine carries each row forward with
+    /// its real identity derived from the recorded checkout's actual remote —
+    /// a typed identity-unknown gap when unreadable, never a drop.
+    MigrateRepositoryRegistry,
 }
 
 /// What an applied repair yields. Most repairs clear a defect and hand back to
@@ -1908,10 +2034,10 @@ impl<'store> OrchestrateStoreMigration<'store> {
     /// stamp is additive-forward when the store sits at a known prior version and
     /// this build expects the current one; every intervening table is additive and
     /// opens empty, so a v5 store may migrate straight to the current version. A
-    /// family-identity rejection is repairable only for the ephemeral
-    /// orchestrator-agent registry, whose rows are recreated by running harnesses;
-    /// any other family under a stale identity is a real incompatibility that
-    /// fails closed.
+    /// family-identity rejection is repairable only for families that declare
+    /// their priors — the orchestrator-agent registry and the repository
+    /// index; any other family under a stale identity is a real
+    /// incompatibility that fails closed.
     fn repair_for(&self, error: &crate::Error) -> Option<StoreRepair> {
         match error {
             crate::Error::SemaEngine(sema_engine::Error::Sema(
@@ -1926,6 +2052,11 @@ impl<'store> OrchestrateStoreMigration<'store> {
             }) if table.as_str() == ORCHESTRATOR_AGENTS.as_str() => {
                 Some(StoreRepair::MigrateAgentRegistry)
             }
+            crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                table, ..
+            }) if table.as_str() == REPOSITORIES.as_str() => {
+                Some(StoreRepair::MigrateRepositoryRegistry)
+            }
             _ => None,
         }
     }
@@ -1936,6 +2067,7 @@ impl<'store> OrchestrateStoreMigration<'store> {
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH
             || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT
+            || found == ORCHESTRATE_SCHEMA_VERSION_BEFORE_REPOSITORY_IDENTITY
     }
 
     fn apply(&self, repair: StoreRepair) -> Result<RepairOutcome> {
@@ -1944,9 +2076,9 @@ impl<'store> OrchestrateStoreMigration<'store> {
                 self.stamp_current_schema_version(found)?;
                 Ok(RepairOutcome::Reopen)
             }
-            StoreRepair::MigrateAgentRegistry => Ok(RepairOutcome::Opened(Box::new(
-                self.migrate_agent_registry()?,
-            ))),
+            StoreRepair::MigrateAgentRegistry | StoreRepair::MigrateRepositoryRegistry => Ok(
+                RepairOutcome::Opened(Box::new(self.migrate_stale_families()?)),
+            ),
         }
     }
 
@@ -1974,17 +2106,19 @@ impl<'store> OrchestrateStoreMigration<'store> {
         Ok(())
     }
 
-    /// Migrate the orchestrator-agent registry forward across a family-identity
-    /// bump through the engine's family-evolution primitive: re-open with the
-    /// prior-declaring descriptor and the engine carries the rows, the evolved
-    /// catalog registration, and the log entries in one write transaction. No
-    /// raw catalog surgery, no separate read-retire-reinsert window. The
+    /// Migrate every stale family forward in one evolving open through the
+    /// engine's family-evolution primitive: both the agent registry and the
+    /// repository index declare their priors, the engine carries rows, the
+    /// evolved catalog registrations, and the log entries in one write
+    /// transaction, and a declared prior whose identity already matches is
+    /// inert. No raw catalog surgery, no ordering between stale families. The
     /// caller took the pre-migration preserve before this runs; an undeclared
     /// stored identity keeps failing closed inside the engine.
-    fn migrate_agent_registry(&self) -> Result<OrchestrateTables> {
-        OrchestrateTables::open_with_agent_descriptor(
+    fn migrate_stale_families(&self) -> Result<OrchestrateTables> {
+        OrchestrateTables::open_with_descriptors(
             self.store,
             OrchestrateTables::evolving_agent_descriptor(),
+            OrchestrateTables::evolving_repository_descriptor(),
         )
     }
 
@@ -2941,6 +3075,139 @@ mod tests {
                 agent.clone(),
             ))
             .expect("seat prior-shape agent");
+    }
+
+    #[test]
+    fn store_with_prior_shape_repository_index_migrates_rows_forward() {
+        let temporary = TemporaryStore::new("orchestrate-repository-identity-migration");
+        let scratch = tempfile::Builder::new()
+            .prefix("orchestrate-repo-identity-checkout")
+            .tempdir()
+            .expect("checkout tempdir");
+        let checkout = scratch.path().join("orchestrate");
+        std::fs::create_dir_all(&checkout).expect("checkout dir");
+        let init = std::process::Command::new("jj")
+            .args(["--no-pager", "git", "init", "--colocate"])
+            .arg(&checkout)
+            .env("JJ_USER", "smoke")
+            .env("JJ_EMAIL", "smoke@example.invalid")
+            .output()
+            .expect("run jj git init");
+        assert!(
+            init.status.success(),
+            "jj git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        let remote = std::process::Command::new("jj")
+            .arg("--ignore-working-copy")
+            .arg("-R")
+            .arg(&checkout)
+            .args([
+                "git",
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/LiGoldragon/orchestrate.git",
+            ])
+            .output()
+            .expect("run jj git remote add");
+        assert!(
+            remote.status.success(),
+            "jj git remote add failed: {}",
+            String::from_utf8_lossy(&remote.stderr)
+        );
+
+        let identified_row = StoredRepositoryV5 {
+            name: "orchestrate".to_owned(),
+            path: WirePath::from_absolute_path(checkout.to_str().expect("utf8 checkout path"))
+                .expect("checkout wire path"),
+            active: true,
+            refreshed_at: TimestampNanos::new(700),
+        };
+        let unreadable_row = StoredRepositoryV5 {
+            name: "ghost".to_owned(),
+            path: WirePath::from_absolute_path("/nonexistent/orchestrate-repo-identity-ghost")
+                .expect("ghost wire path"),
+            active: true,
+            refreshed_at: TimestampNanos::new(701),
+        };
+        build_prior_shape_repository_store(
+            &temporary.location(),
+            &[identified_row, unreadable_row],
+        );
+
+        // The plain open path rejects the wedged store: the repository family
+        // is registered under the current identity but stored under the
+        // stable prior one.
+        let raw = OrchestrateTables::open_current(&temporary.location());
+        let stale_rejection = matches!(
+            &raw,
+            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
+                table,
+                ..
+            })) if table.as_str() == REPOSITORIES.as_str()
+        );
+        assert!(
+            stale_rejection,
+            "expected a stale-identity rejection for repositories from the plain open path"
+        );
+
+        // The repaired open evolves both rows forward through the declared
+        // prior: a readable checkout derives its real identity from the
+        // actual remote; an unreadable one keeps a typed identity-unknown gap
+        // instead of being dropped.
+        let migrated =
+            OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
+        let mut rows = migrated.repository_records().expect("repository rows");
+        rows.sort_by(|left, right| left.name.as_str().cmp(right.name.as_str()));
+        assert_eq!(rows.len(), 2, "both prior rows are carried");
+        let ghost = &rows[0];
+        assert_eq!(ghost.name.as_str(), "ghost");
+        assert!(
+            matches!(&ghost.identity, RepositoryIdentityState::IdentityUnknown(_)),
+            "unreadable checkout keeps a typed identity-unknown state: {:?}",
+            ghost.identity
+        );
+        let identified = &rows[1];
+        assert_eq!(identified.name.as_str(), "orchestrate");
+        match &identified.identity {
+            RepositoryIdentityState::Identified(identity) => assert_eq!(
+                identity.canonical_text(),
+                "github.com/LiGoldragon/orchestrate"
+            ),
+            other => panic!("expected identified repository, got {other:?}"),
+        }
+
+        let preserves = premigration_preserves(temporary.path.as_path());
+        assert_eq!(
+            preserves.len(),
+            1,
+            "a family migration must leave one pre-migration preserve"
+        );
+        for preserve in preserves {
+            let _ = std::fs::remove_file(preserve);
+        }
+    }
+
+    fn build_prior_shape_repository_store(location: &StoreLocation, rows: &[StoredRepositoryV5]) {
+        let mut engine =
+            Engine::open(OrchestrateTables::engine_open(location)).expect("open engine");
+        let repositories = engine
+            .register_table(OrchestrateTables::family_descriptor::<StoredRepositoryV5>(
+                REPOSITORIES,
+                "repository",
+                ORCHESTRATE_SCHEMA_VERSION_BEFORE_WORKFLOW_MODEL_RESOLUTIONS,
+            ))
+            .expect("register prior-shape repositories");
+        for row in rows {
+            engine
+                .assert_keyed(KeyedAssertion::new(
+                    repositories,
+                    RecordKey::new(row.name.as_str()),
+                    row.clone(),
+                ))
+                .expect("seat prior-shape repository");
+        }
     }
 
     fn stamp_meta_schema_version(path: &std::path::Path, version: SchemaVersion) {
