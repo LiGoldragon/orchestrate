@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.11.0"
+version      = "0.11.1"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -47,7 +47,9 @@ nota-text = [
 ]
 
 [dependencies]
-sema                        = { git = "https://github.com/LiGoldragon/sema.git", branch = "main" }
+# Pinned to the same revision sema-engine pins, so the storage kernel is one
+# crate instance across the graph (branch-vs-rev source split would fork it).
+sema                        = { git = "https://github.com/LiGoldragon/sema.git", rev = "51d7927c872f0df12791bad8d39a4db6433b01a1" }
 sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", branch = "main" }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", branch = "main" }
 signal-message = { git = "https://github.com/LiGoldragon/signal-message.git", branch = "main", default-features = false }

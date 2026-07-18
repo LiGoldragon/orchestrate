@@ -122,14 +122,6 @@ pub const CURRENT_ORCHESTRATOR_TRIAGE_LIMIT: usize = 256;
 
 const SEMA_META: redb::TableDefinition<&str, u64> = redb::TableDefinition::new("__sema_meta");
 const SEMA_SCHEMA_VERSION_KEY: &str = "schema_version";
-/// The sema-engine catalog table: one row per registered family, keyed by table
-/// name, whose value is the rkyv-encoded family identity (name plus schema hash).
-/// The engine reads this at open to reconstruct its family inventory, so a
-/// migration that must retire a stale family identity edits this row directly.
-/// The value type mirrors sema's `&[u8]` storage encoding; a migration only
-/// removes a keyed row, so the value bytes are never decoded here.
-const SEMA_ENGINE_CATALOG: redb::TableDefinition<&str, &[u8]> =
-    redb::TableDefinition::new("__sema_engine_catalog");
 
 pub struct OrchestrateTables {
     engine: Engine,
@@ -403,6 +395,58 @@ impl OrchestrateTables {
     }
 
     fn open_current(store: &StoreLocation) -> Result<Self> {
+        Self::open_with_agent_descriptor(store, Self::current_agent_descriptor())
+    }
+
+    /// The current-generation orchestrator-agent descriptor with no declared
+    /// priors: an ordinary open of an up-to-date store. A store whose catalog
+    /// names a stale agent-registry identity refuses here, so the migration
+    /// path can preserve the store before any repair mutates it.
+    fn current_agent_descriptor() -> TableDescriptor<StoredOrchestratorAgent> {
+        Self::family_descriptor(
+            ORCHESTRATOR_AGENTS,
+            "orchestrator-agent",
+            ORCHESTRATE_SCHEMA_VERSION,
+        )
+    }
+
+    /// The same descriptor carrying the family's declared prior generations
+    /// for the preserved migration re-open. v9 and v8 rows are byte-compatible
+    /// with the current shape (each bump only appended a status variant), so
+    /// they decode as [`StoredOrchestratorAgent`] with the identity
+    /// conversion; v7 rows carry their genuine pre-`last_activity` layout and
+    /// convert through [`StoredOrchestratorAgentV7::into_current`]. The engine
+    /// migrates rows, catalog registration, and log entries in one write
+    /// transaction; an undeclared stored identity keeps failing closed.
+    fn evolving_agent_descriptor() -> TableDescriptor<StoredOrchestratorAgent> {
+        Self::current_agent_descriptor()
+            .with_prior::<StoredOrchestratorAgent>(
+                Self::family_schema_hash(
+                    "orchestrator-agent",
+                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT,
+                ),
+                |agent| agent,
+            )
+            .with_prior::<StoredOrchestratorAgent>(
+                Self::family_schema_hash(
+                    "orchestrator-agent",
+                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
+                ),
+                |agent| agent,
+            )
+            .with_prior::<StoredOrchestratorAgentV7>(
+                Self::family_schema_hash(
+                    "orchestrator-agent",
+                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
+                ),
+                StoredOrchestratorAgentV7::into_current,
+            )
+    }
+
+    fn open_with_agent_descriptor(
+        store: &StoreLocation,
+        agent_descriptor: TableDescriptor<StoredOrchestratorAgent>,
+    ) -> Result<Self> {
         let mut engine = Engine::open(Self::engine_open(store))?;
         let claims = engine.register_table(Self::stable_family_descriptor(CLAIMS, "claim"))?;
         let roles = engine.register_table(Self::stable_family_descriptor(ROLES, "role"))?;
@@ -431,11 +475,7 @@ impl OrchestrateTables {
             "workflow-model-resolution",
             ORCHESTRATE_SCHEMA_VERSION_BEFORE_ORCHESTRATOR_SEAT,
         ))?;
-        let orchestrator_agents = engine.register_table(Self::family_descriptor(
-            ORCHESTRATOR_AGENTS,
-            "orchestrator-agent",
-            ORCHESTRATE_SCHEMA_VERSION,
-        ))?;
+        let orchestrator_agents = engine.register_table(agent_descriptor)?;
         let orchestrator_topics = engine.register_table(Self::family_descriptor(
             ORCHESTRATOR_TOPICS,
             "orchestrator-topic",
@@ -496,6 +536,10 @@ impl OrchestrateTables {
         )
     }
 
+    fn family_schema_hash(family: &str, version: SchemaVersion) -> SchemaHash {
+        SchemaHash::for_label(format!("orchestrate-{family}-v{}", version.value()))
+    }
+
     fn family_descriptor<RecordValue>(
         table: TableName,
         family: &str,
@@ -504,7 +548,7 @@ impl OrchestrateTables {
         TableDescriptor::new(
             table,
             FamilyName::new(family),
-            SchemaHash::for_label(format!("orchestrate-{family}-v{}", version.value())),
+            Self::family_schema_hash(family, version),
         )
     }
 
@@ -1931,121 +1975,17 @@ impl<'store> OrchestrateStoreMigration<'store> {
     }
 
     /// Migrate the orchestrator-agent registry forward across a family-identity
-    /// bump, carrying its rows rather than discarding them. Three steps: read
-    /// the prior-shape rows under whichever old family identity the stale
-    /// catalog still names; retire the stale family so a fresh registration
-    /// under the current identity is accepted; re-open the store and re-insert
-    /// the carried rows in the current shape through the ordinary write path
-    /// (which logs them under the current family so the versioned history stays
-    /// consistent). Every other family is untouched.
+    /// bump through the engine's family-evolution primitive: re-open with the
+    /// prior-declaring descriptor and the engine carries the rows, the evolved
+    /// catalog registration, and the log entries in one write transaction. No
+    /// raw catalog surgery, no separate read-retire-reinsert window. The
+    /// caller took the pre-migration preserve before this runs; an undeclared
+    /// stored identity keeps failing closed inside the engine.
     fn migrate_agent_registry(&self) -> Result<OrchestrateTables> {
-        let carried = self.read_prior_shape_agents()?;
-        self.retire_stale_agent_family()?;
-        let tables = OrchestrateTables::open_current(self.store)?;
-        for agent in &carried {
-            tables.insert_orchestrator_agent(agent)?;
-        }
-        Ok(tables)
-    }
-
-    /// Read the orchestrator-agent rows in their prior on-disk shape by
-    /// registering the table under the stale family identity the catalog still
-    /// names, newest known prior generation first. A v8 store's rows are
-    /// byte-compatible with the current shape (the death-state bump only
-    /// appended a status variant), so they decode as [`StoredOrchestratorAgent`]
-    /// directly; a v7 store's rows carry their genuine pre-`last_activity`
-    /// layout and decode as [`StoredOrchestratorAgentV7`]. Each generation is
-    /// tried under its own identity, so the read is well-typed rather than a
-    /// reinterpretation of mismatched bytes.
-    fn read_prior_shape_agents(&self) -> Result<Vec<StoredOrchestratorAgent>> {
-        match self.read_agents_under_identity::<StoredOrchestratorAgent>(
-            ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT,
-        ) {
-            Ok(agents) => return Ok(agents),
-            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch {
-                ..
-            })) => {}
-            Err(error) => return Err(error),
-        }
-        match self.read_agents_under_identity::<StoredOrchestratorAgent>(
-            ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_DEATH,
-        ) {
-            Ok(agents) => Ok(agents),
-            Err(crate::Error::SemaEngine(sema_engine::Error::FamilyIdentityMismatch { .. })) => {
-                Ok(self
-                    .read_agents_under_identity::<StoredOrchestratorAgentV7>(
-                        ORCHESTRATE_SCHEMA_VERSION_BEFORE_AGENT_ACTIVITY,
-                    )?
-                    .into_iter()
-                    .map(StoredOrchestratorAgentV7::into_current)
-                    .collect())
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Register the agent table under one prior family identity and read every
-    /// row in that generation's own decoded shape. A store whose catalog names a
-    /// different identity rejects the registration with a family-identity
-    /// mismatch, which the caller uses to try the next known generation.
-    fn read_agents_under_identity<PriorShape>(
-        &self,
-        version: SchemaVersion,
-    ) -> Result<Vec<PriorShape>>
-    where
-        PriorShape: sema_engine::EngineStoredValue,
-        PriorShape::Archived: rkyv::Deserialize<PriorShape, HighDeserializer<rancor::Error>>
-            + for<'validation> CheckBytes<
-                Strategy<Validator<ArchiveValidator<'validation>, SharedValidator>, rancor::Error>,
-            >,
-    {
-        let mut engine = Engine::open(OrchestrateTables::engine_open(self.store))?;
-        let prior_agents = engine.register_table(
-            OrchestrateTables::family_descriptor::<PriorShape>(
-                ORCHESTRATOR_AGENTS,
-                "orchestrator-agent",
-                version,
-            ),
-        )?;
-        Ok(engine
-            .match_records(QueryPlan::all(prior_agents))?
-            .records()
-            .to_vec())
-    }
-
-    /// Retire the stale orchestrator-agent family so the next open registers it
-    /// fresh under the current family hash. Two edits under one transaction: the
-    /// family's catalog registration is removed so re-registration sees an unbound
-    /// family, and its data table is dropped so no prior-layout rows survive to be
-    /// misread. Only the one table named by the identity mismatch is retired; every
-    /// other family's registration and rows are untouched. Callers read the rows
-    /// first (see [`Self::read_prior_shape_agents`]) so retirement loses nothing.
-    ///
-    /// The versioned commit log is a hash chain and is deliberately left intact:
-    /// its historical agent-registry entries stay valid links, and orchestrate
-    /// takes no checkpoints, so those entries are never materialized against the
-    /// live catalog. See `NON_IDEAL_AGENTS.md` for the family-retirement follow-up.
-    fn retire_stale_agent_family(&self) -> Result<()> {
-        let database =
-            redb::Database::create(self.store.as_path()).map_err(Self::store_migration_error)?;
-        let transaction = database
-            .begin_write()
-            .map_err(Self::store_migration_error)?;
-        {
-            let mut catalog = transaction
-                .open_table(SEMA_ENGINE_CATALOG)
-                .map_err(Self::store_migration_error)?;
-            catalog
-                .remove(ORCHESTRATOR_AGENTS.as_str())
-                .map_err(Self::store_migration_error)?;
-        }
-        transaction
-            .delete_table(redb::TableDefinition::<&str, &[u8]>::new(
-                ORCHESTRATOR_AGENTS.as_str(),
-            ))
-            .map_err(Self::store_migration_error)?;
-        transaction.commit().map_err(Self::store_migration_error)?;
-        Ok(())
+        OrchestrateTables::open_with_agent_descriptor(
+            self.store,
+            OrchestrateTables::evolving_agent_descriptor(),
+        )
     }
 
     fn store_migration_error(source: impl std::fmt::Display) -> crate::Error {
