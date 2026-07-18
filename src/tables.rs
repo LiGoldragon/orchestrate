@@ -519,6 +519,13 @@ impl OrchestrateTables {
             .with_prior::<StoredOrchestratorAgent>(
                 Self::family_schema_hash(
                     "orchestrator-agent",
+                    ORCHESTRATE_SCHEMA_VERSION_BEFORE_REPOSITORY_IDENTITY,
+                ),
+                |agent| agent,
+            )
+            .with_prior::<StoredOrchestratorAgent>(
+                Self::family_schema_hash(
+                    "orchestrator-agent",
                     ORCHESTRATE_SCHEMA_VERSION_BEFORE_IDENTITY_MINT,
                 ),
                 |agent| agent,

@@ -18,7 +18,12 @@
 
 use std::path::{Path, PathBuf};
 
-use orchestrate::{OrchestrateTables, StoreLocation};
+use meta_signal_orchestrate::MetaOrchestrateRequest;
+use orchestrate::{
+    LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneRegistrationMode,
+    LaneRegistrationRequest, LaneUnregistrationRequest, OrchestrateLayout, OrchestrateService,
+    OrchestrateTables, Role, RoleToken, SessionIdentifier, StoreLocation,
+};
 
 /// A writable scratch copy of a fixture store; removes itself and any
 /// preserves written beside it.
@@ -221,5 +226,100 @@ fn captured_real_stores_migrate_with_preserved_rows_or_fail_closed() {
                 eprintln!("OK (failed closed): {fixture_name} — {error}");
             }
         }
+    }
+}
+
+/// An openable store is a writable store. The 2026-07-18 production wedge
+/// broke exactly this: a captured store with a ~27k-entry versioned log and a
+/// legacy consumer-less outbox opened cleanly but refused every write's
+/// history maintenance (`HistoryCompactionUnacknowledged`) under the
+/// LocalCheckpoint topology. Every fixture that opens must accept the exact
+/// operation that wedged — an ordinary lane register/unregister round-trip.
+#[test]
+fn captured_real_stores_accept_writes_after_open() {
+    let directory = fixture_directory();
+    let stores = fixture_stores(&directory);
+    if stores.is_empty() {
+        eprintln!(
+            "SKIP: no captured store fixtures under {} — set ORCHESTRATE_MIGRATION_FIXTURE_DIRECTORY to run",
+            directory.display()
+        );
+        return;
+    }
+
+    for (index, fixture) in stores.iter().enumerate() {
+        let fixture_name = fixture
+            .file_name()
+            .expect("fixture has a file name")
+            .to_string_lossy()
+            .into_owned();
+        let scratch = ScratchStore::from_fixture(fixture, &format!("write{index}"));
+        if OrchestrateTables::open(&scratch.location()).is_err() {
+            eprintln!("SKIP (fails closed, covered above): {fixture_name}");
+            continue;
+        }
+
+        let temporary = tempfile::Builder::new()
+            .prefix("fixture-write-scaffold")
+            .tempdir()
+            .expect("scaffold directory");
+        let workspace = temporary.path().join("workspace");
+        let git_index = temporary.path().join("git-index");
+        std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
+        std::fs::write(
+            workspace.join("orchestrate").join("roles.list"),
+            "operator\n",
+        )
+        .expect("role registry");
+        std::fs::create_dir_all(&git_index).expect("git index directory");
+        let mut service = OrchestrateService::open_with_layout(
+            &scratch.location(),
+            OrchestrateLayout::new(workspace, git_index),
+        )
+        .expect("service opens the captured store");
+
+        let session =
+            SessionIdentifier::from_camel_case_name("FixtureWriteSession").expect("session");
+        let lane = LaneIdentifier::from_wire_token("fixture-write-probe").expect("lane");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        runtime
+            .block_on(
+                service.handle_meta(MetaOrchestrateRequest::Register(LaneRegistrationRequest {
+                    assignment: LaneAssignment {
+                        session: session.clone(),
+                        lane: lane.clone(),
+                        owner: orchestrate::LaneOwner {
+                            role: Role::try_new(vec![
+                                RoleToken::from_text("Operator").expect("role token"),
+                            ])
+                            .expect("role"),
+                            authority: LaneAuthority::Structural,
+                        },
+                        details: LaneDetails::from_text("fixture write probe").expect("details"),
+                    },
+                    mode: LaneRegistrationMode::Fresh,
+                })),
+            )
+            .unwrap_or_else(|error| {
+                panic!("{fixture_name}: an openable store must accept a lane registration, got {error}")
+            });
+        runtime
+            .block_on(
+                service.handle_meta(MetaOrchestrateRequest::Unregister(
+                    LaneUnregistrationRequest {
+                        session,
+                        lane,
+                        details: LaneDetails::from_text("fixture write probe done")
+                            .expect("details"),
+                    },
+                )),
+            )
+            .unwrap_or_else(|error| {
+                panic!("{fixture_name}: the probe lane must unregister cleanly, got {error}")
+            });
+        eprintln!("OK (write round-trip): {fixture_name}");
     }
 }

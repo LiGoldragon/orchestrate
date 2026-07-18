@@ -483,7 +483,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "criome",
  "getrandom",
@@ -752,8 +752,8 @@ dependencies = [
 
 [[package]]
 name = "sema-engine"
-version = "0.11.0"
-source = "git+https://github.com/LiGoldragon/sema-engine.git?branch=main#3a28fffd08dd7dea455fd887c67c9a3edb27859f"
+version = "0.11.2"
+source = "git+https://github.com/LiGoldragon/sema-engine.git?branch=main#72015662fc0f238d80ca6b82fe5a69817179163d"
 dependencies = [
  "blake3",
  "rkyv",
