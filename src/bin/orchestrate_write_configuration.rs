@@ -8,6 +8,7 @@ use std::{
     env,
     ffi::OsString,
     fmt::{Display, Formatter},
+    os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Component, Path, PathBuf},
     process::ExitCode,
 };
@@ -18,13 +19,13 @@ use orchestrate::{
 use thiserror::Error;
 
 /// The seven required path arguments (signal, store, three sockets, two roots).
+///
+/// Trailing arguments name optional co-resident downstream sockets by label —
+/// `router=<absolute-path>` propagates discovered registrations to the router,
+/// `messenger=<absolute-path>` pushes minted identities and discovered
+/// endpoints to the messenger. Labels take any order and any subset; each may
+/// appear at most once. An absent label leaves that propagation leg off.
 const REQUIRED_ARGUMENT_COUNT: usize = 7;
-
-/// Two optional trailing arguments, in order: the co-resident router working
-/// socket to propagate discovered registrations to, then the co-resident
-/// messenger working socket minted identities and discovered endpoints are
-/// pushed to. Either absent leaves that propagation leg off.
-const MAXIMUM_ARGUMENT_COUNT: usize = 9;
 
 fn main() -> ExitCode {
     match DaemonConfigurationWriter::from_environment().run() {
@@ -61,37 +62,29 @@ struct DaemonConfigurationArguments {
     upgrade_socket_path: RuntimePath,
     workspace_root: RuntimePath,
     git_index_root: RuntimePath,
-    router_working_socket_path: Option<RuntimePath>,
-    messenger_working_socket_path: Option<RuntimePath>,
+    downstream_sockets: DownstreamSocketArguments,
 }
 
 impl TryFrom<Vec<OsString>> for DaemonConfigurationArguments {
     type Error = DaemonConfigurationWriterError;
 
     fn try_from(arguments: Vec<OsString>) -> Result<Self, Self::Error> {
-        if arguments.len() < REQUIRED_ARGUMENT_COUNT || arguments.len() > MAXIMUM_ARGUMENT_COUNT {
+        if arguments.len() < REQUIRED_ARGUMENT_COUNT {
             return Err(DaemonConfigurationWriterError::ArgumentCount {
                 expected: REQUIRED_ARGUMENT_COUNT,
                 actual: arguments.len(),
             });
         }
-        let mut paths = arguments.into_iter();
+        let mut paths = ArgumentQueue::new(arguments);
         Ok(Self {
-            signal_path: ArgumentPath::required("signal_path", &mut paths)?,
-            store_path: ArgumentPath::required("store_path", &mut paths)?,
-            ordinary_socket_path: ArgumentPath::required("ordinary_socket_path", &mut paths)?,
-            meta_socket_path: ArgumentPath::required("meta_socket_path", &mut paths)?,
-            upgrade_socket_path: ArgumentPath::required("upgrade_socket_path", &mut paths)?,
-            workspace_root: ArgumentPath::required("workspace_root", &mut paths)?,
-            git_index_root: ArgumentPath::required("git_index_root", &mut paths)?,
-            router_working_socket_path: ArgumentPath::optional(
-                "router_working_socket_path",
-                &mut paths,
-            )?,
-            messenger_working_socket_path: ArgumentPath::optional(
-                "messenger_working_socket_path",
-                &mut paths,
-            )?,
+            signal_path: paths.required("signal_path")?,
+            store_path: paths.required("store_path")?,
+            ordinary_socket_path: paths.required("ordinary_socket_path")?,
+            meta_socket_path: paths.required("meta_socket_path")?,
+            upgrade_socket_path: paths.required("upgrade_socket_path")?,
+            workspace_root: paths.required("workspace_root")?,
+            git_index_root: paths.required("git_index_root")?,
+            downstream_sockets: paths.downstream_sockets()?,
         })
     }
 }
@@ -118,12 +111,12 @@ impl DaemonConfigurationArguments {
             wire_path(self.workspace_root.as_path())?,
             wire_path(self.git_index_root.as_path())?,
         );
-        let configuration = match &self.router_working_socket_path {
+        let configuration = match &self.downstream_sockets.router_working_socket_path {
             Some(router_working_socket_path) => configuration
                 .with_router_working_socket_path(wire_path(router_working_socket_path.as_path())?),
             None => configuration,
         };
-        Ok(match &self.messenger_working_socket_path {
+        Ok(match &self.downstream_sockets.messenger_working_socket_path {
             Some(messenger_working_socket_path) => {
                 configuration.with_messenger_working_socket_path(wire_path(
                     messenger_working_socket_path.as_path(),
@@ -142,29 +135,122 @@ impl DaemonConfigurationArguments {
     }
 }
 
-struct ArgumentPath;
+struct ArgumentQueue {
+    paths: std::vec::IntoIter<OsString>,
+}
 
-impl ArgumentPath {
+impl ArgumentQueue {
+    fn new(arguments: Vec<OsString>) -> Self {
+        Self {
+            paths: arguments.into_iter(),
+        }
+    }
+
     fn required(
+        &mut self,
         field: &'static str,
-        paths: &mut impl Iterator<Item = OsString>,
     ) -> Result<RuntimePath, DaemonConfigurationWriterError> {
-        let path = paths
+        let path = self
+            .paths
             .next()
             .ok_or(DaemonConfigurationWriterError::MissingArgument)?;
         RuntimePath::try_new(field, PathBuf::from(path))
             .map_err(DaemonConfigurationWriterError::RuntimePath)
     }
 
-    fn optional(
-        field: &'static str,
-        paths: &mut impl Iterator<Item = OsString>,
-    ) -> Result<Option<RuntimePath>, DaemonConfigurationWriterError> {
-        match paths.next() {
-            Some(path) => RuntimePath::try_new(field, PathBuf::from(path))
-                .map(Some)
-                .map_err(DaemonConfigurationWriterError::RuntimePath),
-            None => Ok(None),
+    /// Consume every trailing argument as a labeled downstream-socket
+    /// assignment. Labels take any order and any subset, each at most once.
+    fn downstream_sockets(
+        self,
+    ) -> Result<DownstreamSocketArguments, DaemonConfigurationWriterError> {
+        let mut downstream_sockets = DownstreamSocketArguments::default();
+        for argument in self.paths {
+            downstream_sockets.assign(DownstreamSocketAssignment::parse(argument)?)?;
+        }
+        Ok(downstream_sockets)
+    }
+}
+
+/// The optional co-resident downstream sockets, as parsed from labeled
+/// trailing arguments. Each leg is independently expressible so any subset —
+/// messenger without router included — is a truthful configuration.
+#[derive(Default)]
+struct DownstreamSocketArguments {
+    router_working_socket_path: Option<RuntimePath>,
+    messenger_working_socket_path: Option<RuntimePath>,
+}
+
+impl DownstreamSocketArguments {
+    fn assign(
+        &mut self,
+        assignment: DownstreamSocketAssignment,
+    ) -> Result<(), DaemonConfigurationWriterError> {
+        let slot = match assignment.component {
+            DownstreamSocketComponent::Router => &mut self.router_working_socket_path,
+            DownstreamSocketComponent::Messenger => &mut self.messenger_working_socket_path,
+        };
+        if slot.is_some() {
+            return Err(DaemonConfigurationWriterError::DuplicateDownstreamSocket {
+                label: assignment.component.label(),
+            });
+        }
+        *slot = Some(assignment.path);
+        Ok(())
+    }
+}
+
+/// One `label=<absolute-path>` trailing argument, parsed.
+struct DownstreamSocketAssignment {
+    component: DownstreamSocketComponent,
+    path: RuntimePath,
+}
+
+impl DownstreamSocketAssignment {
+    fn parse(argument: OsString) -> Result<Self, DaemonConfigurationWriterError> {
+        let bytes = argument.as_bytes();
+        let separator = bytes.iter().position(|byte| *byte == b'=').ok_or_else(|| {
+            DaemonConfigurationWriterError::UnlabeledDownstreamSocket {
+                argument: argument.to_string_lossy().into_owned(),
+            }
+        })?;
+        let component = DownstreamSocketComponent::from_label_bytes(&bytes[..separator])?;
+        let path = RuntimePath::try_new(
+            component.field(),
+            PathBuf::from(OsString::from_vec(bytes[separator + 1..].to_vec())),
+        )?;
+        Ok(Self { component, path })
+    }
+}
+
+/// The closed set of co-resident components a downstream socket may name.
+#[derive(Clone, Copy, Debug)]
+enum DownstreamSocketComponent {
+    Router,
+    Messenger,
+}
+
+impl DownstreamSocketComponent {
+    fn from_label_bytes(label: &[u8]) -> Result<Self, DaemonConfigurationWriterError> {
+        match label {
+            b"router" => Ok(Self::Router),
+            b"messenger" => Ok(Self::Messenger),
+            other => Err(DaemonConfigurationWriterError::UnknownDownstreamSocketLabel {
+                label: String::from_utf8_lossy(other).into_owned(),
+            }),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Router => "router",
+            Self::Messenger => "messenger",
+        }
+    }
+
+    const fn field(self) -> &'static str {
+        match self {
+            Self::Router => "router_working_socket_path",
+            Self::Messenger => "messenger_working_socket_path",
         }
     }
 }
@@ -281,11 +367,23 @@ impl<'path> PathPreparation<'path> {
 
 #[derive(Debug, Error)]
 enum DaemonConfigurationWriterError {
-    #[error("expected {expected} path arguments, received {actual}")]
+    #[error("expected at least {expected} path arguments, received {actual}")]
     ArgumentCount { expected: usize, actual: usize },
 
     #[error("missing required path argument")]
     MissingArgument,
+
+    #[error(
+        "trailing argument {argument} is not a labeled downstream socket; \
+         expected router=<absolute-path> or messenger=<absolute-path>"
+    )]
+    UnlabeledDownstreamSocket { argument: String },
+
+    #[error("unknown downstream socket label {label}; accepted labels are router and messenger")]
+    UnknownDownstreamSocketLabel { label: String },
+
+    #[error("downstream socket label {label} appears more than once")]
+    DuplicateDownstreamSocket { label: &'static str },
 
     #[error("invalid orchestrate path: {0}")]
     Path(#[from] OrchestrateError),

@@ -1041,3 +1041,130 @@ fn configuration_writer_rejects_non_utf8_configuration_before_creating_directori
         "writer must serialize configuration before creating socket parents"
     );
 }
+
+/// The seven required writer arguments rooted in a scratch directory, ready
+/// for trailing labeled downstream-socket arguments.
+fn configuration_writer_invocation(absolute: &Path) -> (Command, PathBuf) {
+    let signal_path = absolute.join("generated").join("daemon.signal");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_orchestrate-write-configuration"));
+    command
+        .arg(&signal_path)
+        .arg(absolute.join("store").join("orchestrate.sema"))
+        .arg(absolute.join("sockets").join("ordinary.sock"))
+        .arg(absolute.join("sockets").join("meta.sock"))
+        .arg(absolute.join("sockets").join("upgrade.sock"))
+        .arg(absolute.join("workspace"))
+        .arg(absolute.join("git-index"));
+    (command, signal_path)
+}
+
+#[test]
+fn configuration_writer_expresses_messenger_without_router() {
+    let directory = TempDir::new().expect("tempdir");
+    let messenger_socket = directory.path().join("sockets").join("messenger.sock");
+    let (mut command, signal_path) = configuration_writer_invocation(directory.path());
+    let output = command
+        .arg(format!("messenger={}", messenger_socket.display()))
+        .output()
+        .expect("writer output");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let configuration =
+        DaemonConfiguration::from_signal_file(&signal_path).expect("decode configuration");
+    assert_eq!(
+        configuration
+            .messenger_working_socket_path()
+            .map(|path| path.as_str().to_owned()),
+        Some(messenger_socket.display().to_string()),
+        "messenger leg must be set"
+    );
+    assert!(
+        configuration.router_working_socket_path().is_none(),
+        "router leg must stay off when unlabeled"
+    );
+}
+
+#[test]
+fn configuration_writer_accepts_labeled_downstream_sockets_in_any_order() {
+    let directory = TempDir::new().expect("tempdir");
+    let messenger_socket = directory.path().join("sockets").join("messenger.sock");
+    let router_socket = directory.path().join("sockets").join("router.sock");
+    let (mut command, signal_path) = configuration_writer_invocation(directory.path());
+    let output = command
+        .arg(format!("messenger={}", messenger_socket.display()))
+        .arg(format!("router={}", router_socket.display()))
+        .output()
+        .expect("writer output");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let configuration =
+        DaemonConfiguration::from_signal_file(&signal_path).expect("decode configuration");
+    assert_eq!(
+        configuration
+            .router_working_socket_path()
+            .map(|path| path.as_str().to_owned()),
+        Some(router_socket.display().to_string())
+    );
+    assert_eq!(
+        configuration
+            .messenger_working_socket_path()
+            .map(|path| path.as_str().to_owned()),
+        Some(messenger_socket.display().to_string())
+    );
+}
+
+#[test]
+fn configuration_writer_refuses_duplicate_downstream_labels() {
+    let directory = TempDir::new().expect("tempdir");
+    let messenger_socket = directory.path().join("sockets").join("messenger.sock");
+    let (mut command, _signal_path) = configuration_writer_invocation(directory.path());
+    let output = command
+        .arg(format!("messenger={}", messenger_socket.display()))
+        .arg(format!("messenger={}", messenger_socket.display()))
+        .output()
+        .expect("writer output");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("appears more than once"),
+        "stderr was {stderr}"
+    );
+}
+
+#[test]
+fn configuration_writer_refuses_unlabeled_trailing_arguments() {
+    let directory = TempDir::new().expect("tempdir");
+    let (mut command, _signal_path) = configuration_writer_invocation(directory.path());
+    let output = command
+        .arg(directory.path().join("sockets").join("router.sock"))
+        .output()
+        .expect("writer output");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a labeled downstream socket"),
+        "stderr was {stderr}"
+    );
+}
+
+#[test]
+fn configuration_writer_refuses_unknown_downstream_labels() {
+    let directory = TempDir::new().expect("tempdir");
+    let (mut command, _signal_path) = configuration_writer_invocation(directory.path());
+    let output = command
+        .arg("telemetry=/run/telemetry.sock")
+        .output()
+        .expect("writer output");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown downstream socket label"),
+        "stderr was {stderr}"
+    );
+}
