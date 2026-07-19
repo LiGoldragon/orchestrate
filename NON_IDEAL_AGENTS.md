@@ -48,6 +48,23 @@ registration succeeds), or accept family descriptors at open so identity is
 validated before any write. This is a sema-engine finding, reported upstream, not
 patched around here.
 
+## Worktree scaffolding assumes existing Jujutsu metadata
+
+Symptom: `RequestWorktree` on an indexed checkout that is a Git repository but
+has no colocated `.jj` metadata invokes `jj workspace add` and fails. The
+orchestrator therefore does not yet fulfill the mechanical worktree setup
+promise for every indexed Git checkout.
+
+Current workaround: initialize Jujutsu colocated in the known source checkout
+with `jj git init --colocate`, track its existing `main` remote bookmark, then
+request the worktree again.
+
+Proper fix: `WorktreeRegistry` should explicitly recognize a Git-only indexed
+checkout and either perform the safe colocated Jujutsu bootstrap before
+scaffolding or return a dedicated typed refusal that names the required
+bootstrap. The intended automatic lifecycle needs a deliberate choice between
+those behaviors rather than leaking a `jj` subprocess failure.
+
 ## Upgrade tier still closes without a reply on engine error
 
 The working tier (generated spine, schema-rust 0.7.1) and the meta tier
@@ -78,3 +95,21 @@ daemon generation APIs, evolve `signal-orchestrate` with an exact
 producer migration, define a PascalCase `WorkSubjectKey` relation record that links
 lanes, worktrees, and messenger named threads explicitly; Mint must consume that
 relation through its own later boundary, never infer it from matching strings.
+
+## Migration fixture is outside current quality gates
+
+Symptom: `nix build .#checks.x86_64-linux.clippy` fails in
+`tests/store_migration_fixtures.rs` because `Permissions::set_readonly(false)` is
+denied by the current Clippy lint set: on Unix it makes the file world-writable.
+`nix build .#checks.x86_64-linux.fmt` also reports pre-existing Rust formatting
+drift in the same fixture. Neither line is changed by the worktree and human-time
+integration.
+
+Current workaround: the focused Nix build and behavior checks remain the evidence
+for this integration; do not suppress the lint or reformat an unrelated migration
+fixture in a feature change that does not own it.
+
+Proper fix: use the platform-appropriate explicit mode API to restore the fixture
+file's intended writable permissions, with a portable non-Unix branch where needed,
+then format the fixture and restore the full Clippy and format checks as green
+repository gates.
