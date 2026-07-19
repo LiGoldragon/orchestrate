@@ -48,6 +48,23 @@ registration succeeds), or accept family descriptors at open so identity is
 validated before any write. This is a sema-engine finding, reported upstream, not
 patched around here.
 
+## Worktree scaffolding assumes existing Jujutsu metadata
+
+Symptom: `RequestWorktree` on an indexed checkout that is a Git repository but
+has no colocated `.jj` metadata invokes `jj workspace add` and fails. The
+orchestrator therefore does not yet fulfill the mechanical worktree setup
+promise for every indexed Git checkout.
+
+Current workaround: initialize Jujutsu colocated in the known source checkout
+with `jj git init --colocate`, track its existing `main` remote bookmark, then
+request the worktree again.
+
+Proper fix: `WorktreeRegistry` should explicitly recognize a Git-only indexed
+checkout and either perform the safe colocated Jujutsu bootstrap before
+scaffolding or return a dedicated typed refusal that names the required
+bootstrap. The intended automatic lifecycle needs a deliberate choice between
+those behaviors rather than leaking a `jj` subprocess failure.
+
 ## Upgrade tier still closes without a reply on engine error
 
 The working tier (generated spine, schema-rust 0.7.1) and the meta tier
