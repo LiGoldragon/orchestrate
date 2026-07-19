@@ -453,14 +453,29 @@ Task scopes render in bracketed human form:
   orchestrate. Completion retires the ordinary and meta socket paths;
   the upgrade socket remains available for private recovery protocol.
 - BEADS is never an owned claim scope.
-- Worktree lifecycle transitions flow through meta-signal:
-  `RegisterWorktree` upserts a record; `RefreshWorktreeIndex` re-scans
-  the filesystem as a discovery floor; `ArchiveWorktree` moves a named
-  path to `WorktreeStatus::Archived` and reprojects `worktrees.nota`.
-  `WorktreeProjection::gc_candidates` reads that file back and returns
-  entries in `Archived` or `Recycled` status; the daemon or an external
-  agent acts on them. Infrastructure-minted fields (`last_activity`,
-  `pushed_state`) are derived from `jj` by the daemon, never agent-supplied.
+- Worktree lifecycle is daemon-owned. Ordinary `RequestWorktree` resolves
+  the indexed repository checkout, scaffolds a `jj` workspace from `main` at
+  the canonical worktree path, creates its feature bookmark, derives
+  infrastructure facts, and records its purpose and owner. Ordinary
+  `ConcludeWorktree` is the only teardown path: `Merged` auto-lands by
+  rebase and only then forgets the workspace and removes its directory;
+  `Rejected` pushes `discard/<branch>` before removal. Meta
+  `RegisterWorktree` and `RefreshWorktreeIndex` reconcile existing
+  checkouts, while `ArchiveWorktree` moves a named path to
+  `WorktreeStatus::Archived`. A refresh is a filesystem discovery floor:
+  for a known `(repository, branch)` it re-derives only `jj` facts and
+  preserves the durable owner, purpose, and lifecycle state instead of
+  replacing them with scanner guesses. `WorktreeProjection::gc_candidates`
+  reads the `Archived`/`Recycled` projection entries back for later GC.
+  Infrastructure-minted fields (`last_activity`, `pushed_state`) are derived
+  from `jj` by the daemon, never agent-supplied.
+- The present conclusion request selects its worktree by owning lane even
+  though one lane can correctly own worktrees in several repositories. Rather
+  than silently choose the first row, conclusion refuses an ambiguous lane
+  before it runs any `jj` or filesystem effect. This is a compatibility
+  containment, not an identity model: the future public conclusion request
+  must carry the exact `(repository, branch)` worktree identity when the new
+  schema producer is ready.
 - Repository-main contention (contention-flow MVP, psyche-ruled 2026-07-17):
   a claim covering a registered repository whose whole checkout another live
   lane holds is answered `RepositoryMainContended` — holder, held age, and a

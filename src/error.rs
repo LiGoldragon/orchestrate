@@ -33,7 +33,6 @@ pub enum Error {
     #[error("harness model resolver is not configured")]
     HarnessResolverNotConfigured,
 
-
     #[error("harness model resolution operation was unimplemented: {operation}")]
     HarnessResolutionUnimplemented { operation: String },
 
@@ -140,6 +139,11 @@ pub enum Error {
     #[error("no worktree is registered for owning lane {lane}")]
     WorktreeLaneNotFound { lane: String },
 
+    #[error(
+        "owning lane {lane} identifies multiple non-recycled worktrees: {worktrees}; refusing destructive conclusion"
+    )]
+    WorktreeLaneAmbiguous { lane: String, worktrees: String },
+
     #[error("no source checkout found for repository {repository}")]
     RepositoryCheckoutMissing { repository: String },
 
@@ -207,7 +211,22 @@ impl Error {
             self,
             Error::SignalOrchestrate(_)
                 | Error::LaneNotRegistered { .. }
+                | Error::WorktreeLaneAmbiguous { .. }
                 | Error::UnknownPreMintedAgentIdentity { .. }
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn ambiguous_worktree_lane_is_a_caller_rejection() {
+        let error = Error::WorktreeLaneAmbiguous {
+            lane: "MultiRepositoryLane".to_owned(),
+            worktrees: "orchestrate/feature, message/feature".to_owned(),
+        };
+        assert!(error.is_caller_rejection());
     }
 }

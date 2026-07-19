@@ -72,13 +72,18 @@ impl<'tables> WorktreeRegistry<'tables> {
     }
 
     /// Re-scan the whole worktree index and replace the table. Mirrors
-    /// [`crate::RepositoryRegistry::refresh`]. Worktrees previously registered
-    /// with a richer status/purpose are re-derived from the filesystem as
-    /// `Active` here; the scan is a discovery floor, registration the
-    /// authoritative source.
+    /// [`crate::RepositoryRegistry::refresh`]. For an already-registered
+    /// `(repository, branch)`, filesystem discovery refreshes only its derived
+    /// `jj` facts and preserves its durable owner, status, and purpose. A new
+    /// filesystem discovery starts at the scanner's `Active`/`unknown` floor.
     pub fn refresh(&self) -> Result<MetaOrchestrateReply> {
         let root = self.layout.worktree_index_root();
         std::fs::create_dir_all(root)?;
+        // Filesystem discovery can re-derive only infrastructure facts. Keep
+        // durable ownership, purpose, and lifecycle state for an identity we
+        // already know instead of replacing those semantic facts with the
+        // scanner's `unknown` fallback on every refresh.
+        let registered = self.tables.worktree_records()?;
         let mut worktrees = Vec::new();
         for repository_entry in std::fs::read_dir(root)? {
             let repository_entry = repository_entry?;
@@ -108,7 +113,15 @@ impl<'tables> WorktreeRegistry<'tables> {
                 if !path.join(".jj").exists() && !path.join(".git").exists() {
                     continue;
                 }
-                worktrees.push(self.scan_worktree(repository.clone(), branch, &path)?);
+                let registered_worktree = registered
+                    .iter()
+                    .find(|record| record.repository == repository && record.branch == branch);
+                worktrees.push(self.scan_worktree(
+                    repository.clone(),
+                    branch,
+                    &path,
+                    registered_worktree,
+                )?);
             }
         }
 
@@ -195,7 +208,8 @@ impl<'tables> WorktreeRegistry<'tables> {
             .worktree_index_root()
             .join(order.repository.as_str())
             .join(order.branch.as_str());
-        let already_registered = self.tables.worktree_records()?.into_iter().any(|record| {
+        let registered = self.tables.worktree_records()?;
+        let already_registered = registered.iter().any(|record| {
             record.repository.as_str() == order.repository.as_str()
                 && record.branch.as_str() == order.branch.as_str()
                 && record.status != WorktreeStatus::Recycled
@@ -241,38 +255,55 @@ impl<'tables> WorktreeRegistry<'tables> {
     /// [`WorktreeStatus::Recycled`]. This is the shared teardown primitive
     /// any abandonment trigger reuses.
     pub fn conclude(&self, order: WorktreeConclusionRequest) -> Result<OrchestrateReply> {
-        let mut stored = self
+        let mut candidates = self
             .tables
             .worktree_records()?
             .into_iter()
-            .find(|record| {
+            .filter(|record| {
                 record.owning_lane.as_str() == order.owning_lane.as_str()
                     && record.status != WorktreeStatus::Recycled
             })
-            .ok_or_else(|| Error::WorktreeLaneNotFound {
-                lane: order.owning_lane.as_str().to_owned(),
-            })?;
+            .collect::<Vec<_>>();
+        let mut stored = match candidates.len() {
+            0 => {
+                return Err(Error::WorktreeLaneNotFound {
+                    lane: order.owning_lane.as_str().to_owned(),
+                });
+            }
+            1 => candidates.pop().expect("one candidate"),
+            _ => {
+                let mut worktrees = candidates
+                    .iter()
+                    .map(|record| {
+                        format!("{}/{}", record.repository.as_str(), record.branch.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                worktrees.sort();
+                return Err(Error::WorktreeLaneAmbiguous {
+                    lane: order.owning_lane.as_str().to_owned(),
+                    worktrees: worktrees.join(", "),
+                });
+            }
+        };
         let destination = PathBuf::from(stored.path.as_str());
         let pushed_state = WorktreePathProbe::from_path(&destination).pushed_state()?;
         let integration = match (&order.disposition, pushed_state) {
             (WorktreeConclusion::Merged, PushedState::AncestorOfMain) => {
                 MainIntegration::AlreadyAncestor
             }
-            (WorktreeConclusion::Merged, _) => {
-                match AutoLand::new(&destination).land()? {
-                    LandOutcome::Landed(integration) => integration,
-                    LandOutcome::Refused(reason) => {
-                        stored.pushed_state =
-                            WorktreePathProbe::from_path(&destination).pushed_state()?;
-                        return Ok(OrchestrateReply::WorktreeTeardownRefused(
-                            WorktreeTeardownRefused {
-                                worktree: Worktree::from(stored),
-                                reason,
-                            },
-                        ));
-                    }
+            (WorktreeConclusion::Merged, _) => match AutoLand::new(&destination).land()? {
+                LandOutcome::Landed(integration) => integration,
+                LandOutcome::Refused(reason) => {
+                    stored.pushed_state =
+                        WorktreePathProbe::from_path(&destination).pushed_state()?;
+                    return Ok(OrchestrateReply::WorktreeTeardownRefused(
+                        WorktreeTeardownRefused {
+                            worktree: Worktree::from(stored),
+                            reason,
+                        },
+                    ));
                 }
-            }
+            },
             (WorktreeConclusion::Rejected, _) => MainIntegration::Discarded,
         };
         let pushed_state = WorktreePathProbe::from_path(&destination).pushed_state()?;
@@ -293,7 +324,13 @@ impl<'tables> WorktreeRegistry<'tables> {
             if WorktreePathProbe::from_path(&destination).holds_undescribed_changes()? {
                 Self::jj_effect(
                     &destination,
-                    &["describe", "-r", "@", "-m", "salvaged rejected working copy"],
+                    &[
+                        "describe",
+                        "-r",
+                        "@",
+                        "-m",
+                        "salvaged rejected working copy",
+                    ],
                 )
                 .map_err(teardown_error(&destination))?;
             }
@@ -494,9 +531,25 @@ impl<'tables> WorktreeRegistry<'tables> {
         repository: RepositoryName,
         branch: BranchName,
         path: &Path,
+        registered: Option<&StoredWorktree>,
     ) -> Result<StoredWorktree> {
         let probe = WorktreePathProbe::from_path(path);
         let derived = probe.derive()?;
+        let path = wire_path(path)?;
+        if let Some(registered) =
+            registered.filter(|record| record.status != WorktreeStatus::Recycled)
+        {
+            return Ok(StoredWorktree {
+                repository,
+                branch,
+                path,
+                owning_lane: registered.owning_lane.clone(),
+                status: registered.status,
+                purpose: registered.purpose.clone(),
+                last_activity: derived.last_activity,
+                pushed_state: derived.pushed_state,
+            });
+        }
         let lane = self.derive_owning_lane(&branch);
         let purpose = PurposeText::from_text(format!("scanned worktree {}", branch.as_str()))
             .unwrap_or_else(|_| {
@@ -505,7 +558,7 @@ impl<'tables> WorktreeRegistry<'tables> {
         Ok(StoredWorktree {
             repository,
             branch,
-            path: wire_path(path)?,
+            path,
             owning_lane: lane,
             status: WorktreeStatus::Active,
             purpose,
@@ -732,7 +785,13 @@ impl AutoLand {
             } else {
                 MainIntegration::Rebased
             };
-            self.jj(&["bookmark", "set", "main", "-r", WorktreeRegistry::SALVAGE_REVSET])?;
+            self.jj(&[
+                "bookmark",
+                "set",
+                "main",
+                "-r",
+                WorktreeRegistry::SALVAGE_REVSET,
+            ])?;
             if !has_remote {
                 return Ok(LandOutcome::Landed(integration));
             }
@@ -780,7 +839,14 @@ impl AutoLand {
     }
 
     fn holds_conflicts(&self) -> Result<bool> {
-        let output = self.read(&["log", "--no-graph", "-r", "::@ & conflicts()", "-T", "commit_id.short()"])?;
+        let output = self.read(&[
+            "log",
+            "--no-graph",
+            "-r",
+            "::@ & conflicts()",
+            "-T",
+            "commit_id.short()",
+        ])?;
         Ok(!output.trim().is_empty())
     }
 
@@ -896,5 +962,50 @@ mod tests {
         assert_eq!(status_of("orphan"), WorktreeStatus::Abandoned);
         assert_eq!(status_of("already"), WorktreeStatus::Recycled);
         assert_eq!(status_of("other"), WorktreeStatus::Active);
+    }
+
+    #[test]
+    fn conclude_refuses_an_ambiguous_legacy_lane_before_touching_a_workspace() {
+        let temporary = tempfile::Builder::new()
+            .prefix("orchestrate-ambiguous-worktree-lane")
+            .tempdir()
+            .expect("temp dir");
+        let store = StoreLocation::new(
+            temporary
+                .path()
+                .join("orchestrate.sema")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        let layout = OrchestrateLayout::new(
+            temporary.path().join("workspace"),
+            temporary.path().join("git-index"),
+        );
+        let tables = OrchestrateTables::open(&store).expect("tables open");
+        let row = |repository: &str, branch: &str| StoredWorktree {
+            repository: RepositoryName::from_text(repository).expect("repository"),
+            branch: BranchName::from_text(branch).expect("branch"),
+            path: WirePath::from_absolute_path(format!("/tmp/{repository}/{branch}"))
+                .expect("path"),
+            owning_lane: LaneName::from_text("LegacyLane").expect("lane"),
+            status: WorktreeStatus::Active,
+            purpose: PurposeText::from_text("legacy duplicate fixture").expect("purpose"),
+            last_activity: TimestampNanos::new(1),
+            pushed_state: PushedState::Unpushed,
+        };
+        tables
+            .insert_worktree(&row("first-repository", "first-feature"))
+            .expect("first legacy row");
+        tables
+            .insert_worktree(&row("second-repository", "second-feature"))
+            .expect("second legacy row");
+
+        let error = WorktreeRegistry::new(&tables, &layout)
+            .conclude(WorktreeConclusionRequest {
+                owning_lane: LaneName::from_text("LegacyLane").expect("lane"),
+                disposition: WorktreeConclusion::Merged,
+            })
+            .expect_err("ambiguous lane must fail closed");
+        assert!(matches!(error, Error::WorktreeLaneAmbiguous { .. }));
     }
 }

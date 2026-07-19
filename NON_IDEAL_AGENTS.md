@@ -58,3 +58,23 @@ upgrade tier still propagates engine errors without writing a reply because it
 speaks the shared version-handover *contract* wire, not a schema-emitted frame;
 its refusal shape belongs to that shared contract. Fix belongs in the
 version-handover contract crate, not here.
+
+## Lane-selected worktree conclusion awaits an exact public identity
+
+Symptom: the current `ConcludeWorktree` wire request selects only an owning lane,
+while the durable worktree identity is `(repository, branch)`. Selecting the first
+matching row would make a destructive conclusion ambiguous when legacy or manually
+registered data contains two live worktrees for one lane.
+
+Current workaround: `ConcludeWorktree` fails closed with a typed engine refusal
+when it finds ambiguity; it does not choose a first matching row. Refresh preserves
+registered metadata but cannot infer ownership for a previously unknown filesystem
+checkout.
+
+Proper fix / producer contract: after the new Protos/schema generator publishes a
+stable, integration-tested replacement for the current `schema-rust` contract and
+daemon generation APIs, evolve `signal-orchestrate` with an exact
+`WorktreeIdentity { RepositoryName BranchName }` in `ConcludeWorktree`. In the same
+producer migration, define a PascalCase `WorkSubjectKey` relation record that links
+lanes, worktrees, and messenger named threads explicitly; Mint must consume that
+relation through its own later boundary, never infer it from matching strings.

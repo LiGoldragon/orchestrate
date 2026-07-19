@@ -307,6 +307,43 @@ fn observe_worktrees(fixture: &mut WorktreeFixture) -> Vec<Worktree> {
 }
 
 #[test]
+fn refresh_preserves_registered_worktree_ownership_purpose_and_status() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-refresh-metadata");
+    let path = fixture.make_worktree_repository("orchestrate", "preserved-metadata");
+    let expected_lane = LaneName::from_text("MetadataOwner").expect("lane");
+    let expected_purpose =
+        PurposeText::from_text("preserve registered worktree meaning").expect("purpose");
+
+    fixture
+        .handle_meta(MetaOrchestrateRequest::RegisterWorktree(RegisterWorktree {
+            worktree: Worktree {
+                repository: RepositoryName::from_text("orchestrate").expect("repository"),
+                branch: BranchName::from_text("preserved-metadata").expect("branch"),
+                path: WirePath::from_absolute_path(path.to_string_lossy().into_owned())
+                    .expect("absolute worktree path"),
+                owning_lane: expected_lane.clone(),
+                status: WorktreeStatus::Abandoned,
+                purpose: expected_purpose.clone(),
+                last_activity: TimestampNanos::new(0),
+                pushed_state: PushedState::Unpushed,
+            },
+        }))
+        .expect("register worktree");
+
+    fixture
+        .handle_meta(MetaOrchestrateRequest::RefreshWorktreeIndex(
+            orchestrate::RefreshWorktreeIndexOrder {},
+        ))
+        .expect("refresh worktree index");
+
+    let refreshed = observe_worktrees(&mut fixture);
+    assert_eq!(refreshed.len(), 1);
+    assert_eq!(refreshed[0].owning_lane, expected_lane);
+    assert_eq!(refreshed[0].purpose, expected_purpose);
+    assert_eq!(refreshed[0].status, WorktreeStatus::Abandoned);
+}
+
+#[test]
 fn request_scaffolds_workspace_and_registers_row() {
     let mut fixture = WorktreeFixture::new("orchestrate-worktree-request");
     fixture.make_source_repository("orchestrate");
@@ -374,10 +411,20 @@ fn conclude_merged_fast_forwards_real_work_onto_unmoved_main() {
         orchestrate::MainIntegration::FastForwarded
     );
     assert_eq!(concluded.worktree.status, WorktreeStatus::Recycled);
-    assert!(!destination.exists(), "landed teardown removes the worktree");
+    assert!(
+        !destination.exists(),
+        "landed teardown removes the worktree"
+    );
     let main_description = read_jj(
         &source,
-        &["log", "--no-graph", "-r", "main", "-T", "description.first_line()"],
+        &[
+            "log",
+            "--no-graph",
+            "-r",
+            "main",
+            "-T",
+            "description.first_line()",
+        ],
     );
     assert_eq!(main_description.trim(), "real unmerged work");
 }
@@ -413,7 +460,14 @@ fn conclude_merged_rebases_work_when_main_moved() {
     // main now carries both lines of work, feature rebased on top.
     let main_history = read_jj(
         &source,
-        &["log", "--no-graph", "-r", "::main", "-T", "description.first_line() ++ \"\\n\""],
+        &[
+            "log",
+            "--no-graph",
+            "-r",
+            "::main",
+            "-T",
+            "description.first_line() ++ \"\\n\"",
+        ],
     );
     assert!(main_history.contains("feature work"));
     assert!(main_history.contains("other landed work"));
@@ -432,7 +486,10 @@ fn conclude_merged_refuses_conflicted_rebase_and_preserves_work() {
     // Both sides edit base.txt: the auto-rebase must hit a real conflict,
     // fully unwind, and refuse typed — the seam where review gets built later.
     std::fs::write(destination.join("base.txt"), "mine\n").expect("conflicting edit");
-    run_jj(&destination, &["describe", "-m", "conflicting feature edit"]);
+    run_jj(
+        &destination,
+        &["describe", "-m", "conflicting feature edit"],
+    );
     run_jj(&destination, &["new"]);
 
     run_jj(&source, &["new", "main"]);
@@ -459,12 +516,26 @@ fn conclude_merged_refuses_conflicted_rebase_and_preserves_work() {
     // and conflict-free.
     let conflicted = read_jj(
         &destination,
-        &["log", "--no-graph", "-r", "::@ & conflicts()", "-T", "commit_id.short()"],
+        &[
+            "log",
+            "--no-graph",
+            "-r",
+            "::@ & conflicts()",
+            "-T",
+            "commit_id.short()",
+        ],
     );
     assert!(conflicted.trim().is_empty(), "no conflicted commits remain");
     let feature = read_jj(
         &destination,
-        &["log", "--no-graph", "-r", "@-", "-T", "description.first_line()"],
+        &[
+            "log",
+            "--no-graph",
+            "-r",
+            "@-",
+            "-T",
+            "description.first_line()",
+        ],
     );
     assert_eq!(feature.trim(), "conflicting feature edit");
 }
