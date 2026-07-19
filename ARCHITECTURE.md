@@ -178,9 +178,11 @@ This runtime repo contains:
   `triad-runtime::MultiListenerDaemon`, handles requests on bounded
   workers, decodes Signal frames, dispatches to the service, validates
   frame short headers before dispatch, and writes Signal replies;
-- an ordinary thin CLI client, `orchestrate`, that accepts one
-  `signal-orchestrate` NOTA request argument, encodes it as a Signal
-  frame, and connects only to the ordinary daemon socket;
+- an ordinary thin CLI client, `orchestrate`, whose ordinary contract input is
+  shorthand for a typed human presentation and whose one-argument explicit
+  invocation selects `Human` or exact `Canonical` output before it encodes the
+  unchanged `signal-orchestrate` request as a Signal frame and connects only to
+  the ordinary daemon socket;
 - a meta-policy thin CLI client, `meta-orchestrate`, that accepts one
   `meta-signal-orchestrate` NOTA request argument, encodes it as a
   Signal frame, and connects only to the meta daemon socket.
@@ -329,8 +331,11 @@ Task scopes render in bracketed human form:
 
 ## 7 - Constraints
 
-- The CLI accepts exactly one NOTA request and talks to exactly one
-  Signal peer: the `orchestrate` daemon.
+- The CLI accepts exactly one NOTA invocation and talks to exactly one Signal
+  peer: the `orchestrate` daemon. Ordinary contract input lowers to `Human`
+  presentation; for example, `(Explicit (Canonical (Observe Lanes)))` retains
+  the exact canonical contract reply. Presentation never crosses the daemon
+  boundary.
 - The CLI never opens `orchestrate.sema`, sema-engine, or the
   in-process `OrchestrateService`; all state mutation and reads cross
   the daemon boundary.

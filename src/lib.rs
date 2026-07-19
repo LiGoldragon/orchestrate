@@ -1,6 +1,6 @@
 pub mod activity;
 pub mod activity_read;
-pub mod age_projection;
+pub mod orchestrator_presentation;
 pub mod agent_reachability;
 pub mod claim;
 pub mod configuration;
@@ -39,7 +39,10 @@ pub use activity_read::{
     AgentActivityAssessment, AgentActivityRead, ObservedAgentActivity, ProcessDescendantScan,
     SessionArtifactSurface,
 };
-pub use age_projection::{LaneAgeLine, LaneAgeReport};
+pub use orchestrator_presentation::{
+    ExplicitOrchestratorInvocation, HumanLaneAge, HumanLaneAgeReport, HumanOutput,
+    OrchestratorPresentation, OrchestratorPresentationOutput, ResolvedOrchestratorInvocation,
+};
 pub use agent_reachability::{
     AgentReachabilityDiscovery, AncestorProcess, ProcessAncestryWalk, ProcessStat,
     TerminalCellSessionIndex, TerminalCellSessionRecord,

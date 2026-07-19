@@ -13,10 +13,10 @@ use meta_signal_orchestrate::{
 };
 use nota::{NotaDecode, NotaEncode, NotaSource};
 use orchestrate::{
-    DaemonConfiguration, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner,
-    LaneStatus, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateService, Role,
-    RoleToken, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
-    TimestampNanos, WirePath,
+    DaemonConfiguration, ExplicitOrchestratorInvocation, HumanOutput, LaneAssignment,
+    LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneStatus, MirrorSnapshot,
+    MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleToken, SessionIdentifier,
+    StoreLocation, StoredClaim, StoredLaneRegistration, TimestampNanos, WirePath,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -155,7 +155,15 @@ impl DaemonFixture {
         let _ = self.child.wait();
     }
 
-    fn ordinary_cli(&self, request: impl NotaEncode) -> std::process::Output {
+    fn ordinary_cli(&self, request: SchemaInput) -> std::process::Output {
+        self.ordinary_cli_request(ExplicitOrchestratorInvocation::canonical(request))
+    }
+
+    fn ordinary_shorthand_cli(&self, request: SchemaInput) -> std::process::Output {
+        self.ordinary_cli_request(request)
+    }
+
+    fn ordinary_cli_request(&self, request: impl NotaEncode) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_orchestrate"))
             .env("PERSONA_ORCHESTRATE_SOCKET", &self.ordinary_socket)
             .arg(encode_nota(&request))
@@ -694,6 +702,31 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
         projection.lane_registration.lane_assignment.lane_identifier
             == SchemaLaneIdentifier::new("daemon-cli-beta-observe")
     }));
+
+    let human_output =
+        fixture.ordinary_shorthand_cli(SchemaInput::Observe(SchemaObservation::Lanes));
+    assert!(
+        human_output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&human_output.stderr)
+    );
+    let human: HumanOutput = nota_human::NotaSource::new(
+        std::str::from_utf8(&human_output.stdout)
+            .expect("human CLI stdout UTF-8")
+            .trim(),
+    )
+    .parse()
+    .expect("typed human CLI output decodes");
+    let HumanOutput::LanesObserved(human_lanes) = human;
+    let beta_lane = human_lanes
+        .lanes()
+        .iter()
+        .find(|lane| lane.lane() == "daemon-cli-beta-observe")
+        .expect("human projection retains beta lane");
+    assert!(matches!(
+        beta_lane.elapsed(),
+        relative_age_display::HumanReadableTime::Seconds(_)
+    ));
 }
 
 #[test]

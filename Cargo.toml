@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.15.0"
+version      = "0.16.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -64,7 +64,8 @@ signal-sema                 = { git = "https://github.com/LiGoldragon/signal-sem
 signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", branch = "main" }
 triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", branch = "main" }
 nota                   = { git = "https://github.com/LiGoldragon/nota.git", branch = "main" }
-relative-age-display        = { git = "https://github.com/LiGoldragon/relative-age-display.git", branch = "main" }
+relative-age-display        = { git = "https://github.com/LiGoldragon/relative-age-display.git", branch = "typed-human-readable-time" }
+nota-human                   = { package = "nota", git = "https://github.com/LiGoldragon/nota.git", rev = "89dc3c85a9ff96d4e4d53accfd867df672cae5a8" }
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 getrandom                   = "0.4"
 redb                        = "4.1"
