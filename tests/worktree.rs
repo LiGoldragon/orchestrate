@@ -565,10 +565,10 @@ fn conclude_merged_tears_down_when_ancestor_of_main() {
         !destination.exists(),
         "merged teardown removes the worktree directory"
     );
-    assert_eq!(
-        observe_worktrees(&mut fixture)[0].status,
-        WorktreeStatus::Recycled
-    );
+    // The next ordinary turn reconciles the registry. A concluded row whose
+    // checkout was just removed is stale state, so it is immediately reaped
+    // rather than retained as a tombstone.
+    assert!(observe_worktrees(&mut fixture).is_empty());
 }
 
 #[test]

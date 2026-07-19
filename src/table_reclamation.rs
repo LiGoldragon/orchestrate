@@ -1,6 +1,6 @@
-//! Interim idle-age reaping for the orchestrate stores that otherwise grow
+//! Interim stale-state reaping for the orchestrate stores that otherwise grow
 //! without bound: the orchestrator agent registry, its topic membership, the
-//! topic registry, and the workflow model-resolution table.
+//! topic registry, workflow model resolutions, and the worktree index.
 //!
 //! This is an interim mechanism. The psyche's standing direction is that these
 //! lanes and tables should ultimately be "handled more smartly with a mind
@@ -93,6 +93,7 @@ impl BoundedTableReaper {
         self.reap_orphan_topic_memberships(tables, &mut reclamation)?;
         self.reap_empty_topics(tables, &mut reclamation)?;
         self.reap_workflow_model_resolutions(tables, &mut reclamation)?;
+        self.reap_missing_worktrees(tables, &mut reclamation)?;
         self.reap_terminal_worktrees(tables, &mut reclamation)?;
         Ok(reclamation)
     }
@@ -259,6 +260,23 @@ impl BoundedTableReaper {
         Ok(())
     }
 
+    /// A missing checkout is immediate state truth, not a retention decision:
+    /// the index must not keep a row for a resource that no longer exists.
+    /// This retracts only the durable row; no filesystem resource is touched.
+    fn reap_missing_worktrees(
+        &self,
+        tables: &OrchestrateTables,
+        reclamation: &mut BoundedTableReclamation,
+    ) -> Result<()> {
+        for worktree in tables.worktree_records()? {
+            if !std::path::Path::new(worktree.path.as_str()).exists() {
+                tables.remove_worktree(&worktree)?;
+                reclamation.reaped_missing_worktrees += 1;
+            }
+        }
+        Ok(())
+    }
+
     fn reap_terminal_worktrees(
         &self,
         tables: &OrchestrateTables,
@@ -329,6 +347,7 @@ pub struct BoundedTableReclamation {
     pub reaped_orphan_memberships: u32,
     pub reaped_empty_topics: u32,
     pub reaped_workflow_resolutions: u32,
+    pub reaped_missing_worktrees: u32,
     pub reaped_terminal_worktrees: u32,
 }
 
@@ -343,6 +362,7 @@ impl BoundedTableReclamation {
             + self.reaped_orphan_memberships
             + self.reaped_empty_topics
             + self.reaped_workflow_resolutions
+            + self.reaped_missing_worktrees
             + self.reaped_terminal_worktrees
     }
 }

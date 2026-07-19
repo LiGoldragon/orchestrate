@@ -399,10 +399,12 @@ Task scopes render in bracketed human form:
   its agents), topic membership (reaped with the agent that held it), the topic
   registry (an empty, childless topic aged past retention is reaped), the
   workflow model-resolution table (a resolution reaped past its retention), and
-  the worktree index (a concluded tombstone — `Recycled`/`Archived`/`Merged` —
-  reaped past retention, while `Active` work stays and `Abandoned` rows are left
-  for the `ConcludeWorktree` reclaim path). Reconciliation runs at startup and at
-  the head of every ordinary engine turn, and the single reclamation worker's
+  the worktree index (a row whose registered checkout path has vanished is
+  removed immediately as stale state; a still-present concluded tombstone —
+  `Recycled`/`Archived`/`Merged` — is reaped past retention, while live `Active`
+  and `Abandoned` checkouts remain for `ConcludeWorktree` reclaim).
+  Reconciliation runs at startup and at the head of every ordinary engine turn,
+  and the single reclamation worker's
   next deadline is the earliest expiry across the lanes and these tables — the
   same push-not-pull, reaped-only-by-its-own-idle-age invariant, never an
   interval scan. This reaping is an **interim** mechanism, not the final design:

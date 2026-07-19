@@ -2,18 +2,18 @@ use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentActivityRead, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, BoundedTableReaper, BoundedTableReclamation,
-    CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
-    LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
-    LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
-    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
-    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    CreateRoleOrder, DownstreamComponent, HarnessKind, LaneAlreadyRegisteredResolution,
+    LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneReconciliation,
+    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, LaneUnregistrationRequest,
+    MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription, Observation,
+    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
     OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
     PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
     Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
     ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
     StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
     TopicName, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
-    WorkflowRunner,
+    WorkflowRunner, CURRENT_ACTIVITY_LIMIT,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -531,16 +531,12 @@ fn resolved_workflow_model_resolution_identity_prevents_same_workflow_storage_co
         .workflow_model_resolution_records()
         .expect("stored workflow model resolutions");
     assert_eq!(records.len(), 2, "resolution attempts must not overwrite");
-    assert!(
-        records
-            .iter()
-            .any(|record| record.handle == first_run.handle && record.request == exact_request)
-    );
-    assert!(
-        records
-            .iter()
-            .any(|record| record.handle == second_run.handle && record.request == profile_request)
-    );
+    assert!(records
+        .iter()
+        .any(|record| record.handle == first_run.handle && record.request == exact_request));
+    assert!(records
+        .iter()
+        .any(|record| record.handle == second_run.handle && record.request == profile_request));
 }
 
 #[test]
@@ -743,12 +739,10 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
         .iter()
         .find(|status| status.role == operator())
         .expect("operator status");
-    assert!(
-        operator_status
-            .claims
-            .iter()
-            .any(|claim| claim.scope == operator_scope)
-    );
+    assert!(operator_status
+        .claims
+        .iter()
+        .any(|claim| claim.scope == operator_scope));
 }
 
 #[test]
@@ -1073,12 +1067,10 @@ fn role_retirement_removes_claims_and_lock_projection() {
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
     };
-    assert!(
-        snapshot
-            .roles
-            .iter()
-            .all(|status| status.role != retired_role)
-    );
+    assert!(snapshot
+        .roles
+        .iter()
+        .all(|status| status.role != retired_role));
     let survivor_status = snapshot
         .roles
         .iter()
@@ -1385,14 +1377,12 @@ fn fresh_register_supersedes_released_record_and_drops_its_stale_claims() {
         .map(|claim| claim.lane.as_wire_token().to_string())
         .collect();
     assert_eq!(claim_lanes, vec!["bystander"]);
-    assert!(
-        tables
-            .lane_records()
-            .expect("lanes")
-            .iter()
-            .any(|record| record.assignment.lane == lane("bystander")
-                && record.status == orchestrate::LaneStatus::Released)
-    );
+    assert!(tables
+        .lane_records()
+        .expect("lanes")
+        .iter()
+        .any(|record| record.assignment.lane == lane("bystander")
+            && record.status == orchestrate::LaneStatus::Released));
 }
 
 // Recovery inherits a live lane; over a closed record it genuinely re-registers
@@ -1677,32 +1667,35 @@ fn bounded_reaper_reaps_workflow_model_resolutions_past_retention() {
         .reconcile(&tables)
         .expect("reconcile past retention");
     assert_eq!(reaped.reaped_workflow_resolutions, 1);
-    assert!(
-        tables
-            .workflow_model_resolution_records()
-            .expect("resolutions")
-            .is_empty()
-    );
+    assert!(tables
+        .workflow_model_resolution_records()
+        .expect("resolutions")
+        .is_empty());
 }
 
 #[test]
 fn bounded_reaper_reaps_terminal_worktree_tombstones_and_keeps_active_and_abandoned() {
-    let (_temporary, tables) = workflow_resolution_tables("orchestrate-worktree-reap");
+    let (temporary, tables) = workflow_resolution_tables("orchestrate-worktree-reap");
     let registered_now = tables.current_timestamp().expect("clock").value();
     let old = TimestampNanos::new(registered_now);
     // Reconcile from a future instant so every row reads as aged past retention.
     let future = TimestampNanos::new(registered_now + 25 * REAP_HOUR_NANOS);
 
-    let worktree = |branch: &str, status| orchestrate::StoredWorktree {
-        repository: orchestrate::RepositoryName::from_text("orchestrate").expect("repository"),
-        branch: orchestrate::BranchName::from_text(branch).expect("branch"),
-        path: orchestrate::WirePath::from_absolute_path(format!("/tmp/reap-{branch}"))
-            .expect("path"),
-        owning_lane: orchestrate::LaneName::from_text("designer").expect("lane"),
-        status,
-        purpose: orchestrate::PurposeText::from_text("interim reaping fixture").expect("purpose"),
-        last_activity: old,
-        pushed_state: orchestrate::PushedState::AncestorOfMain,
+    let worktree = |branch: &str, status| {
+        let path = temporary.path().join(branch);
+        std::fs::create_dir_all(&path).expect("present checkout directory");
+        orchestrate::StoredWorktree {
+            repository: orchestrate::RepositoryName::from_text("orchestrate").expect("repository"),
+            branch: orchestrate::BranchName::from_text(branch).expect("branch"),
+            path: orchestrate::WirePath::from_absolute_path(path.to_string_lossy().into_owned())
+                .expect("path"),
+            owning_lane: orchestrate::LaneName::from_text("designer").expect("lane"),
+            status,
+            purpose: orchestrate::PurposeText::from_text("interim reaping fixture")
+                .expect("purpose"),
+            last_activity: old,
+            pushed_state: orchestrate::PushedState::AncestorOfMain,
+        }
     };
 
     // Active work is never reaped by age; an Abandoned row awaits ConcludeWorktree
@@ -1739,6 +1732,59 @@ fn bounded_reaper_reaps_terminal_worktree_tombstones_and_keeps_active_and_abando
         .collect();
     remaining.sort();
     assert_eq!(remaining, vec!["leaked-feature", "live-feature"]);
+}
+
+#[test]
+fn bounded_reaper_removes_missing_worktree_rows_without_touching_present_checkouts() {
+    let (temporary, tables) = workflow_resolution_tables("orchestrate-missing-worktree-reap");
+    let present_path = temporary.path().join("present-checkout");
+    std::fs::create_dir_all(&present_path).expect("present checkout");
+    let missing_path = temporary.path().join("missing-checkout");
+    let now = tables.current_timestamp().expect("clock");
+    let worktree = |branch: &str, path: &std::path::Path, status| orchestrate::StoredWorktree {
+        repository: orchestrate::RepositoryName::from_text("orchestrate").expect("repository"),
+        branch: orchestrate::BranchName::from_text(branch).expect("branch"),
+        path: orchestrate::WirePath::from_absolute_path(path.to_string_lossy().into_owned())
+            .expect("path"),
+        owning_lane: orchestrate::LaneName::from_text("maintenance").expect("lane"),
+        status,
+        purpose: orchestrate::PurposeText::from_text("missing checkout fixture").expect("purpose"),
+        last_activity: now,
+        pushed_state: orchestrate::PushedState::AncestorOfMain,
+    };
+    tables
+        .insert_worktree(&worktree(
+            "present-feature",
+            &present_path,
+            orchestrate::WorktreeStatus::Active,
+        ))
+        .expect("insert present worktree");
+    tables
+        .insert_worktree(&worktree(
+            "missing-active",
+            &missing_path,
+            orchestrate::WorktreeStatus::Active,
+        ))
+        .expect("insert missing active worktree");
+    tables
+        .insert_worktree(&worktree(
+            "missing-abandoned",
+            &missing_path.with_file_name("missing-abandoned"),
+            orchestrate::WorktreeStatus::Abandoned,
+        ))
+        .expect("insert missing abandoned worktree");
+
+    let reclamation = BoundedTableReaper::new(now)
+        .reconcile(&tables)
+        .expect("reconcile missing worktrees");
+    assert_eq!(reclamation.reaped_missing_worktrees, 2);
+    let remaining = tables.worktree_records().expect("remaining worktrees");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].branch.as_str(), "present-feature");
+    assert!(
+        present_path.exists(),
+        "reaping must not delete a live checkout"
+    );
 }
 
 #[test]
@@ -1954,14 +2000,13 @@ fn observe_projects_sessions_all_lanes_session_lanes_and_resource_claims() {
         beta_lane.registration.status,
         orchestrate::LaneStatus::Released
     );
-    assert!(
-        all_lanes
-            .lanes
-            .iter()
-            .any(|projection| projection.registration.assignment.lane
-                == lane("alpha-observe-worker")
-                && projection.resource_claims.len() == 1)
-    );
+    assert!(all_lanes
+        .lanes
+        .iter()
+        .any(
+            |projection| projection.registration.assignment.lane == lane("alpha-observe-worker")
+                && projection.resource_claims.len() == 1
+        ));
 }
 
 #[test]
@@ -2117,13 +2162,11 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
     let repositories = fixture.service.repositories().expect("repositories");
     assert_eq!(repositories.len(), 1);
     assert_eq!(repositories[0].name.as_str(), repository_name);
-    assert!(
-        fixture
-            .workspace
-            .join("repos")
-            .join(repository_name)
-            .exists()
-    );
+    assert!(fixture
+        .workspace
+        .join("repos")
+        .join(repository_name)
+        .exists());
 }
 
 fn add_origin_remote(checkout: &std::path::Path, url: &str) {
@@ -2262,9 +2305,15 @@ fn worktree_request_names_the_absent_repository_by_identity() {
     };
     let orchestrate::WorktreeRequestRejection::RepositoryAbsentLocally(identity) = rejected.reason
     else {
-        panic!("expected RepositoryAbsentLocally, got {:?}", rejected.reason);
+        panic!(
+            "expected RepositoryAbsentLocally, got {:?}",
+            rejected.reason
+        );
     };
-    assert_eq!(identity.canonical_text(), "github.com/LiGoldragon/vanishing");
+    assert_eq!(
+        identity.canonical_text(),
+        "github.com/LiGoldragon/vanishing"
+    );
 }
 
 #[test]
@@ -2530,7 +2579,13 @@ fn make_contention_repository(fixture: &LayoutFixture, name: &str) -> PathBuf {
     );
     for arguments in [
         vec!["config", "set", "--repo", "user.name", "smoke"],
-        vec!["config", "set", "--repo", "user.email", "smoke@example.invalid"],
+        vec![
+            "config",
+            "set",
+            "--repo",
+            "user.email",
+            "smoke@example.invalid",
+        ],
     ] {
         let output = std::process::Command::new("jj")
             .arg("--no-pager")
@@ -2605,12 +2660,17 @@ fn contended_repository_main_answers_with_scaffolded_feature_worktree() {
     assert_eq!(contention.holder, operator());
     assert_eq!(contention.held_reason.as_str(), "working on main");
     let orchestrate::FeatureWorktree::Scaffolded(worktree) = &contention.redirect else {
-        panic!("expected scaffolded feature worktree, got {:?}", contention.redirect);
+        panic!(
+            "expected scaffolded feature worktree, got {:?}",
+            contention.redirect
+        );
     };
     assert_eq!(worktree.branch.as_str(), "designer");
     assert_eq!(worktree.owning_lane.as_str(), "designer");
     assert!(
-        std::path::Path::new(worktree.path.as_str()).join(".jj").exists(),
+        std::path::Path::new(worktree.path.as_str())
+            .join(".jj")
+            .exists(),
         "scaffolded feature worktree is a real jj workspace"
     );
 
@@ -2634,13 +2694,18 @@ fn contended_repository_main_answers_with_scaffolded_feature_worktree() {
     // The operator releases main and is told, in the release acknowledgment
     // itself, that a branch was started off the repo while it was held.
     let released = fixture
-        .handle(OrchestrateRequest::Release(RoleRelease { role: operator() }))
+        .handle(OrchestrateRequest::Release(RoleRelease {
+            role: operator(),
+        }))
         .expect("operator release");
     let OrchestrateReply::ReleaseAcknowledgment(acknowledgment) = released else {
         panic!("expected ReleaseAcknowledgment, got {released:?}");
     };
     assert_eq!(acknowledgment.started_branches.len(), 1);
-    assert_eq!(acknowledgment.started_branches[0].branch.as_str(), "designer");
+    assert_eq!(
+        acknowledgment.started_branches[0].branch.as_str(),
+        "designer"
+    );
     assert_eq!(
         acknowledgment.started_branches[0].repository.as_str(),
         "contended"
@@ -2882,7 +2947,11 @@ fn write_process_stat(process_root: &std::path::Path, pid: u32, parent_pid: u32,
     .expect("write stat");
 }
 
-fn terminal_cell_reachability(target: &std::path::Path, pid: u32, start: u64) -> orchestrate::StoredAgentReachability {
+fn terminal_cell_reachability(
+    target: &std::path::Path,
+    pid: u32,
+    start: u64,
+) -> orchestrate::StoredAgentReachability {
     orchestrate::StoredAgentReachability {
         endpoint_kind: orchestrate::StoredAgentEndpointKind::TerminalCell,
         target: target.to_string_lossy().into_owned(),

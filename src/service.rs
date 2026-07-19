@@ -14,11 +14,11 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
+    handover::{HandoverClockReading, HandoverState},
     Error, HarnessLivenessReconciliation, HarnessLivenessWatch, LaneReclaimer, LegacyLockImport,
     LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
     OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, RoleRegistry,
     StoreLocation, StoredDivergence, WatchedHarnessProcess,
-    handover::{HandoverClockReading, HandoverState},
 };
 
 /// The orchestrate engine. It is owned exclusively by the schema-emitted
@@ -119,10 +119,8 @@ impl OrchestrateService {
         mut self,
         ordinary_socket_path: std::path::PathBuf,
     ) -> Result<Self> {
-        let watch = HarnessLivenessWatch::spawn(
-            ordinary_socket_path,
-            std::path::PathBuf::from("/proc"),
-        )?;
+        let watch =
+            HarnessLivenessWatch::spawn(ordinary_socket_path, std::path::PathBuf::from("/proc"))?;
         watch.reconcile(WatchedHarnessProcess::desired_set(&self.tables)?);
         self.harness_liveness_watch = Some(watch);
         Ok(self)
@@ -191,6 +189,7 @@ impl OrchestrateService {
         // worktree tombstone reaped past its retention, changed the worktree
         // table, so refresh the GC manifest to match.
         if lane_reconciliation.flagged_abandoned_worktrees > 0
+            || table_reclamation.reaped_missing_worktrees > 0
             || table_reclamation.reaped_terminal_worktrees > 0
         {
             crate::WorktreeProjection::new(&self.tables, &self.layout).project()?;
