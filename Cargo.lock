@@ -441,7 +441,16 @@ name = "nota"
 version = "0.8.0"
 source = "git+https://github.com/LiGoldragon/nota-next.git?rev=18e2e8d0dba37e9e84045af3608585b51f6e3b36#18e2e8d0dba37e9e84045af3608585b51f6e3b36"
 dependencies = [
- "nota-derive 0.4.0",
+ "nota-derive 0.4.0 (git+https://github.com/LiGoldragon/nota-next.git?rev=18e2e8d0dba37e9e84045af3608585b51f6e3b36)",
+ "rkyv",
+]
+
+[[package]]
+name = "nota"
+version = "0.9.0"
+source = "git+https://github.com/LiGoldragon/nota.git?rev=89dc3c85a9ff96d4e4d53accfd867df672cae5a8#89dc3c85a9ff96d4e4d53accfd867df672cae5a8"
+dependencies = [
+ "nota-derive 0.4.0 (git+https://github.com/LiGoldragon/nota.git?rev=89dc3c85a9ff96d4e4d53accfd867df672cae5a8)",
  "rkyv",
 ]
 
@@ -466,6 +475,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nota-derive"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/nota.git?rev=89dc3c85a9ff96d4e4d53accfd867df672cae5a8#89dc3c85a9ff96d4e4d53accfd867df672cae5a8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "num_cpus"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -483,13 +502,14 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.15.1"
+version = "0.16.0"
 dependencies = [
  "criome",
  "getrandom",
  "meta-signal-harness",
  "meta-signal-orchestrate",
  "nota 0.5.1",
+ "nota 0.9.0",
  "redb",
  "relative-age-display",
  "rkyv",
@@ -600,8 +620,11 @@ dependencies = [
 
 [[package]]
 name = "relative-age-display"
-version = "0.1.0"
-source = "git+https://github.com/LiGoldragon/relative-age-display.git?branch=main#0c527f0927b8af6267d637bfd52ff94f5443f069"
+version = "0.2.0"
+source = "git+https://github.com/LiGoldragon/relative-age-display.git?branch=main#6c9f108d51d94ecb19f30c0b08be9027109e370f"
+dependencies = [
+ "nota 0.9.0",
+]
 
 [[package]]
 name = "rend"
