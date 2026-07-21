@@ -17,13 +17,15 @@ daemon boundary that replaces the transitional workspace lock helper.*
 > handler now serves marker/readiness/completion and Mirror restore
 > frames. GitHub/ghq-backed report-repository creation is still
 > missing.
-> The live production surface is the real component CLI pair with one
-> NOTA argument each: `orchestrate` for ordinary operations and
-> `meta-orchestrate` for meta-policy operations. The old
-> `tools/orchestrate` argv-compatible helper is retired, not extended.
-> A managed user service is still missing; until then the daemon is
-> started by deployment/session setup rather than by keeping a
-> compatibility grammar alive.
+> The live production surface is the real component CLI pair: `orchestrate`
+> for ordinary operations and `meta-orchestrate` for meta-policy operations.
+> The old `tools/orchestrate` argv-compatible helper is retired, not extended.
+> A managed user service is still missing; until then the daemon is started by
+> deployment/session setup rather than by keeping a compatibility grammar alive.
+
+Operational request forms, workflows, boundaries, and error handling are in
+[`readme.md`](readme.md). This document describes architecture and lifecycle
+semantics.
 
 ## Direction
 
@@ -331,11 +333,10 @@ Task scopes render in bracketed human form:
 
 ## 7 - Constraints
 
-- The CLI accepts exactly one NOTA invocation and talks to exactly one Signal
-  peer: the `orchestrate` daemon. Ordinary contract input lowers to `Human`
-  presentation; for example, `(Explicit (Canonical (Observe Lanes)))` retains
-  the exact canonical contract reply. Presentation never crosses the daemon
-  boundary.
+- Each CLI has one NOTA invocation and one Signal peer. Ordinary contract
+  input lowers to a human presentation; canonical presentation preserves the
+  exact contract reply. Presentation never crosses the daemon boundary. The
+  agent-facing request forms are documented in [`readme.md`](readme.md).
 - The CLI never opens `orchestrate.sema`, sema-engine, or the
   in-process `OrchestrateService`; all state mutation and reads cross
   the daemon boundary.
