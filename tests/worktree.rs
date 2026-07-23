@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 use orchestrate::{
     BranchName, LaneName, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
@@ -28,9 +30,21 @@ impl WorktreeFixture {
             .prefix(name)
             .tempdir()
             .expect("temporary directory");
-        let workspace = temporary.path().join("workspace");
         let git_index = temporary.path().join("git-index");
         let worktree_root = temporary.path().join("worktrees");
+        Self::with_temporary(temporary, git_index, worktree_root)
+    }
+
+    fn new_with_indexes(name: &str, git_index: PathBuf, worktree_root: PathBuf) -> Self {
+        let temporary = tempfile::Builder::new()
+            .prefix(name)
+            .tempdir()
+            .expect("temporary directory");
+        Self::with_temporary(temporary, git_index, worktree_root)
+    }
+
+    fn with_temporary(temporary: TempDir, git_index: PathBuf, worktree_root: PathBuf) -> Self {
+        let workspace = temporary.path().join("workspace");
         std::fs::create_dir_all(workspace.join("orchestrate")).expect("orchestrate directory");
         std::fs::write(
             workspace.join("orchestrate").join("roles.list"),
@@ -97,6 +111,34 @@ impl WorktreeFixture {
         run_jj(&path, &["describe", "-m", "base commit"]);
         run_jj(&path, &["bookmark", "create", "main", "-r", "@"]);
         run_jj(&path, &["new"]);
+        path
+    }
+
+    /// A Git-only source checkout with a real `main` commit. It deliberately
+    /// lacks `.jj` so `RequestWorktree` must bootstrap colocated metadata.
+    fn make_git_source_repository_without_jj(&self, repository: &str) -> PathBuf {
+        let path = self.git_index.join(repository);
+        std::fs::create_dir_all(&path).expect("Git source repo path");
+        let init = Command::new("git")
+            .arg("init")
+            .arg("--initial-branch=main")
+            .arg(&path)
+            .output()
+            .expect("initialize Git source repo");
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        run_git(&path, &["config", "user.name", "smoke"]);
+        run_git(&path, &["config", "user.email", "smoke@example.invalid"]);
+        std::fs::write(path.join("base.txt"), "base\n").expect("Git source content");
+        run_git(&path, &["add", "base.txt"]);
+        run_git(&path, &["commit", "-m", "base commit"]);
+        assert!(
+            !path.join(".jj").exists(),
+            "Git-only fixture must not already hold Jujutsu metadata"
+        );
         path
     }
 
@@ -182,6 +224,20 @@ fn run_jj(repository: &std::path::Path, arguments: &[&str]) {
         status.status.success(),
         "jj {arguments:?} failed: {}",
         String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+fn run_git(repository: &std::path::Path, arguments: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args(arguments)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {arguments:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -344,9 +400,34 @@ fn refresh_preserves_registered_worktree_ownership_purpose_and_status() {
 }
 
 #[test]
-fn request_scaffolds_workspace_and_registers_row() {
+fn request_initializes_missing_colocated_jj_metadata_for_git_source() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-git-bootstrap");
+    let source = fixture.make_git_source_repository_without_jj("git-only");
+
+    let reply = fixture.request("git-only", "bootstrap-feature", "designer");
+    let OrchestrateReply::WorktreeScaffolded(scaffolded) = reply else {
+        panic!("expected WorktreeScaffolded")
+    };
+    let destination = fixture
+        .worktree_root
+        .join("git-only")
+        .join("bootstrap-feature");
+    assert!(source.join(".jj").is_dir(), "source metadata initialized");
+    assert!(
+        destination.join(".jj").exists(),
+        "workspace metadata exists"
+    );
+    assert_eq!(
+        scaffolded.worktree.path.as_str(),
+        destination.to_string_lossy()
+    );
+}
+
+#[test]
+fn request_reuses_existing_jj_metadata_and_registers_row() {
     let mut fixture = WorktreeFixture::new("orchestrate-worktree-request");
-    fixture.make_source_repository("orchestrate");
+    let source = fixture.make_source_repository("orchestrate");
+    let main_before = read_jj(&source, &["log", "-r", "main", "-T", "description"]);
 
     let reply = fixture.request("orchestrate", "feature-lifecycle", "designer");
     let OrchestrateReply::WorktreeScaffolded(scaffolded) = reply else {
@@ -363,6 +444,12 @@ fn request_scaffolds_workspace_and_registers_row() {
     assert_eq!(
         scaffolded.worktree.path.as_str(),
         destination.to_string_lossy()
+    );
+    assert!(source.join(".jj").is_dir(), "existing metadata remains");
+    assert_eq!(
+        read_jj(&source, &["log", "-r", "main", "-T", "description"]),
+        main_before,
+        "request must not reinitialize or rewrite the source repository"
     );
 
     let worktrees = observe_worktrees(&mut fixture);
@@ -384,6 +471,154 @@ fn request_scaffolds_workspace_and_registers_row() {
     assert_eq!(
         rejected.reason,
         orchestrate::WorktreeRequestRejection::RepositoryNotFound
+    );
+}
+
+#[test]
+fn request_rejects_non_git_source_with_existing_typed_refusal() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-non-git-source");
+    let source = fixture.git_index.join("plain-directory");
+    std::fs::create_dir_all(&source).expect("plain source directory");
+    std::fs::write(source.join("note.txt"), "not a checkout\n").expect("plain source content");
+
+    let reply = fixture.request("plain-directory", "rejected-feature", "designer");
+    let OrchestrateReply::WorktreeRequestRejected(rejected) = reply else {
+        panic!("expected WorktreeRequestRejected, got {reply:?}");
+    };
+    assert_eq!(
+        rejected.reason,
+        orchestrate::WorktreeRequestRejection::RepositoryNotFound
+    );
+    assert!(
+        !source.join(".jj").exists(),
+        "a non-Git source must not be initialized"
+    );
+    assert!(
+        !fixture
+            .worktree_root
+            .join("plain-directory")
+            .join("rejected-feature")
+            .exists(),
+        "a rejected request must not create a workspace"
+    );
+}
+
+#[test]
+fn concurrent_requests_bootstrap_git_source_safely() {
+    let source_fixture = WorktreeFixture::new("orchestrate-worktree-bootstrap-source");
+    let source = source_fixture.make_git_source_repository_without_jj("git-only");
+    let mut first = WorktreeFixture::new_with_indexes(
+        "orchestrate-worktree-bootstrap-first",
+        source_fixture.git_index.clone(),
+        source_fixture.worktree_root.clone(),
+    );
+    let mut second = WorktreeFixture::new_with_indexes(
+        "orchestrate-worktree-bootstrap-second",
+        source_fixture.git_index.clone(),
+        source_fixture.worktree_root.clone(),
+    );
+    let start = Arc::new(Barrier::new(3));
+
+    let ((_first_fixture, first), (_second_fixture, second)) = thread::scope(|scope| {
+        let first_start = Arc::clone(&start);
+        let first = scope.spawn(move || {
+            first_start.wait();
+            let reply = first.request("git-only", "first-bootstrap-feature", "designer");
+            (first, reply)
+        });
+        let second_start = Arc::clone(&start);
+        let second = scope.spawn(move || {
+            second_start.wait();
+            let reply = second.request("git-only", "second-bootstrap-feature", "operator");
+            (second, reply)
+        });
+        start.wait();
+        (
+            first.join().expect("first request thread"),
+            second.join().expect("second request thread"),
+        )
+    });
+
+    let OrchestrateReply::WorktreeScaffolded(first) = first else {
+        panic!("first request must scaffold, got {first:?}");
+    };
+    let OrchestrateReply::WorktreeScaffolded(second) = second else {
+        panic!("second request must scaffold, got {second:?}");
+    };
+    assert!(source.join(".jj").is_dir(), "source bootstrap completed");
+    assert!(
+        PathBuf::from(first.worktree.path.as_str())
+            .join(".jj")
+            .exists(),
+        "first workspace exists"
+    );
+    assert!(
+        PathBuf::from(second.worktree.path.as_str())
+            .join(".jj")
+            .exists(),
+        "second workspace exists"
+    );
+}
+
+#[test]
+fn concurrent_same_workspace_request_returns_typed_refusal() {
+    let source_fixture = WorktreeFixture::new("orchestrate-worktree-same-workspace-source");
+    let source = source_fixture.make_git_source_repository_without_jj("git-only");
+    let mut first = WorktreeFixture::new_with_indexes(
+        "orchestrate-worktree-same-workspace-first",
+        source_fixture.git_index.clone(),
+        source_fixture.worktree_root.clone(),
+    );
+    let mut second = WorktreeFixture::new_with_indexes(
+        "orchestrate-worktree-same-workspace-second",
+        source_fixture.git_index.clone(),
+        source_fixture.worktree_root.clone(),
+    );
+    let start = Arc::new(Barrier::new(3));
+
+    let ((_first_fixture, first), (_second_fixture, second)) = thread::scope(|scope| {
+        let first_start = Arc::clone(&start);
+        let first = scope.spawn(move || {
+            first_start.wait();
+            let reply = first.request("git-only", "same-bootstrap-feature", "designer");
+            (first, reply)
+        });
+        let second_start = Arc::clone(&start);
+        let second = scope.spawn(move || {
+            second_start.wait();
+            let reply = second.request("git-only", "same-bootstrap-feature", "operator");
+            (second, reply)
+        });
+        start.wait();
+        (
+            first.join().expect("first request thread"),
+            second.join().expect("second request thread"),
+        )
+    });
+
+    match (first, second) {
+        (
+            OrchestrateReply::WorktreeScaffolded(_),
+            OrchestrateReply::WorktreeRequestRejected(rejected),
+        )
+        | (
+            OrchestrateReply::WorktreeRequestRejected(rejected),
+            OrchestrateReply::WorktreeScaffolded(_),
+        ) => assert_eq!(
+            rejected.reason,
+            orchestrate::WorktreeRequestRejection::WorktreeAlreadyExists
+        ),
+        replies => panic!("expected one scaffold and one typed rejection, got {replies:?}"),
+    }
+    assert!(source.join(".jj").is_dir(), "source bootstrap completed");
+    assert!(
+        source_fixture
+            .worktree_root
+            .join("git-only")
+            .join("same-bootstrap-feature")
+            .join(".jj")
+            .exists(),
+        "the successful workspace remains"
     );
 }
 

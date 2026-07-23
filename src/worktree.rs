@@ -12,6 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use rustix::fs::{FlockOperation, flock};
+
 use meta_signal_orchestrate::{
     ArchiveWorktreeOrder, MetaOrchestrateReply, RegisterWorktree, WorktreeArchived,
     WorktreeIndexRefreshed, WorktreeRegistered,
@@ -32,6 +34,39 @@ use crate::{
 pub struct WorktreeRegistry<'tables> {
     tables: &'tables OrchestrateTables,
     layout: &'tables OrchestrateLayout,
+}
+
+/// An advisory lock on the backing Git metadata for one source checkout.
+///
+/// The file handle keeps the lock alive across both Jujutsu bootstrap and
+/// workspace creation, so separate daemon processes cannot observe a
+/// half-initialized `.jj` directory or race the shared workspace registry.
+struct GitCheckoutLock {
+    _metadata: std::fs::File,
+}
+
+impl GitCheckoutLock {
+    fn acquire(checkout: &Path) -> std::result::Result<Option<Self>, String> {
+        let git_metadata = checkout.join(".git");
+        if !git_metadata.exists() {
+            return Ok(None);
+        }
+        let metadata = std::fs::File::open(&git_metadata).map_err(|error| {
+            format!(
+                "could not open Git metadata {} for workspace scaffolding: {error}",
+                git_metadata.display()
+            )
+        })?;
+        flock(&metadata, FlockOperation::LockExclusive).map_err(|error| {
+            format!(
+                "could not lock Git metadata {} for workspace scaffolding: {error}",
+                git_metadata.display()
+            )
+        })?;
+        Ok(Some(Self {
+            _metadata: metadata,
+        }))
+    }
 }
 
 impl<'tables> WorktreeRegistry<'tables> {
@@ -161,6 +196,8 @@ impl<'tables> WorktreeRegistry<'tables> {
     ///
     /// The daemon creates the `jj` workspace off `main`, sets the feature
     /// bookmark, derives `pushed_state`/`last_activity`, and inserts the row.
+    /// A Git-backed source checkout without `.jj` is initialized colocated
+    /// before its workspace is created; an existing Jujutsu checkout is reused.
     /// Refuses (as a reply, mutating nothing) when the repository has no source
     /// checkout or when a worktree already occupies the `(repository, branch)`
     /// identity. A `jj` failure surfaces as [`Error::WorktreeScaffold`] with no
@@ -208,6 +245,16 @@ impl<'tables> WorktreeRegistry<'tables> {
             .worktree_index_root()
             .join(order.repository.as_str())
             .join(order.branch.as_str());
+        let scaffold_error = || {
+            let path = destination.display().to_string();
+            move |message: String| Error::WorktreeScaffold { path, message }
+        };
+        // The source lock covers the read-check-create sequence, not just
+        // `jj git init`: concurrent requests for the same `(repository,
+        // branch)` must observe the first scaffold and return the established
+        // typed refusal rather than leaking a later `jj` workspace error.
+        let _checkout_lock =
+            GitCheckoutLock::acquire(&repository_checkout).map_err(scaffold_error())?;
         let registered = self.tables.worktree_records()?;
         let already_registered = registered.iter().any(|record| {
             record.repository.as_str() == order.repository.as_str()
@@ -432,6 +479,14 @@ impl<'tables> WorktreeRegistry<'tables> {
         destination: &Path,
         branch: &str,
     ) -> Result<()> {
+        let scaffold_error = || {
+            let path = destination.display().to_string();
+            move |message: String| Error::WorktreeScaffold { path, message }
+        };
+        // `request` holds the source checkout lock from the preflight through
+        // this bootstrap and workspace creation.
+        self.bootstrap_colocated_jj_metadata(repository_checkout)
+            .map_err(scaffold_error())?;
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent).map_err(|error| Error::WorktreeScaffold {
                 path: destination.display().to_string(),
@@ -440,10 +495,6 @@ impl<'tables> WorktreeRegistry<'tables> {
         }
         let workspace = Self::workspace_name(destination);
         let destination_text = destination.to_string_lossy().into_owned();
-        let scaffold_error = || {
-            let path = destination.display().to_string();
-            move |message: String| Error::WorktreeScaffold { path, message }
-        };
         Self::jj_effect(
             repository_checkout,
             &[
@@ -460,6 +511,35 @@ impl<'tables> WorktreeRegistry<'tables> {
         Self::jj_effect(destination, &["bookmark", "create", branch, "-r", "@"])
             .map_err(scaffold_error())?;
         Ok(())
+    }
+
+    /// Initialize Jujutsu only for a Git checkout that has not yet gained its
+    /// colocated metadata. [`GitCheckoutLock`] serializes the source effect
+    /// across daemon processes; the post-command check also accepts a completed
+    /// external bootstrap instead of turning its "already initialized" result
+    /// into a request failure.
+    fn bootstrap_colocated_jj_metadata(
+        &self,
+        repository_checkout: &Path,
+    ) -> std::result::Result<(), String> {
+        let jj_metadata = repository_checkout.join(".jj");
+        if jj_metadata.exists() {
+            return Ok(());
+        }
+        let output = Command::new("jj")
+            .arg("--no-pager")
+            .arg("--color")
+            .arg("never")
+            .arg("git")
+            .arg("init")
+            .arg("--colocate")
+            .arg(repository_checkout)
+            .output()
+            .map_err(|error| format!("could not run jj git init: {error}"))?;
+        if output.status.success() || jj_metadata.exists() {
+            return Ok(());
+        }
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 
     /// Flag every `Active` worktree owned by `owning_lane` as
