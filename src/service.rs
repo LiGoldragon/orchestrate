@@ -14,11 +14,11 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    handover::{HandoverClockReading, HandoverState},
     Error, HarnessLivenessReconciliation, HarnessLivenessWatch, LaneReclaimer, LegacyLockImport,
     LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
     OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, RoleRegistry,
     StoreLocation, StoredDivergence, WatchedHarnessProcess,
+    handover::{HandoverClockReading, HandoverState},
 };
 
 /// The orchestrate engine. It is owned exclusively by the schema-emitted

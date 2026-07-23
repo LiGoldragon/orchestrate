@@ -200,8 +200,9 @@ impl<'tables> WorktreeRegistry<'tables> {
     /// before its workspace is created; an existing Jujutsu checkout is reused.
     /// Refuses (as a reply, mutating nothing) when the repository has no source
     /// checkout or when a worktree already occupies the `(repository, branch)`
-    /// identity. A `jj` failure surfaces as [`Error::WorktreeScaffold`] with no
-    /// row committed.
+    /// identity. A malformed or unavailable linked-worktree owner remains a
+    /// caller-facing typed refusal; a `jj` failure surfaces as
+    /// [`Error::WorktreeScaffold`] with no row committed.
     pub fn request(&self, order: WorktreeRequest) -> Result<OrchestrateReply> {
         // Resolution goes through the identity-keyed repository index first;
         // the filesystem stays the discovery floor for an unrefreshed index.
@@ -253,8 +254,13 @@ impl<'tables> WorktreeRegistry<'tables> {
         // `jj git init`: concurrent requests for the same `(repository,
         // branch)` must observe the first scaffold and return the established
         // typed refusal rather than leaking a later `jj` workspace error.
+        // A Git linked worktree has a `.git` file, but Jujutsu can only
+        // colocate metadata in its primary Git checkout. Resolve that owner
+        // before both locking and scaffolding so linked and primary requests
+        // serialize on the same Git metadata.
+        let colocated_checkout = Self::colocated_jj_checkout(&repository_checkout)?;
         let _checkout_lock =
-            GitCheckoutLock::acquire(&repository_checkout).map_err(scaffold_error())?;
+            GitCheckoutLock::acquire(&colocated_checkout).map_err(scaffold_error())?;
         let registered = self.tables.worktree_records()?;
         let already_registered = registered.iter().any(|record| {
             record.repository.as_str() == order.repository.as_str()
@@ -268,7 +274,7 @@ impl<'tables> WorktreeRegistry<'tables> {
                 },
             ));
         }
-        self.scaffold_workspace(&repository_checkout, &destination, order.branch.as_str())?;
+        self.scaffold_workspace(&colocated_checkout, &destination, order.branch.as_str())?;
         let derived = WorktreePathProbe::from_path(&destination).derive()?;
         let worktree = Worktree {
             repository: order.repository,
@@ -364,6 +370,7 @@ impl<'tables> WorktreeRegistry<'tables> {
             let path = path.display().to_string();
             move |message: String| Error::WorktreeTeardown { path, message }
         };
+        let colocated_checkout = Self::colocated_jj_checkout(&repository_checkout)?;
         if matches!(order.disposition, WorktreeConclusion::Rejected) {
             let discard = format!("discard/{branch}");
             // `jj git push` refuses description-less commits, and salvage must
@@ -404,7 +411,7 @@ impl<'tables> WorktreeRegistry<'tables> {
                 return Err(teardown_error(&destination)(message));
             }
         }
-        Self::jj_effect(&repository_checkout, &["workspace", "forget", &workspace])
+        Self::jj_effect(&colocated_checkout, &["workspace", "forget", &workspace])
             .map_err(teardown_error(&destination))?;
         std::fs::remove_dir_all(&destination).map_err(|error| Error::WorktreeTeardown {
             path: destination.display().to_string(),
@@ -412,10 +419,10 @@ impl<'tables> WorktreeRegistry<'tables> {
         })?;
         // Local bookmarks are best-effort: the remote `discard/<branch>` ref is
         // the salvage, and a missing local bookmark must not fail teardown.
-        let _ = Self::jj_effect(&repository_checkout, &["bookmark", "delete", &branch]);
+        let _ = Self::jj_effect(&colocated_checkout, &["bookmark", "delete", &branch]);
         if matches!(order.disposition, WorktreeConclusion::Rejected) {
             let _ = Self::jj_effect(
-                &repository_checkout,
+                &colocated_checkout,
                 &["bookmark", "delete", &format!("discard/{branch}")],
             );
         }
@@ -511,6 +518,77 @@ impl<'tables> WorktreeRegistry<'tables> {
         Self::jj_effect(destination, &["bookmark", "create", branch, "-r", "@"])
             .map_err(scaffold_error())?;
         Ok(())
+    }
+
+    /// Resolve the checkout where colocated Jujutsu metadata belongs.
+    ///
+    /// A Git linked worktree has a `.git` file that points into the primary
+    /// checkout's common Git directory. Jujutsu intentionally refuses to
+    /// create colocated metadata in that linked worktree, so bootstrap and
+    /// workspace operations must instead use the primary checkout. A source
+    /// that already has `.jj` is itself a valid Jujutsu workspace and is kept.
+    fn colocated_jj_checkout(repository_checkout: &Path) -> Result<PathBuf> {
+        let git_file = repository_checkout.join(".git");
+        if repository_checkout.join(".jj").exists() || !git_file.is_file() {
+            return Ok(repository_checkout.to_path_buf());
+        }
+
+        let malformed = |message: String| Error::WorktreeLinkedOwnerMalformed {
+            checkout: repository_checkout.display().to_string(),
+            message,
+        };
+        let unavailable = |owner: &Path| Error::WorktreeLinkedOwnerUnavailable {
+            checkout: repository_checkout.display().to_string(),
+            owner: owner.display().to_string(),
+        };
+        let gitdir = std::fs::read_to_string(&git_file).map_err(|error| {
+            malformed(format!("could not read {}: {error}", git_file.display()))
+        })?;
+        let gitdir = gitdir
+            .trim()
+            .strip_prefix("gitdir: ")
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| malformed("missing `gitdir: <path>` entry".to_owned()))?;
+        let gitdir = PathBuf::from(gitdir);
+        let gitdir = if gitdir.is_absolute() {
+            gitdir
+        } else {
+            repository_checkout.join(gitdir)
+        };
+        if !gitdir.is_dir() {
+            return Err(unavailable(&gitdir));
+        }
+        let common_dir_reference =
+            std::fs::read_to_string(gitdir.join("commondir")).map_err(|error| {
+                malformed(format!(
+                    "could not read linked-worktree common directory from {}: {error}",
+                    gitdir.display()
+                ))
+            })?;
+        let common_dir_reference = common_dir_reference.trim();
+        if common_dir_reference.is_empty() {
+            return Err(malformed(
+                "linked-worktree common directory is empty".to_owned(),
+            ));
+        }
+        let common_dir = PathBuf::from(common_dir_reference);
+        let common_dir = if common_dir.is_absolute() {
+            common_dir
+        } else {
+            gitdir.join(common_dir)
+        };
+        let common_dir =
+            std::fs::canonicalize(&common_dir).map_err(|_| unavailable(&common_dir))?;
+        let primary_checkout = common_dir.parent().ok_or_else(|| {
+            malformed(format!(
+                "linked-worktree common directory has no primary checkout: {}",
+                common_dir.display()
+            ))
+        })?;
+        if !primary_checkout.join(".git").is_dir() {
+            return Err(unavailable(primary_checkout));
+        }
+        Ok(primary_checkout.to_path_buf())
     }
 
     /// Initialize Jujutsu only for a Git checkout that has not yet gained its

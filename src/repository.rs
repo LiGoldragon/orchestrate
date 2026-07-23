@@ -69,9 +69,9 @@ impl<'tables> RepositoryRegistry<'tables> {
             .into_iter()
             .map(Repository::from)
             .collect();
-        Ok(OrchestrateReply::RepositoriesObserved(RepositoriesObserved {
-            repositories,
-        }))
+        Ok(OrchestrateReply::RepositoriesObserved(
+            RepositoriesObserved { repositories },
+        ))
     }
 
     #[cfg(unix)]

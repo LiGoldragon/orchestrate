@@ -9,8 +9,8 @@ use signal_harness as harness_contract;
 use signal_orchestrate as ordinary_contract;
 use signal_orchestrate::schema::lib as ordinary_schema;
 
-use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::agent_reachability::ProcessStat;
+use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
     ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, HarnessModelResolver,
     LaneRegistry, MessengerRegistrationDegradation, MessengerRegistryPush, MetaHarnessResolver,
@@ -402,7 +402,8 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<sema_schema::SemaReadOutput> {
         match input {
             sema_schema::SemaReadInput::ReadRoles(_) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?;
+                let reply =
+                    ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?;
                 let ordinary_schema::Output::RoleSnapshot(snapshot) = reply.project_into()? else {
                     return Err(Error::SchemaBridge {
                         message: "role observation did not produce RoleSnapshot".to_string(),
@@ -442,17 +443,20 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<ordinary_contract::OrchestrateReply> {
         let reply = match request {
             ordinary_contract::OrchestrateRequest::Claim(claim) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_claim(claim)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
+                    .apply_claim(claim)?;
                 self.service.project_locks()?;
                 reply
             }
             ordinary_contract::OrchestrateRequest::Release(release) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_release(release)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
+                    .apply_release(release)?;
                 self.service.project_locks()?;
                 reply
             }
             ordinary_contract::OrchestrateRequest::Handoff(handoff) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout()).apply_handoff(handoff)?;
+                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
+                    .apply_handoff(handoff)?;
                 self.service.project_locks()?;
                 reply
             }
@@ -2615,7 +2619,9 @@ impl ProjectInto<ordinary_contract::RepositoryOwner> for ordinary_schema::Reposi
     }
 }
 
-impl ProjectInto<ordinary_schema::RepositoryIdentityGap> for ordinary_contract::RepositoryIdentityGap {
+impl ProjectInto<ordinary_schema::RepositoryIdentityGap>
+    for ordinary_contract::RepositoryIdentityGap
+{
     fn project_into(self) -> Result<ordinary_schema::RepositoryIdentityGap> {
         Ok(ordinary_schema::RepositoryIdentityGap::new(
             self.as_str().to_string(),
@@ -2623,7 +2629,9 @@ impl ProjectInto<ordinary_schema::RepositoryIdentityGap> for ordinary_contract::
     }
 }
 
-impl ProjectInto<ordinary_contract::RepositoryIdentityGap> for ordinary_schema::RepositoryIdentityGap {
+impl ProjectInto<ordinary_contract::RepositoryIdentityGap>
+    for ordinary_schema::RepositoryIdentityGap
+{
     fn project_into(self) -> Result<ordinary_contract::RepositoryIdentityGap> {
         ordinary_contract::RepositoryIdentityGap::from_text(self.into_payload())
             .map_err(Error::SignalOrchestrate)
@@ -3164,7 +3172,9 @@ impl ProjectInto<ordinary_contract::WorktreesObserved> for ordinary_schema::Work
     }
 }
 
-impl ProjectInto<ordinary_schema::RepositoriesObserved> for ordinary_contract::RepositoriesObserved {
+impl ProjectInto<ordinary_schema::RepositoriesObserved>
+    for ordinary_contract::RepositoriesObserved
+{
     fn project_into(self) -> Result<ordinary_schema::RepositoriesObserved> {
         Ok(ordinary_schema::RepositoriesObserved::new(
             self.repositories.project_into()?,
@@ -3172,7 +3182,9 @@ impl ProjectInto<ordinary_schema::RepositoriesObserved> for ordinary_contract::R
     }
 }
 
-impl ProjectInto<ordinary_contract::RepositoriesObserved> for ordinary_schema::RepositoriesObserved {
+impl ProjectInto<ordinary_contract::RepositoriesObserved>
+    for ordinary_schema::RepositoriesObserved
+{
     fn project_into(self) -> Result<ordinary_contract::RepositoriesObserved> {
         Ok(ordinary_contract::RepositoriesObserved {
             repositories: self.into_payload().project_into()?,
@@ -3521,18 +3533,16 @@ impl ProjectInto<signal_orchestrator_message::OrchestratorMessage>
                 signal_orchestrator_message::OrchestratorMessageKind::Report
             }
         };
-        let subject = signal_orchestrator_message::MessageSubject::new(
-            self.message_subject.into_payload(),
-        )
-        .map_err(|error| Error::SchemaBridge {
-            message: format!("empty orchestrator message subject: {error}"),
-        })?;
-        let content = signal_orchestrator_message::MessageContent::new(
-            self.message_content.into_payload(),
-        )
-        .map_err(|error| Error::SchemaBridge {
-            message: format!("empty orchestrator message content: {error}"),
-        })?;
+        let subject =
+            signal_orchestrator_message::MessageSubject::new(self.message_subject.into_payload())
+                .map_err(|error| Error::SchemaBridge {
+                message: format!("empty orchestrator message subject: {error}"),
+            })?;
+        let content =
+            signal_orchestrator_message::MessageContent::new(self.message_content.into_payload())
+                .map_err(|error| Error::SchemaBridge {
+                message: format!("empty orchestrator message content: {error}"),
+            })?;
         Ok(signal_orchestrator_message::OrchestratorMessage::new(
             kind, subject, content,
         ))
@@ -5887,13 +5897,15 @@ impl OrchestrateSemaEngine<'_> {
                 )?;
                 let messenger_delivery_state =
                     self.submit_routed_message(&sender, &recipient, &submission.message);
-                Ok(ordinary_contract::OrchestrateReply::OrchestratorMessageRouted(
-                    ordinary_contract::OrchestratorMessageRouted {
-                        triage_slot: record.slot,
-                        recipients: vec![recipient],
-                        messenger_delivery_state,
-                    },
-                ))
+                Ok(
+                    ordinary_contract::OrchestrateReply::OrchestratorMessageRouted(
+                        ordinary_contract::OrchestratorMessageRouted {
+                            triage_slot: record.slot,
+                            recipients: vec![recipient],
+                            messenger_delivery_state,
+                        },
+                    ),
+                )
             }
         }
     }
@@ -6060,8 +6072,7 @@ impl OrchestrateSemaEngine<'_> {
                         agent_identifier: request.agent_identifier,
                         child_process_id: launched.child_process_id,
                         session_directory: launched.session_directory.and_then(|directory| {
-                            ordinary_contract::WirePath::from_absolute_path(directory.as_str())
-                                .ok()
+                            ordinary_contract::WirePath::from_absolute_path(directory.as_str()).ok()
                         }),
                     },
                 ))

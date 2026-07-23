@@ -127,6 +127,12 @@ pub enum Error {
     #[error("worktree scaffold failed at {path}: {message}")]
     WorktreeScaffold { path: String, message: String },
 
+    #[error("Git linked-worktree metadata is malformed at {checkout}: {message}")]
+    WorktreeLinkedOwnerMalformed { checkout: String, message: String },
+
+    #[error("Git linked-worktree owner is unavailable for {checkout}: {owner}")]
+    WorktreeLinkedOwnerUnavailable { checkout: String, owner: String },
+
     #[error("worktree teardown failed at {path}: {message}")]
     WorktreeTeardown { path: String, message: String },
 
@@ -212,6 +218,8 @@ impl Error {
             Error::SignalOrchestrate(_)
                 | Error::LaneNotRegistered { .. }
                 | Error::WorktreeLaneAmbiguous { .. }
+                | Error::WorktreeLinkedOwnerMalformed { .. }
+                | Error::WorktreeLinkedOwnerUnavailable { .. }
                 | Error::UnknownPreMintedAgentIdentity { .. }
         )
     }

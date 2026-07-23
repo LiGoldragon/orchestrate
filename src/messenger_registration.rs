@@ -27,8 +27,8 @@ use std::time::Duration;
 use signal_message::{
     AgentEndpoint, AgentEndpointBinding, AgentEndpointKind, AgentIdentifier,
     AgentIdentityAssignment, EndpointPath, HarnessPid, HarnessStartTime, Input, MessageBody,
-    MessageKind, MessageRecipient, MessageSubmission, Output, ProcessPinSelection,
-    ResumeSelection, ThreadSelection,
+    MessageKind, MessageRecipient, MessageSubmission, Output, ProcessPinSelection, ResumeSelection,
+    ThreadSelection,
 };
 use signal_orchestrate::OrchestratorAgentIdentifier;
 use triad_runtime::{FrameBody as LengthPrefixedFrameBody, LengthPrefixedCodec};

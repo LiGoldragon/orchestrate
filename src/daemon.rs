@@ -85,13 +85,12 @@ impl ComponentDaemon for OrchestrateDaemon {
     }
 
     fn build_runtime(configuration: &Self::Configuration) -> Result<Self::Engine, Self::Error> {
-        let layout = OrchestrateLayout::new(
-            PathBuf::from(configuration.workspace_root.as_str()),
-            PathBuf::from(configuration.git_index_root.as_str()),
-        );
         let service = OrchestrateService::open_with_layout(
             &crate::StoreLocation::new(configuration.store_path.as_str()),
-            layout,
+            OrchestrateLayout::new(
+                PathBuf::from(configuration.workspace_root.as_str()),
+                PathBuf::from(configuration.git_index_root.as_str()),
+            ),
         )?
         .with_lane_reclamation_socket(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
         .with_harness_liveness_watch(PathBuf::from(configuration.ordinary_socket_path.as_str()))?

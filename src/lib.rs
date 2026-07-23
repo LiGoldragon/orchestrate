@@ -1,6 +1,5 @@
 pub mod activity;
 pub mod activity_read;
-pub mod orchestrator_presentation;
 pub mod agent_reachability;
 pub mod claim;
 pub mod configuration;
@@ -16,11 +15,12 @@ pub mod layout;
 pub mod legacy_lock_import;
 pub mod location;
 pub mod lock_projection;
+pub mod messenger_registration;
 pub mod orchestrator_agent_identifier;
+pub mod orchestrator_presentation;
 pub mod repository;
 pub mod role;
 pub mod router_registration;
-pub mod messenger_registration;
 #[allow(clippy::large_enum_variant)]
 pub mod schema;
 pub mod service;
@@ -38,10 +38,6 @@ pub use activity::ActivityLedger;
 pub use activity_read::{
     AgentActivityAssessment, AgentActivityRead, ObservedAgentActivity, ProcessDescendantScan,
     SessionArtifactSurface,
-};
-pub use orchestrator_presentation::{
-    ExplicitOrchestratorInvocation, HumanLaneAge, HumanLaneAgeReport, HumanOutput,
-    OrchestratorPresentation, OrchestratorPresentationOutput, ResolvedOrchestratorInvocation,
 };
 pub use agent_reachability::{
     AgentReachabilityDiscovery, AncestorProcess, ProcessAncestryWalk, ProcessStat,
@@ -66,6 +62,7 @@ pub use layout::OrchestrateLayout;
 pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
 pub use lock_projection::LockProjection;
+pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegistryPush};
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange,
     LaneAuthoritySet, LaneRegistered, LaneRegistrationMode, LaneRegistrationRequest, LaneRetired,
@@ -74,34 +71,35 @@ pub use meta_signal_orchestrate::{
     Retirement, SessionClearRequest, SessionCleared, WorktreeIndexRefreshed, WorktreeRegistered,
 };
 pub use orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
+pub use orchestrator_presentation::{
+    ExplicitOrchestratorInvocation, HumanLaneAge, HumanLaneAgeReport, HumanOutput,
+    OrchestratorPresentation, OrchestratorPresentationOutput, ResolvedOrchestratorInvocation,
+};
 pub use repository::RepositoryRegistry;
 pub use role::RoleRegistry;
 pub use router_registration::{RouterActorRegistration, RouterRegistrationDegradation};
-pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegistryPush};
 pub use service::OrchestrateService;
 pub use signal_orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentIdentityMintRequest,
-    AgentLaunchRefusalReason, AgentLaunchRefused, AgentLaunchRequest, AgentLaunched,
-    AgentIdentityMinted, AgentRegistrationRejectionReason,
-    ApplicationFailure, ApplicationFailureReason, ApplicationSuccess, BranchName,
-    DownstreamComponent, DurationNanos, HarnessKind, LaneAssignment, LaneAuthority, LaneDetails,
-    LaneIdentifier, LaneName, LaneOwner, LaneRegistration, LaneResourceClaim, LaneStatus,
-    LanesObserved, MintedIdentitySelection, MissionDescription, Observation, ObservationClosed,
-    ObservationEvent,
+    AgentIdentityMinted, AgentLaunchRefusalReason, AgentLaunchRefused, AgentLaunchRequest,
+    AgentLaunched, AgentRegistrationRejectionReason, ApplicationFailure, ApplicationFailureReason,
+    ApplicationSuccess, BranchName, DownstreamComponent, DurationNanos, FeatureWorktree,
+    HarnessKind, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneName, LaneOwner,
+    LaneRegistration, LaneResourceClaim, LaneStatus, LanesObserved, MainIntegration,
+    MintedIdentitySelection, MissionDescription, Observation, ObservationClosed, ObservationEvent,
     ObservationOpened, ObservationSubscription, ObservationToken, OperationKind, OrchestrateReply,
     OrchestrateRequest, OrchestratorAgentIdentifier, OrchestratorAgentRegistration,
     OrchestratorAgentStatus, OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,
     RepositoriesObserved, Repository, RepositoryHost, RepositoryIdentity, RepositoryIdentityGap,
-    RepositoryIdentityState, RepositoryName, RepositoryOwner,
-    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier,
-    RoleName, RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference,
-    SessionIdentifier, SessionName, SessionsObserved, TaskToken, TeardownRefusal, TimestampNanos,
+    RepositoryIdentityState, RepositoryMainContended, RepositoryName, RepositoryOwner,
+    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName,
+    RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
+    SessionName, SessionsObserved, TaskToken, TeardownRefusal, TimestampNanos,
     TopicAssignmentSource, TopicName, TopicSelection, WirePath, WorkflowReceiptProduced,
     WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
     WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
     WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
     WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeConcluded,
-    FeatureWorktree, MainIntegration, RepositoryMainContended,
     WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected,
     WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
     WorktreesObserved,

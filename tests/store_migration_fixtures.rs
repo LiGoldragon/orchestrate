@@ -304,19 +304,18 @@ fn captured_real_stores_accept_writes_after_open() {
                 })),
             )
             .unwrap_or_else(|error| {
-                panic!("{fixture_name}: an openable store must accept a lane registration, got {error}")
+                panic!(
+                    "{fixture_name}: an openable store must accept a lane registration, got {error}"
+                )
             });
         runtime
-            .block_on(
-                service.handle_meta(MetaOrchestrateRequest::Unregister(
-                    LaneUnregistrationRequest {
-                        session,
-                        lane,
-                        details: LaneDetails::from_text("fixture write probe done")
-                            .expect("details"),
-                    },
-                )),
-            )
+            .block_on(service.handle_meta(MetaOrchestrateRequest::Unregister(
+                LaneUnregistrationRequest {
+                    session,
+                    lane,
+                    details: LaneDetails::from_text("fixture write probe done").expect("details"),
+                },
+            )))
             .unwrap_or_else(|error| {
                 panic!("{fixture_name}: the probe lane must unregister cleanly, got {error}")
             });

@@ -9,7 +9,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use orchestrate::{
-    BranchName, LaneName, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
+    BranchName, Error, LaneName, MetaOrchestrateReply, MetaOrchestrateRequest, Observation,
     OrchestrateLayout, OrchestrateReply, OrchestrateRequest, OrchestrateService, PurposeText,
     PushedState, RegisterWorktree, RepositoryName, StoreLocation, TimestampNanos, WirePath,
     Worktree, WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeStatus,
@@ -140,6 +140,45 @@ impl WorktreeFixture {
             "Git-only fixture must not already hold Jujutsu metadata"
         );
         path
+    }
+
+    /// A Git linked worktree at the indexed source path. Its primary checkout
+    /// deliberately lacks `.jj`, so the request must bootstrap that primary
+    /// rather than run `jj git init --colocate` in the linked worktree.
+    fn make_git_linked_worktree_source_without_jj(&self, repository: &str) -> (PathBuf, PathBuf) {
+        let primary = self.git_index.join(format!("{repository}-primary"));
+        let source = self.git_index.join(repository);
+        let init = Command::new("git")
+            .arg("init")
+            .arg("--initial-branch=main")
+            .arg(&primary)
+            .output()
+            .expect("initialize primary Git source repo");
+        assert!(
+            init.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        run_git(&primary, &["config", "user.name", "smoke"]);
+        run_git(&primary, &["config", "user.email", "smoke@example.invalid"]);
+        std::fs::write(primary.join("base.txt"), "base\n").expect("Git source content");
+        run_git(&primary, &["add", "base.txt"]);
+        run_git(&primary, &["commit", "-m", "base commit"]);
+        run_git(
+            &primary,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                source.to_string_lossy().as_ref(),
+            ],
+        );
+        assert!(source.join(".git").is_file(), "source must be Git linked");
+        assert!(
+            !primary.join(".jj").exists() && !source.join(".jj").exists(),
+            "Git fixtures must not already hold Jujutsu metadata"
+        );
+        (primary, source)
     }
 
     fn request(&mut self, repository: &str, branch: &str, lane: &str) -> OrchestrateReply {
@@ -420,6 +459,87 @@ fn request_initializes_missing_colocated_jj_metadata_for_git_source() {
     assert_eq!(
         scaffolded.worktree.path.as_str(),
         destination.to_string_lossy()
+    );
+}
+
+#[test]
+fn request_reports_malformed_linked_worktree_metadata_as_typed_error() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-malformed-linked-owner");
+    let source = fixture.git_index.join("malformed-linked");
+    std::fs::create_dir_all(&source).expect("malformed source directory");
+    std::fs::write(source.join(".git"), "not a Git worktree pointer\n")
+        .expect("malformed Git metadata");
+
+    let error = fixture
+        .handle(OrchestrateRequest::RequestWorktree(WorktreeRequest {
+            repository: RepositoryName::from_text("malformed-linked").expect("repository"),
+            branch: BranchName::from_text("malformed-feature").expect("branch"),
+            owning_lane: LaneName::from_text("designer").expect("lane"),
+            purpose: PurposeText::from_text("malformed owner witness").expect("purpose"),
+        }))
+        .expect_err("malformed linked metadata must refuse");
+    assert!(matches!(error, Error::WorktreeLinkedOwnerMalformed { .. }));
+    assert!(error.is_caller_rejection());
+}
+
+#[test]
+fn request_reports_unavailable_linked_worktree_owner_as_typed_error() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-unavailable-linked-owner");
+    let (primary, _source) =
+        fixture.make_git_linked_worktree_source_without_jj("unavailable-linked");
+    std::fs::remove_dir_all(primary).expect("remove linked-worktree primary");
+
+    let error = fixture
+        .handle(OrchestrateRequest::RequestWorktree(WorktreeRequest {
+            repository: RepositoryName::from_text("unavailable-linked").expect("repository"),
+            branch: BranchName::from_text("unavailable-feature").expect("branch"),
+            owning_lane: LaneName::from_text("designer").expect("lane"),
+            purpose: PurposeText::from_text("unavailable owner witness").expect("purpose"),
+        }))
+        .expect_err("unavailable linked owner must refuse");
+    assert!(matches!(
+        error,
+        Error::WorktreeLinkedOwnerUnavailable { .. }
+    ));
+    assert!(error.is_caller_rejection());
+}
+
+#[test]
+fn request_bootstraps_primary_jj_owner_for_git_linked_worktree_source() {
+    let mut fixture = WorktreeFixture::new("orchestrate-worktree-git-linked-bootstrap");
+    let (primary, source) = fixture.make_git_linked_worktree_source_without_jj("git-linked");
+
+    let reply = fixture.request("git-linked", "linked-bootstrap-feature", "designer");
+    let OrchestrateReply::WorktreeScaffolded(scaffolded) = reply else {
+        panic!("expected WorktreeScaffolded, got {reply:?}");
+    };
+    let destination = fixture
+        .worktree_root
+        .join("git-linked")
+        .join("linked-bootstrap-feature");
+    assert!(
+        source.join(".git").is_file(),
+        "source remains a Git linked worktree"
+    );
+    assert!(
+        primary.join(".jj").is_dir(),
+        "the primary Git checkout owns colocated Jujutsu metadata"
+    );
+    assert!(
+        !source.join(".jj").exists(),
+        "the Git linked worktree is not incorrectly initialized as colocated"
+    );
+    assert!(
+        destination.join(".jj").exists(),
+        "workspace metadata exists"
+    );
+    assert_eq!(
+        scaffolded.worktree.path.as_str(),
+        destination.to_string_lossy()
+    );
+    assert!(
+        read_jj(&primary, &["workspace", "list"]).contains("linked-bootstrap-feature"),
+        "the workspace is owned by the primary Jujutsu checkout"
     );
 }
 

@@ -2,18 +2,18 @@ use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentActivityRead, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, BoundedTableReaper, BoundedTableReclamation,
-    CreateRoleOrder, DownstreamComponent, HarnessKind, LaneAlreadyRegisteredResolution,
-    LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneReconciliation,
-    LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry, LaneUnregistrationRequest,
-    MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription, Observation,
-    ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
+    CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
+    LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
+    LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
+    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
+    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
     OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
     PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
     Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
     ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
     StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
     TopicName, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
-    WorkflowRunner, CURRENT_ACTIVITY_LIMIT,
+    WorkflowRunner,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -531,12 +531,16 @@ fn resolved_workflow_model_resolution_identity_prevents_same_workflow_storage_co
         .workflow_model_resolution_records()
         .expect("stored workflow model resolutions");
     assert_eq!(records.len(), 2, "resolution attempts must not overwrite");
-    assert!(records
-        .iter()
-        .any(|record| record.handle == first_run.handle && record.request == exact_request));
-    assert!(records
-        .iter()
-        .any(|record| record.handle == second_run.handle && record.request == profile_request));
+    assert!(
+        records
+            .iter()
+            .any(|record| record.handle == first_run.handle && record.request == exact_request)
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.handle == second_run.handle && record.request == profile_request)
+    );
 }
 
 #[test]
@@ -739,10 +743,12 @@ fn claim_conflict_release_and_handoff_use_orchestrate_tables() {
         .iter()
         .find(|status| status.role == operator())
         .expect("operator status");
-    assert!(operator_status
-        .claims
-        .iter()
-        .any(|claim| claim.scope == operator_scope));
+    assert!(
+        operator_status
+            .claims
+            .iter()
+            .any(|claim| claim.scope == operator_scope)
+    );
 }
 
 #[test]
@@ -1067,10 +1073,12 @@ fn role_retirement_removes_claims_and_lock_projection() {
     let OrchestrateReply::RoleSnapshot(snapshot) = snapshot else {
         panic!("expected role snapshot");
     };
-    assert!(snapshot
-        .roles
-        .iter()
-        .all(|status| status.role != retired_role));
+    assert!(
+        snapshot
+            .roles
+            .iter()
+            .all(|status| status.role != retired_role)
+    );
     let survivor_status = snapshot
         .roles
         .iter()
@@ -1377,12 +1385,14 @@ fn fresh_register_supersedes_released_record_and_drops_its_stale_claims() {
         .map(|claim| claim.lane.as_wire_token().to_string())
         .collect();
     assert_eq!(claim_lanes, vec!["bystander"]);
-    assert!(tables
-        .lane_records()
-        .expect("lanes")
-        .iter()
-        .any(|record| record.assignment.lane == lane("bystander")
-            && record.status == orchestrate::LaneStatus::Released));
+    assert!(
+        tables
+            .lane_records()
+            .expect("lanes")
+            .iter()
+            .any(|record| record.assignment.lane == lane("bystander")
+                && record.status == orchestrate::LaneStatus::Released)
+    );
 }
 
 // Recovery inherits a live lane; over a closed record it genuinely re-registers
@@ -1667,10 +1677,12 @@ fn bounded_reaper_reaps_workflow_model_resolutions_past_retention() {
         .reconcile(&tables)
         .expect("reconcile past retention");
     assert_eq!(reaped.reaped_workflow_resolutions, 1);
-    assert!(tables
-        .workflow_model_resolution_records()
-        .expect("resolutions")
-        .is_empty());
+    assert!(
+        tables
+            .workflow_model_resolution_records()
+            .expect("resolutions")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -2000,13 +2012,14 @@ fn observe_projects_sessions_all_lanes_session_lanes_and_resource_claims() {
         beta_lane.registration.status,
         orchestrate::LaneStatus::Released
     );
-    assert!(all_lanes
-        .lanes
-        .iter()
-        .any(
-            |projection| projection.registration.assignment.lane == lane("alpha-observe-worker")
-                && projection.resource_claims.len() == 1
-        ));
+    assert!(
+        all_lanes
+            .lanes
+            .iter()
+            .any(|projection| projection.registration.assignment.lane
+                == lane("alpha-observe-worker")
+                && projection.resource_claims.len() == 1)
+    );
 }
 
 #[test]
@@ -2162,11 +2175,13 @@ fn repository_refresh_indexes_local_checkouts_and_workspace_links() {
     let repositories = fixture.service.repositories().expect("repositories");
     assert_eq!(repositories.len(), 1);
     assert_eq!(repositories[0].name.as_str(), repository_name);
-    assert!(fixture
-        .workspace
-        .join("repos")
-        .join(repository_name)
-        .exists());
+    assert!(
+        fixture
+            .workspace
+            .join("repos")
+            .join(repository_name)
+            .exists()
+    );
 }
 
 fn add_origin_remote(checkout: &std::path::Path, url: &str) {

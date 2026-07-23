@@ -12,11 +12,13 @@ use meta_signal_orchestrate::{
     RefreshRepositoryIndexOrder,
 };
 use nota::{NotaDecode, NotaEncode, NotaSource};
+use orchestrate::schema::daemon::{ComponentDaemon, DaemonBinder};
 use orchestrate::{
     DaemonConfiguration, ExplicitOrchestratorInvocation, HumanOutput, LaneAssignment,
     LaneAuthority, LaneDetails, LaneIdentifier, LaneOwner, LaneStatus, MirrorSnapshot,
-    MirrorVersions, OrchestrateLayout, OrchestrateService, Role, RoleToken, SessionIdentifier,
-    StoreLocation, StoredClaim, StoredLaneRegistration, TimestampNanos, WirePath,
+    MirrorVersions, OrchestrateDaemonError, OrchestrateLayout, OrchestrateService, Role, RoleToken,
+    SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration, TimestampNanos,
+    WirePath,
 };
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as FrameReply,
@@ -41,11 +43,14 @@ use meta_signal_orchestrate::schema::lib::{
     SignalFrameError as MetaSignalFrameError,
 };
 use signal_orchestrate::schema::lib::{
-    Input as SchemaInput, Observation as SchemaObservation, Output as SchemaOutput,
-    RoleClaim as SchemaRoleClaim, RoleIdentifier as SchemaRoleIdentifier,
-    RoleName as SchemaRoleName, RoleToken as SchemaRoleToken, RoleTokens as SchemaRoleTokens,
-    ScopeReason as SchemaScopeReason, ScopeReference as SchemaScopeReference,
-    WirePath as SchemaWirePath,
+    BranchName as SchemaBranchName, Input as SchemaInput, LaneName as SchemaLaneName,
+    Observation as SchemaObservation, Output as SchemaOutput, PurposeText as SchemaPurposeText,
+    RepositoryName as SchemaRepositoryName, RoleClaim as SchemaRoleClaim,
+    RoleIdentifier as SchemaRoleIdentifier, RoleName as SchemaRoleName,
+    RoleToken as SchemaRoleToken, RoleTokens as SchemaRoleTokens, ScopeReason as SchemaScopeReason,
+    ScopeReference as SchemaScopeReference, WirePath as SchemaWirePath,
+    WorktreeRequest as SchemaWorktreeRequest,
+    WorktreeRequestRejection as SchemaWorktreeRequestRejection,
 };
 use signal_version_handover::{
     CompletionReport, Frame as UpgradeFrame, FrameBody as UpgradeFrameBody, HandoverMarker,
@@ -55,15 +60,24 @@ use signal_version_handover::{
 use tempfile::TempDir;
 use version_projection::ContractVersion;
 
+enum DaemonHandle {
+    Process(Child),
+    InProcess {
+        shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+        thread: Option<thread::JoinHandle<()>>,
+    },
+}
+
 struct DaemonFixture {
     _temporary: TempDir,
     workspace: PathBuf,
     git_index: PathBuf,
+    worktree_root: PathBuf,
     store: PathBuf,
     ordinary_socket: PathBuf,
     meta_socket: PathBuf,
     upgrade_socket: PathBuf,
-    child: Child,
+    daemon: DaemonHandle,
 }
 
 impl DaemonFixture {
@@ -72,6 +86,19 @@ impl DaemonFixture {
     }
 
     fn start_with_legacy_locks(name: &str, legacy_locks: &[(&str, &str)]) -> Self {
+        Self::start_with_legacy_locks_and_worktree_root(name, legacy_locks, None, false)
+    }
+
+    fn start_with_worktree_root(name: &str) -> Self {
+        Self::start_with_legacy_locks_and_worktree_root(name, &[], Some("worktree-index"), true)
+    }
+
+    fn start_with_legacy_locks_and_worktree_root(
+        name: &str,
+        legacy_locks: &[(&str, &str)],
+        worktree_root_name: Option<&str>,
+        in_process_daemon: bool,
+    ) -> Self {
         let temporary = tempfile::Builder::new()
             .prefix(name)
             .tempdir()
@@ -91,6 +118,12 @@ impl DaemonFixture {
                 .expect("legacy lock");
         }
         std::fs::create_dir_all(&git_index).expect("git index directory");
+        let worktree_root = worktree_root_name
+            .map(|name| workspace.join(name))
+            .unwrap_or_else(|| PathBuf::from("/home/li/wt/github.com/LiGoldragon"));
+        if worktree_root_name.is_some() {
+            std::fs::create_dir_all(&worktree_root).expect("test worktree index directory");
+        }
 
         let store = temporary.path().join("orchestrate.sema");
         let ordinary_socket = temporary.path().join("ordinary.sock");
@@ -113,19 +146,26 @@ impl DaemonFixture {
         )
         .expect("config write");
 
-        let child = Command::new(env!("CARGO_BIN_EXE_orchestrate-daemon"))
-            .arg(&configuration_path)
-            .spawn()
-            .expect("daemon spawn");
+        let daemon = if in_process_daemon {
+            start_in_process_test_daemon(configuration)
+        } else {
+            DaemonHandle::Process(
+                Command::new(env!("CARGO_BIN_EXE_orchestrate-daemon"))
+                    .arg(&configuration_path)
+                    .spawn()
+                    .expect("daemon spawn"),
+            )
+        };
         let mut fixture = Self {
             _temporary: temporary,
             workspace,
             git_index,
+            worktree_root,
             store,
             ordinary_socket,
             meta_socket,
             upgrade_socket,
-            child,
+            daemon,
         };
         fixture.wait_for_sockets();
         fixture
@@ -142,8 +182,10 @@ impl DaemonFixture {
             {
                 return;
             }
-            if let Some(status) = self.child.try_wait().expect("daemon status") {
-                panic!("daemon exited before sockets existed: {status}");
+            if let DaemonHandle::Process(child) = &mut self.daemon {
+                if let Some(status) = child.try_wait().expect("daemon status") {
+                    panic!("daemon exited before sockets existed: {status}");
+                }
             }
             thread::sleep(Duration::from_millis(20));
         }
@@ -151,8 +193,48 @@ impl DaemonFixture {
     }
 
     fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        match &mut self.daemon {
+            DaemonHandle::Process(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            DaemonHandle::InProcess { shutdown, thread } => {
+                if let Some(shutdown) = shutdown.take() {
+                    let _ = shutdown.send(());
+                }
+                if let Some(thread) = thread.take() {
+                    thread.join().expect("test daemon thread");
+                }
+            }
+        }
+    }
+
+    /// Create a Git linked worktree at the repository-index path. Its primary
+    /// checkout is intentionally Git-only, so a successful daemon request must
+    /// locate and bootstrap that owner rather than the linked checkout.
+    fn make_git_linked_worktree_source_without_jj(&self, repository: &str) -> (PathBuf, PathBuf) {
+        let primary = self.git_index.join(format!("{repository}-primary"));
+        let source = self.git_index.join(repository);
+        run_git_init(&primary);
+        run_git(&primary, &["config", "user.name", "daemon-cli"]);
+        run_git(
+            &primary,
+            &["config", "user.email", "daemon-cli@example.invalid"],
+        );
+        std::fs::write(primary.join("base.txt"), "base\n").expect("Git source content");
+        run_git(&primary, &["add", "base.txt"]);
+        run_git(&primary, &["commit", "-m", "base commit"]);
+        run_git(
+            &primary,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                source.to_string_lossy().as_ref(),
+            ],
+        );
+        assert!(source.join(".git").is_file(), "source must be Git linked");
+        (primary, source)
     }
 
     fn ordinary_cli(&self, request: SchemaInput) -> std::process::Output {
@@ -182,9 +264,106 @@ impl DaemonFixture {
 
 impl Drop for DaemonFixture {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
     }
+}
+
+/// Test-only daemon implementation with a temporary worktree root derived from
+/// its temporary workspace. The ordinary CLI still crosses the Unix socket;
+/// only the daemon process boundary is in-process so no production setting can
+/// redirect worktree effects.
+#[derive(Debug)]
+struct InProcessTestDaemon;
+
+impl ComponentDaemon for InProcessTestDaemon {
+    type Configuration = DaemonConfiguration;
+    type ConfigurationError = orchestrate::ConfigurationError;
+    type Engine = OrchestrateService;
+    type Error = OrchestrateDaemonError;
+
+    const PROCESS_NAME: &'static str = "orchestrate-daemon-cli-test";
+
+    fn load_configuration(path: &Path) -> Result<Self::Configuration, Self::ConfigurationError> {
+        DaemonConfiguration::from_signal_file(path)
+    }
+
+    fn build_runtime(configuration: &Self::Configuration) -> Result<Self::Engine, Self::Error> {
+        let workspace_root = PathBuf::from(configuration.workspace_root.as_str());
+        OrchestrateService::open_with_layout(
+            &StoreLocation::new(configuration.store_path.as_str()),
+            OrchestrateLayout::new(
+                workspace_root.clone(),
+                PathBuf::from(configuration.git_index_root.as_str()),
+            )
+            .with_worktree_index_root(workspace_root.join("worktree-index")),
+        )
+        .map_err(Into::into)
+    }
+
+    async fn handle_working_input<'connection>(
+        engine: &'connection mut Self::Engine,
+        input: SchemaInput,
+        connection: &'connection triad_runtime::ConnectionContext,
+    ) -> Result<SchemaOutput, Self::Error> {
+        let caller_process_id = connection
+            .unix_credentials()
+            .map(triad_runtime::UnixCredentials::process_id)
+            .filter(|process_id| *process_id > 0)
+            .map(|process_id| process_id as u32);
+        Ok(engine
+            .handle_signal_input_from_caller(input, caller_process_id)
+            .await?)
+    }
+}
+
+fn start_in_process_test_daemon(configuration: DaemonConfiguration) -> DaemonHandle {
+    let (shutdown, shutdown_received) = tokio::sync::oneshot::channel();
+    let thread = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("test daemon runtime");
+        runtime.block_on(async move {
+            let daemon = <InProcessTestDaemon as DaemonBinder>::bind(configuration)
+                .expect("bind in-process test daemon");
+            tokio::select! {
+                result = daemon.run() => result.expect("run in-process test daemon"),
+                _ = shutdown_received => {}
+            }
+        });
+    });
+    DaemonHandle::InProcess {
+        shutdown: Some(shutdown),
+        thread: Some(thread),
+    }
+}
+
+fn run_git_init(path: &Path) {
+    let output = Command::new("git")
+        .args(["init", "--initial-branch=main"])
+        .arg(path)
+        .output()
+        .expect("initialize Git source repository");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn run_git(directory: &Path, arguments: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(arguments)
+        .output()
+        .expect("run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        arguments,
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn block_on<Future: std::future::Future>(future: Future) -> Future::Output {
@@ -494,6 +673,161 @@ fn cli_creates_dynamic_role_through_daemon_meta_socket() {
     assert_eq!(
         std::fs::read_to_string(lock_path).expect("lock file"),
         "/tmp/primary-orchestrate-daemon-zxq9-never-collide # daemon CLI claim projection\n"
+    );
+}
+
+#[test]
+fn daemon_cli_scaffolds_git_linked_worktree_at_in_process_test_root() {
+    let fixture = DaemonFixture::start_with_worktree_root("orchestrate-cli-linked-worktree");
+    let (primary, source) = fixture.make_git_linked_worktree_source_without_jj("linked-source");
+
+    let output = fixture.ordinary_cli(SchemaInput::RequestWorktree(SchemaWorktreeRequest {
+        repository_name: SchemaRepositoryName::new("linked-source"),
+        branch_name: SchemaBranchName::new("linked-feature"),
+        lane_name: SchemaLaneName::new("linked-owner-lane"),
+        purpose_text: SchemaPurposeText::new("daemon CLI linked-worktree witness"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::WorktreeScaffolded(scaffolded) = reply else {
+        panic!("expected WorktreeScaffolded, got {reply:?}");
+    };
+    let destination = fixture
+        .worktree_root
+        .join("linked-source")
+        .join("linked-feature");
+    assert_eq!(
+        scaffolded.payload().wire_path.payload(),
+        destination.to_string_lossy().as_ref()
+    );
+    assert!(
+        destination.join(".jj").exists(),
+        "workspace metadata exists"
+    );
+    assert!(
+        primary.join(".jj").is_dir(),
+        "primary owns colocated metadata"
+    );
+    assert!(
+        !source.join(".jj").exists(),
+        "linked checkout stays Git-only"
+    );
+    assert!(
+        !Path::new("/home/li/wt/github.com/LiGoldragon/linked-source/linked-feature").exists(),
+        "the daemon test must not write to the production worktree root"
+    );
+}
+
+#[test]
+fn daemon_cli_reports_malformed_linked_owner_as_typed_refusal() {
+    let fixture = DaemonFixture::start("orchestrate-cli-malformed-linked-owner");
+    let source = fixture.git_index.join("malformed-linked-source");
+    std::fs::create_dir_all(&source).expect("malformed source directory");
+    std::fs::write(source.join(".git"), "not Git linked-worktree metadata\n")
+        .expect("malformed Git metadata");
+
+    let output = fixture.ordinary_cli(SchemaInput::RequestWorktree(SchemaWorktreeRequest {
+        repository_name: SchemaRepositoryName::new("malformed-linked-source"),
+        branch_name: SchemaBranchName::new("malformed-feature"),
+        lane_name: SchemaLaneName::new("linked-owner-lane"),
+        purpose_text: SchemaPurposeText::new("malformed linked-worktree witness"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::PartialApplied(partial) = reply else {
+        panic!("expected caller-facing partial refusal, got {reply:?}");
+    };
+    let failures = partial.application_failures.payload();
+    assert_eq!(failures.len(), 1, "malformed owner must refuse once");
+    let detail = failures[0].scope_reason.payload();
+    assert!(
+        detail.contains("Git linked-worktree metadata is malformed"),
+        "ordinary CLI must carry the typed daemon refusal: {detail}"
+    );
+    assert!(
+        !detail.contains("worktree scaffold failed"),
+        "owner resolution must not be lowered to infrastructure scaffolding: {detail}"
+    );
+}
+
+#[test]
+fn daemon_cli_reports_unavailable_linked_owner_as_typed_refusal() {
+    let fixture =
+        DaemonFixture::start_with_worktree_root("orchestrate-cli-unavailable-linked-owner");
+    let (primary, _source) =
+        fixture.make_git_linked_worktree_source_without_jj("unavailable-linked-source");
+    std::fs::remove_dir_all(primary).expect("remove linked-worktree primary");
+
+    let output = fixture.ordinary_cli(SchemaInput::RequestWorktree(SchemaWorktreeRequest {
+        repository_name: SchemaRepositoryName::new("unavailable-linked-source"),
+        branch_name: SchemaBranchName::new("unavailable-feature"),
+        lane_name: SchemaLaneName::new("linked-owner-lane"),
+        purpose_text: SchemaPurposeText::new("unavailable linked-worktree owner witness"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::PartialApplied(partial) = reply else {
+        panic!("expected caller-facing partial refusal, got {reply:?}");
+    };
+    let failures = partial.application_failures.payload();
+    assert_eq!(failures.len(), 1, "unavailable owner must refuse once");
+    let detail = failures[0].scope_reason.payload();
+    assert!(
+        detail.contains("Git linked-worktree owner is unavailable"),
+        "ordinary CLI must carry the dedicated unavailable-owner refusal: {detail}"
+    );
+    assert!(
+        !detail.contains("RepositoryNotFound"),
+        "unavailable owner must not become a missing repository reply: {detail}"
+    );
+    assert!(
+        !detail.contains("worktree scaffold failed"),
+        "unavailable owner must not become an infrastructure failure: {detail}"
+    );
+}
+
+#[test]
+fn daemon_cli_request_worktree_round_trips_schema_wire() {
+    let fixture = DaemonFixture::start("orchestrate-cli-request-worktree");
+
+    // Use the ordinary CLI's canonical schema frame rather than the human
+    // shorthand. The missing source is intentional: it gives this wire-path
+    // witness no ambient checkout or worktree-index side effects while still
+    // exercising RequestWorktree's typed request and reply projection.
+    let output = fixture.ordinary_cli(SchemaInput::RequestWorktree(SchemaWorktreeRequest {
+        repository_name: SchemaRepositoryName::new("daemon-cli-missing-repository"),
+        branch_name: SchemaBranchName::new("daemon-cli-request-branch"),
+        lane_name: SchemaLaneName::new("daemon-cli-request-lane"),
+        purpose_text: SchemaPurposeText::new("daemon CLI RequestWorktree wire witness"),
+    }));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let reply: SchemaOutput = decode_nota(&output.stdout);
+    let SchemaOutput::WorktreeRequestRejected(rejected) = reply else {
+        panic!("expected WorktreeRequestRejected, got {reply:?}");
+    };
+    assert_eq!(
+        rejected.payload(),
+        &SchemaWorktreeRequestRejection::RepositoryNotFound,
+        "the daemon must return the typed RequestWorktree reply over the ordinary schema wire"
     );
 }
 

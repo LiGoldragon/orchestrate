@@ -116,14 +116,15 @@ impl DaemonConfigurationArguments {
                 .with_router_working_socket_path(wire_path(router_working_socket_path.as_path())?),
             None => configuration,
         };
-        Ok(match &self.downstream_sockets.messenger_working_socket_path {
-            Some(messenger_working_socket_path) => {
-                configuration.with_messenger_working_socket_path(wire_path(
-                    messenger_working_socket_path.as_path(),
-                )?)
-            }
-            None => configuration,
-        })
+        Ok(
+            match &self.downstream_sockets.messenger_working_socket_path {
+                Some(messenger_working_socket_path) => configuration
+                    .with_messenger_working_socket_path(wire_path(
+                        messenger_working_socket_path.as_path(),
+                    )?),
+                None => configuration,
+            },
+        )
     }
 
     fn create_runtime_directories(&self) -> Result<(), DaemonConfigurationWriterError> {
@@ -234,9 +235,11 @@ impl DownstreamSocketComponent {
         match label {
             b"router" => Ok(Self::Router),
             b"messenger" => Ok(Self::Messenger),
-            other => Err(DaemonConfigurationWriterError::UnknownDownstreamSocketLabel {
-                label: String::from_utf8_lossy(other).into_owned(),
-            }),
+            other => Err(
+                DaemonConfigurationWriterError::UnknownDownstreamSocketLabel {
+                    label: String::from_utf8_lossy(other).into_owned(),
+                },
+            ),
         }
     }
 

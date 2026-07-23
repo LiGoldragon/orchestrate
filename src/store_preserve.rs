@@ -71,7 +71,9 @@ struct UtcStamp {
 impl UtcStamp {
     fn now() -> Result<Self> {
         let seconds_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        Ok(Self { seconds_since_epoch })
+        Ok(Self {
+            seconds_since_epoch,
+        })
     }
 
     /// The proleptic-Gregorian calendar date for this stamp's day, via Howard

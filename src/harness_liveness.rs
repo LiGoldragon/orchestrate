@@ -158,8 +158,8 @@ pub struct HarnessLivenessWatch {
 impl HarnessLivenessWatch {
     pub fn spawn(socket_path: PathBuf, process_root: impl Into<PathBuf>) -> Result<Self> {
         let (sender, receiver) = channel();
-        let wake = eventfd(0, EventfdFlags::CLOEXEC)
-            .map_err(|errno| crate::Error::Io(errno.into()))?;
+        let wake =
+            eventfd(0, EventfdFlags::CLOEXEC).map_err(|errno| crate::Error::Io(errno.into()))?;
         let worker_wake = wake.try_clone().map_err(crate::Error::from)?;
         let process_root = process_root.into();
         thread::Builder::new()
@@ -376,9 +376,9 @@ mod tests {
     use std::process::{Child, Command};
 
     use signal_orchestrate::{
-        MintedIdentitySelection,
-        HarnessKind, MissionDescription, Observation as ContractObservation, OrchestrateReply,
-        OrchestrateRequest, SessionIdentifier,
+        HarnessKind, MintedIdentitySelection, MissionDescription,
+        Observation as ContractObservation, OrchestrateReply, OrchestrateRequest,
+        SessionIdentifier,
     };
 
     use super::*;
@@ -415,8 +415,7 @@ mod tests {
             .spawn()
             .expect("spawn stand-in harness process");
         let pid = child.id();
-        let stat =
-            ProcessStat::read(Path::new("/proc"), pid).expect("read stand-in process stat");
+        let stat = ProcessStat::read(Path::new("/proc"), pid).expect("read stand-in process stat");
         (
             child,
             WatchedHarnessProcess {
@@ -459,7 +458,7 @@ mod tests {
                     SessionIdentifier::from_camel_case_name(session).expect("session"),
                     MissionDescription::from_text("liveness fixture").expect("mission"),
                     HarnessKind::Codex,
-                MintedIdentitySelection::None,
+                    MintedIdentitySelection::None,
                 )
                 .expect("register agent")
         };
@@ -595,10 +594,9 @@ mod tests {
             .expect("attach real reachability");
 
         let observe = |service: &mut OrchestrateService| {
-            let reply = block_on(
-                service.handle(OrchestrateRequest::Observe(ContractObservation::Agents)),
-            )
-            .expect("observe agents");
+            let reply =
+                block_on(service.handle(OrchestrateRequest::Observe(ContractObservation::Agents)))
+                    .expect("observe agents");
             let OrchestrateReply::AgentDirectory(directory) = reply else {
                 panic!("expected the agent directory");
             };

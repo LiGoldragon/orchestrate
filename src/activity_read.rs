@@ -395,9 +395,11 @@ mod tests {
         );
         assert_eq!(
             AgentActivityRead::new(process_root.path()).assess(&agent),
-            AgentActivityAssessment::ActivityObserved(ObservedAgentActivity::SessionArtifactWrite {
-                written_at: written
-            }),
+            AgentActivityAssessment::ActivityObserved(
+                ObservedAgentActivity::SessionArtifactWrite {
+                    written_at: written
+                }
+            ),
         );
     }
 
@@ -414,12 +416,7 @@ mod tests {
             .expect("artifact instant");
 
         // Stamped at (and hence after) the newest write: the artifacts are stale.
-        let agent = agent_with_reachability(
-            &session.path().join("data.sock"),
-            300,
-            5,
-            written,
-        );
+        let agent = agent_with_reachability(&session.path().join("data.sock"), 300, 5, written);
         assert_eq!(
             AgentActivityRead::new(process_root.path()).assess(&agent),
             AgentActivityAssessment::NoActivityObserved,

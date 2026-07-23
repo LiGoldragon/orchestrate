@@ -17,11 +17,10 @@ use signal_orchestrate::{
     Activity, ApplicationFailure, ApplicationSuccess, BranchName, DurationNanos, HarnessKind,
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
     MintedIdentitySelection, MissionDescription, OrchestratorAgentIdentifier,
-    OrchestratorAgentStatus, OrchestratorTopic,
-    OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,
-    RepositoryIdentityState, RepositoryName,
-    ResolvedWorkflowRunRequest, Role, RoleName, ScopeReason, ScopeReference, SessionIdentifier,
-    TimestampNanos, TopicName, WirePath, WorkflowRunHandle, Worktree, WorktreeStatus,
+    OrchestratorAgentStatus, OrchestratorTopic, OrchestratorTopicPath, PartialApplied, PurposeText,
+    PushedState, RepositoryIdentityState, RepositoryName, ResolvedWorkflowRunRequest, Role,
+    RoleName, ScopeReason, ScopeReference, SessionIdentifier, TimestampNanos, TopicName, WirePath,
+    WorkflowRunHandle, Worktree, WorktreeStatus,
 };
 
 use crate::orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
@@ -214,9 +213,7 @@ impl StoredRepositoryV5 {
                 .name
                 .chars()
                 .map(|character| {
-                    if character.is_whitespace()
-                        || matches!(character, '/' | '\\' | '[' | ']')
-                    {
+                    if character.is_whitespace() || matches!(character, '/' | '\\' | '[' | ']') {
                         '-'
                     } else {
                         character
@@ -2336,9 +2333,12 @@ mod tests {
         let mut minted = std::collections::BTreeSet::new();
         for _ in 0..16 {
             let agent = tables
-                .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
-                MintedIdentitySelection::None,
-            )
+                .register_orchestrator_agent(
+                    test_session(),
+                    test_mission(),
+                    HarnessKind::Claude,
+                    MintedIdentitySelection::None,
+                )
                 .expect("register agent");
             assert_eq!(agent.status, OrchestratorAgentStatus::Active);
             assert!(agent.reachability.is_none());
@@ -2364,7 +2364,10 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-agent-reachability");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
         let agent = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex,
+            .register_orchestrator_agent(
+                test_session(),
+                test_mission(),
+                HarnessKind::Codex,
                 MintedIdentitySelection::None,
             )
             .expect("register agent");
@@ -2449,7 +2452,10 @@ mod tests {
         );
 
         let agent = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
+            .register_orchestrator_agent(
+                test_session(),
+                test_mission(),
+                HarnessKind::Claude,
                 MintedIdentitySelection::None,
             )
             .expect("register agent");
@@ -2476,12 +2482,18 @@ mod tests {
         let temporary = TemporaryStore::new("orchestrate-triage-audit");
         let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
         let sender = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Claude,
+            .register_orchestrator_agent(
+                test_session(),
+                test_mission(),
+                HarnessKind::Claude,
                 MintedIdentitySelection::None,
             )
             .expect("register sender");
         let recipient = tables
-            .register_orchestrator_agent(test_session(), test_mission(), HarnessKind::Codex,
+            .register_orchestrator_agent(
+                test_session(),
+                test_mission(),
+                HarnessKind::Codex,
                 MintedIdentitySelection::None,
             )
             .expect("register recipient");

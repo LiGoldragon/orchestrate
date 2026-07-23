@@ -1,10 +1,8 @@
 use signal_orchestrate::{
     Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, DurationNanos, HandoffAcceptance,
     HandoffRejection, HandoffRejectionReason, LaneIdentifier, LaneName, OrchestrateReply,
-    ReleaseAcknowledgment, RepositoryMainContended, RoleClaim, RoleHandoff,
-    RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference, WirePath,
-    Worktree,
-    WorktreeStatus,
+    ReleaseAcknowledgment, RepositoryMainContended, RoleClaim, RoleHandoff, RoleName, RoleRelease,
+    RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference, WirePath, Worktree, WorktreeStatus,
 };
 
 use crate::repository::RepositoryDirectory;
@@ -526,7 +524,6 @@ impl RepositoryContention {
             },
         ))
     }
-
 }
 
 struct ScopeRelation<'scope> {

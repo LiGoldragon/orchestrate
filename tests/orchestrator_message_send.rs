@@ -9,22 +9,20 @@
 use std::io::Write;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
 use orchestrate::{
-    OrchestrateLayout, OrchestrateService, StoredTriageRejectionReason, StoredTriageVerdict,
-    StoreLocation,
+    OrchestrateLayout, OrchestrateService, StoreLocation, StoredTriageRejectionReason,
+    StoredTriageVerdict,
 };
 use signal_orchestrate::{
-    HarnessKind, MessengerDeliveryState, MissionDescription, OrchestrateReply,
-    OrchestrateRequest, OrchestratorAgentIdentifier, OrchestratorMessageRecipient,
-    OrchestratorMessageRejection, OrchestratorMessageSubmission, OrchestratorTopicPath,
-    SessionIdentifier, TopicSelection,
+    HarnessKind, MessengerDeliveryState, MissionDescription, OrchestrateReply, OrchestrateRequest,
+    OrchestratorAgentIdentifier, OrchestratorMessageRecipient, OrchestratorMessageRejection,
+    OrchestratorMessageSubmission, OrchestratorTopicPath, SessionIdentifier, TopicSelection,
 };
 use signal_orchestrator_message::{
-    GuidanceMagnitude, MessageContent, MessageSubject, OrchestratorMessage,
-    OrchestratorMessageKind,
+    GuidanceMagnitude, MessageContent, MessageSubject, OrchestratorMessage, OrchestratorMessageKind,
 };
 use tempfile::TempDir;
 use triad_runtime::{FrameBody as LengthPrefixedFrameBody, LengthPrefixedCodec};
@@ -164,8 +162,7 @@ impl StubMessenger {
                         signal_message::Output::agent_identity_assigned(
                             signal_message::AssignedAgentIdentity {
                                 agent_identifier: assignment.agent_identifier,
-                                identity_provenance:
-                                    signal_message::IdentityProvenance::Seated,
+                                identity_provenance: signal_message::IdentityProvenance::Seated,
                             },
                         )
                     }
@@ -217,7 +214,10 @@ fn routed_send_lands_in_the_messenger_and_persists_bounded_triage() {
         &mut fixture,
         sender.clone(),
         OrchestratorMessageRecipient::Agent(recipient.clone()),
-        message("rebase first", "main moved; rebase your branch before landing"),
+        message(
+            "rebase first",
+            "main moved; rebase your branch before landing",
+        ),
     );
 
     let OrchestrateReply::OrchestratorMessageRouted(routed) = reply else {
@@ -325,10 +325,12 @@ fn escalation_without_coordinator_rejects_missing_coordinator_and_audits_escalat
         rejected.rejection,
         OrchestratorMessageRejection::MissingCoordinator
     );
-    assert!(fixture
-        .triage_verdicts()
-        .iter()
-        .any(|verdict| matches!(verdict, StoredTriageVerdict::Escalate)));
+    assert!(
+        fixture
+            .triage_verdicts()
+            .iter()
+            .any(|verdict| matches!(verdict, StoredTriageVerdict::Escalate))
+    );
 }
 
 #[test]
@@ -352,8 +354,10 @@ fn routed_send_without_messenger_socket_degrades_named_and_still_commits_triage(
         MessengerDeliveryState::Degraded(ref detail)
             if detail.as_str().contains("no messenger socket configured")
     ));
-    assert!(fixture
-        .triage_verdicts()
-        .iter()
-        .any(|verdict| matches!(verdict, StoredTriageVerdict::Route { .. })));
+    assert!(
+        fixture
+            .triage_verdicts()
+            .iter()
+            .any(|verdict| matches!(verdict, StoredTriageVerdict::Route { .. }))
+    );
 }
