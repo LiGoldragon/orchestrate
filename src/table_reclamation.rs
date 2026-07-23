@@ -2,35 +2,18 @@
 //! without bound: the orchestrator agent registry, its topic membership, the
 //! topic registry, workflow model resolutions, and the worktree index.
 //!
-//! This is an interim mechanism. The psyche's standing direction is that these
-//! lanes and tables should ultimately be "handled more smartly with a mind
-//! combination"; until then, each store is bounded by the same deadline-driven,
-//! push-not-pull discipline the lane reaper already uses (`src/lane.rs`,
-//! `src/lane_reclamation.rs`). The invariant carries over unchanged: a record is
-//! never reaped by anything but its own idle age, and real activity refreshes a
-//! record's activity stamp so long-running work never ages out. See
-//! `ARCHITECTURE.md` for the interim framing and its backing quote.
-//!
-//! The reaper holds one reconciliation instant and decides, per record, whether
-//! it is a live record to keep or a dead record to reap. Reconciliation runs at
-//! the same moments the lane reconciliation does: at daemon startup and on the
-//! ordinary engine turn, with the shared reclamation worker sleeping to the next
-//! published expiry rather than scanning on a timer.
+//! This is an interim retention mechanism. Only explicitly terminal records
+//! are eligible for elapsed-time cleanup; active agent ownership never expires
+//! from silence or missing observed activity. Reconciliation runs at daemon
+//! startup and on ordinary engine turns, but observation timestamps are never
+//! authority to retire an active owner.
 
 use signal_orchestrate::{
     OrchestratorAgentIdentifier, OrchestratorAgentStatus, TimestampNanos, WorktreeStatus,
 };
 
-use crate::activity_read::{AgentActivityAssessment, AgentActivityRead};
+use crate::activity_read::AgentActivityRead;
 use crate::{OrchestrateTables, Result};
-
-/// How long an `Active` orchestrator agent may sit idle — no registration,
-/// reachability discovery, or triaged message — before the reaper retires it as
-/// a leaked agent whose harness is gone. Generous by design, mirroring the
-/// active-lane liveness window: a genuinely active agent refreshes its
-/// last-activity stamp on every real use, so only an abandoned agent idles this
-/// long. Tunable.
-pub const ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 
 /// How long a terminal (`Retired` or `Dead`) orchestrator agent is retained
 /// after its terminal transition before the reaper hard-deletes it and its
@@ -65,21 +48,18 @@ pub const WORKTREE_TERMINAL_RETENTION_NANOS: u64 = 24 * 60 * 60 * 1_000_000_000;
 /// a single reconciliation instant, by each record's own idle age.
 pub struct BoundedTableReaper {
     now: TimestampNanos,
-    activity: AgentActivityRead,
 }
 
 impl BoundedTableReaper {
     pub fn new(now: TimestampNanos) -> Self {
-        Self {
-            now,
-            activity: AgentActivityRead::from_process_environment(),
-        }
+        Self { now }
     }
 
     /// Point the retire-decision activity read at fixture roots instead of the
     /// live host's `/proc`.
-    pub fn with_activity_read(mut self, activity: AgentActivityRead) -> Self {
-        self.activity = activity;
+    pub fn with_activity_read(self, _activity: AgentActivityRead) -> Self {
+        // Preserved so callers can continue constructing fixture reapers. The
+        // activity read no longer participates in ownership retirement.
         self
     }
 
@@ -111,7 +91,12 @@ impl BoundedTableReaper {
             });
         };
         for agent in tables.orchestrator_agent_records()? {
-            consider(Self::agent_deadline(&agent.last_activity, agent.status));
+            if matches!(
+                agent.status,
+                OrchestratorAgentStatus::Retired | OrchestratorAgentStatus::Dead
+            ) {
+                consider(Self::agent_deadline(&agent.last_activity, agent.status));
+            }
         }
         for resolution in tables.workflow_model_resolution_records()? {
             consider(TimestampNanos::new(
@@ -155,36 +140,6 @@ impl BoundedTableReaper {
         for agent in tables.orchestrator_agent_records()? {
             let idle_nanos = agent.idle_age_at(self.now).value();
             match agent.status {
-                // The idle-aged retire decision is the activity-read moment
-                // (liveliness design §3.3): before retiring, read the agent's
-                // real latest activity. A live command child or a session
-                // artifact written after the stamp is positive liveness — the
-                // stamp refreshes and the idle deadline re-arms; a silent,
-                // childless agent retires as before.
-                OrchestratorAgentStatus::Active
-                    if idle_nanos >= ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS =>
-                {
-                    match self.activity.assess(&agent) {
-                        AgentActivityAssessment::ActivityObserved(_) => {
-                            tables.touch_orchestrator_agent(&agent.agent_identifier)?;
-                            reclamation.refreshed_busy_agents += 1;
-                        }
-                        AgentActivityAssessment::NoActivityObserved => {
-                            tables.retire_orchestrator_agent(&agent.agent_identifier)?;
-                            reclamation.retired_idle_agents += 1;
-                        }
-                    }
-                }
-                // An `Allocated` reservation whose launch never happened has no
-                // process or session to read; it ages out on the same idle
-                // window: the registry is a live view, not an archive of stale
-                // mints.
-                OrchestratorAgentStatus::Allocated
-                    if idle_nanos >= ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS =>
-                {
-                    tables.retire_orchestrator_agent(&agent.agent_identifier)?;
-                    reclamation.retired_idle_agents += 1;
-                }
                 OrchestratorAgentStatus::Retired
                     if idle_nanos >= RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS =>
                 {
@@ -197,6 +152,10 @@ impl BoundedTableReaper {
                     tables.remove_orchestrator_agent(&agent.agent_identifier)?;
                     reclamation.reaped_dead_agents += 1;
                 }
+                // Active and allocated records require an explicit lifecycle
+                // transition. Activity observations may be displayed but never
+                // authorize retirement.
+                OrchestratorAgentStatus::Active | OrchestratorAgentStatus::Allocated => {}
                 _ => {}
             }
         }
@@ -320,11 +279,8 @@ impl BoundedTableReaper {
         status: OrchestratorAgentStatus,
     ) -> TimestampNanos {
         let window = match status {
-            // An allocated identity waits for its launch on the same idle
-            // window as a live agent; an abandoned mint ages out rather than
-            // lingering (mint-relocation may refine this policy).
             OrchestratorAgentStatus::Active | OrchestratorAgentStatus::Allocated => {
-                ACTIVE_ORCHESTRATOR_AGENT_IDLE_LIMIT_NANOS
+                return *last_activity;
             }
             OrchestratorAgentStatus::Retired | OrchestratorAgentStatus::Dead => {
                 RETIRED_ORCHESTRATOR_AGENT_RETENTION_NANOS
@@ -338,8 +294,9 @@ impl BoundedTableReaper {
 /// test) can witness exactly what the reaper removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BoundedTableReclamation {
-    /// Idle-aged `Active` agents whose activity read found a live command
-    /// child or a fresh session artifact: refreshed instead of retired.
+    /// Retained for public compatibility with historical reconciliation
+    /// reports. Silence no longer refreshes or retires active ownership, so
+    /// both values remain zero.
     pub refreshed_busy_agents: u32,
     pub retired_idle_agents: u32,
     pub reaped_retired_agents: u32,

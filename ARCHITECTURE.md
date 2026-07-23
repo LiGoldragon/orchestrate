@@ -368,16 +368,13 @@ Task scopes render in bracketed human form:
   directory-minus-file handoff shape.
 - Lane registry changes are meta-authority operations, not contract
   enum additions.
-- The lane registry reflects only real lanes: a lane's `updated_at` is its
-  last-activity stamp, refreshed on every real use (claim, release, handoff,
-  recovery re-registration). A `LaneReaper` reconciles at daemon startup and
-  through a lifecycle-driven deadline worker: each lane mutation publishes the
-  next expiry, the worker sleeps until that one deadline, then re-enters through
-  the ordinary Signal path for actor-owned reclamation. It is not an interval
-  poll and does not require a human Observe call. Terminal records past a short
-  retention window and `Active` lanes idle past a generous liveness window are
-  hard-deleted with their claims. Windows are tunable constants in `src/lane.rs`
-  (terminal 1h, active idle 24h).
+- The lane registry records active ownership until an explicit authorized
+  lifecycle operation changes it. A lane's `updated_at` is inspection metadata,
+  never authority to infer abandonment: silence cannot warn, nudge, recover,
+  terminate, abandon, retire, or remove an active lane or its claims. The
+  `LaneReaper` schedules only explicitly terminal (`Released` /
+  `HandoverEnded`) record retention; after the short terminal window it removes
+  the terminal lane and its canonical claims in one durable transaction.
 - Because only real lanes count, registration reads a lane's identity, not its
   history. A terminal record (`Released` / `HandoverEnded`) never blocks: a
   `Fresh` registration over one supersedes it — the dead record and its stale
@@ -390,30 +387,19 @@ Task scopes render in bracketed human form:
   liveness stamp (`RecoveryInherited`). Over a terminal or absent record both
   modes converge — the lane is genuinely (re)registered and the reply is a
   truthful `LaneRegistered`, never a silent no-op behind a success variant.
-- The other stores that grew without a removal path are bounded by the same
-  idle-age discipline, in `src/table_reclamation.rs`'s `BoundedTableReaper`: the
-  orchestrator agent registry (an `Active` agent idle past its liveness window
-  retires; a `Retired` agent past its terminal retention is deleted with its
-  topic seats; `last_activity` is refreshed on registration, reachability
-  discovery, and each triaged message it sends, and clearing a session retires
-  its agents), topic membership (reaped with the agent that held it), the topic
-  registry (an empty, childless topic aged past retention is reaped), the
-  workflow model-resolution table (a resolution reaped past its retention), and
-  the worktree index (a row whose registered checkout path has vanished is
-  removed immediately as stale state; a still-present concluded tombstone —
-  `Recycled`/`Archived`/`Merged` — is reaped past retention, while live `Active`
-  and `Abandoned` checkouts remain for `ConcludeWorktree` reclaim).
-  Reconciliation runs at startup and at the head of every ordinary engine turn,
-  and the single reclamation worker's
-  next deadline is the earliest expiry across the lanes and these tables — the
-  same push-not-pull, reaped-only-by-its-own-idle-age invariant, never an
-  interval scan. This reaping is an **interim** mechanism, not the final design:
-  the psyche's standing direction is that these lanes and tables should
-  ultimately be "handled more smartly with a mind combination", and that a store
-  that grows is acceptable only "as long as we also document their age" — which
-  the relative-age display surfaces. Until that smarter handling exists, the
-  reaper keeps every store bounded. Windows are tunable constants in
-  `src/table_reclamation.rs`.
+- `src/table_reclamation.rs`'s `BoundedTableReaper` uses elapsed time only
+  as retention policy for explicitly terminal agents (`Retired`/`Dead`), empty
+  topics, workflow-resolution history, and concluded worktree tombstones. An
+  active or allocated orchestrator agent survives arbitrary inactivity and
+  missing observed activity; clearing a session remains an explicit retirement
+  operation. A missing checkout is immediate index truth, while live `Active`
+  and `Abandoned` worktrees remain for `ConcludeWorktree` reclaim. Reconciliation
+  may run at startup or an ordinary turn, but no scan or deadline grants silence
+  authority over active ownership.
+- Lane/session lifecycle transitions update lane/session state and canonical
+  durable claims in one Sema atomic commit. Claims are the authoritative durable
+  view; lock files and `RoleSnapshot` are downstream projections and cannot
+  create, retain, or override ownership.
 - Harness liveness is kernel-pushed, not aged (`src/harness_liveness.rs`,
   layer 1 of the coordination-liveliness design): the daemon holds a `pidfd`
   on every `Active` agent's discovered harness process (the pid pinned by its

@@ -8,8 +8,8 @@ use rkyv::validation::Validator;
 use rkyv::validation::archive::ArchiveValidator;
 use rkyv::validation::shared::SharedValidator;
 use sema_engine::{
-    Engine, EngineOpen, FamilyName, KeyedAssertion, KeyedMutation, QueryPlan, RecordKey,
-    Retraction, SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
+    Engine, EngineOpen, EngineRecord, FamilyName, KeyedAssertion, KeyedMutation, QueryPlan,
+    RecordKey, Retraction, SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
     VersionedStoreName, VersioningPolicy,
 };
 use signal_harness::{ModelResolved, ModelUnavailable};
@@ -289,13 +289,12 @@ pub enum StoredWorkflowModelResolutionOutcome {
 /// `reachability` is populated later by the discovery lane; it is `None` at
 /// registration because reachability is discovered, never caller-declared.
 ///
-/// `last_activity` is the reaper's idle-age clock, mirroring a lane's
-/// `updated_at`: it starts at `registered_at` and is refreshed on every real use
-/// of the agent (reachability discovery, a triage message it sends), so a
-/// genuinely active agent never ages out. The interim table reaper retires an
-/// `Active` agent idle past the liveness window and deletes a `Retired` agent
-/// past its terminal retention, and the retirement transition re-stamps
-/// `last_activity` so the terminal window is measured from retirement.
+/// `last_activity` records observed activity for inspection. It is refreshed
+/// on real use (reachability discovery and a triage message), but it never
+/// grants authority to retire an active agent. The interim table reaper deletes
+/// only explicitly terminal (`Retired`/`Dead`) agents past terminal retention;
+/// the terminal transition re-stamps `last_activity` so that window is measured
+/// from explicit retirement or death.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredOrchestratorAgent {
     pub agent_identifier: OrchestratorAgentIdentifier,
@@ -734,6 +733,61 @@ impl OrchestrateTables {
         Ok(())
     }
 
+    /// Commit one ownership lifecycle transition. The lane registry and claims
+    /// table are the canonical durable ownership view, so callers must change
+    /// them together: a failed commit exposes neither half of the transition.
+    pub fn transition_lane_ownership(
+        &self,
+        remove_lanes: &[StoredLaneRegistration],
+        upsert_lanes: &[StoredLaneRegistration],
+        remove_claim_keys: &[String],
+        insert_claims: &[StoredClaim],
+    ) -> Result<()> {
+        let mut lane_changes = std::collections::BTreeMap::new();
+        for lane in remove_lanes {
+            lane_changes.insert(lane.key(), None);
+        }
+        for lane in upsert_lanes {
+            lane_changes.insert(lane.key(), Some(lane.clone()));
+        }
+
+        let mut claim_changes = std::collections::BTreeMap::new();
+        for key in remove_claim_keys {
+            claim_changes.insert(key.clone(), None);
+        }
+        for claim in insert_claims {
+            claim_changes.insert(claim.key(), Some(claim.clone()));
+        }
+
+        let mut commit = self.engine.begin_atomic_commit();
+        let mut operations = 0;
+        for (key, lane) in lane_changes {
+            let existing = self.record(self.lane_registry, key.as_str())?;
+            commit = match (lane, existing.is_some()) {
+                (Some(lane), true) => commit.mutate(self.lane_registry, lane),
+                (Some(lane), false) => commit.assert(self.lane_registry, lane),
+                (None, true) => commit
+                    .retract::<StoredLaneRegistration>(self.lane_registry, RecordKey::new(key)),
+                (None, false) => continue,
+            };
+            operations += 1;
+        }
+        for (key, claim) in claim_changes {
+            let existing = self.record(self.claims, key.as_str())?;
+            commit = match (claim, existing.is_some()) {
+                (Some(claim), true) => commit.mutate(self.claims, claim),
+                (Some(claim), false) => commit.assert(self.claims, claim),
+                (None, true) => commit.retract::<StoredClaim>(self.claims, RecordKey::new(key)),
+                (None, false) => continue,
+            };
+            operations += 1;
+        }
+        if operations > 0 {
+            self.engine.commit_atomic(commit)?;
+        }
+        Ok(())
+    }
+
     /// Refresh an active lane's last-activity stamp (`updated_at`) to now, the
     /// liveness signal the reaper reads: any real use of a lane — a claim,
     /// release, handoff, or recovery re-registration — pushes its idle clock
@@ -873,14 +927,10 @@ impl OrchestrateTables {
         remove_keys: &[String],
         insert_claims: &[StoredClaim],
     ) -> Result<()> {
-        for key in remove_keys {
-            self.remove_if_present(self.claims, key.as_str())?;
-        }
-        for claim in insert_claims {
-            let key = claim.key();
-            self.upsert(self.claims, key.as_str(), claim)?;
-        }
-        Ok(())
+        // Claims are the canonical durable ownership view. Even a replacement
+        // that spans several scopes is one commit, never a visible sequence of
+        // removals followed by inserts.
+        self.transition_lane_ownership(&[], &[], remove_keys, insert_claims)
     }
 
     pub fn replace_all_claims(&self, claims: &[StoredClaim]) -> Result<()> {
@@ -1750,6 +1800,12 @@ impl TopicMembershipKey {
     }
 }
 
+impl EngineRecord for StoredClaim {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(self.key())
+    }
+}
+
 impl StoredClaim {
     pub fn new(
         lane: LaneIdentifier,
@@ -1780,6 +1836,12 @@ impl StoredClaim {
 
     pub fn age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
         TimestampInterval::new(self.claimed_at, observed_at).duration()
+    }
+}
+
+impl EngineRecord for StoredLaneRegistration {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(self.key())
     }
 }
 

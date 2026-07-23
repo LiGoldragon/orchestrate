@@ -89,13 +89,10 @@ impl OrchestrateService {
             harness_liveness: HarnessLivenessReconciliation::from_process_environment(),
             harness_liveness_watch: None,
         };
-        // Reap dead durable state at startup: every daemon restart (each deploy)
-        // hard-deletes terminal lane records past retention, Active lanes idle
-        // past the liveness window, retired/idle orchestrator agents, orphaned
-        // topic seats, empty topics, aged workflow model resolutions, and worktree
-        // rows whose checkout has vanished — so a store that accumulated leaked
-        // and terminal records while an older daemon ran comes up reflecting only
-        // real state.
+        // Reap terminal or otherwise explicitly stale durable state at startup:
+        // terminal lanes and agents past retention, orphaned topic seats, empty
+        // topics, aged workflow model resolutions, and worktree rows whose
+        // checkout has vanished. Active ownership survives silence unchanged.
         service.reconcile_bounded_state()?;
         Ok(service)
     }
@@ -168,13 +165,12 @@ impl OrchestrateService {
         })
     }
 
-    /// Reap every dead durable record in one pass — dead lanes, orphaned claims,
-    /// retired and idle orchestrator agents, orphaned topic seats, empty topics,
-    /// aged workflow model resolutions, and worktree rows whose checkout vanished.
-    /// This runs at startup and on every ordinary engine turn, reflecting the
-    /// same reconcile-on-read discipline the lane registry already applies, so
-    /// the interim-bounded stores never accumulate dead records between the
-    /// deadline worker's timed wakes.
+    /// Reap terminal or otherwise explicitly stale durable records in one pass
+    /// — terminal lanes, orphaned claims, terminal orchestrator agents,
+    /// orphaned topic seats, empty topics, aged workflow model resolutions, and
+    /// worktree rows whose checkout vanished. This runs at startup and on every
+    /// ordinary engine turn; timestamps never authorize mutation of active lane
+    /// or agent ownership.
     pub(crate) fn reconcile_bounded_state(&self) -> Result<()> {
         let now = self.tables.current_timestamp()?;
         // Liveness truth first: an `Active` agent whose pinned harness process
@@ -182,14 +178,13 @@ impl OrchestrateService {
         // kernel exit watcher only wakes the turn, the transition is always
         // derived here from process truth.
         self.harness_liveness.reconcile(&self.tables)?;
-        let lane_reconciliation = crate::LaneRegistry::new(&self.tables).reconcile()?;
+        crate::LaneRegistry::new(&self.tables).reconcile()?;
         self.tables.remove_claims_without_lanes()?;
         let table_reclamation = crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;
-        // A lane reap that flagged orphaned worktrees `Abandoned`, or a terminal
-        // worktree tombstone reaped past its retention, changed the worktree
-        // table, so refresh the GC manifest to match.
-        if lane_reconciliation.flagged_abandoned_worktrees > 0
-            || table_reclamation.reaped_missing_worktrees > 0
+        // Terminal worktree tombstone cleanup or a missing checkout changes the
+        // worktree table, so refresh the GC manifest to match. Lane silence
+        // never changes worktree status.
+        if table_reclamation.reaped_missing_worktrees > 0
             || table_reclamation.reaped_terminal_worktrees > 0
         {
             crate::WorktreeProjection::new(&self.tables, &self.layout).project()?;

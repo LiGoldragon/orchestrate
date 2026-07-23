@@ -2,18 +2,19 @@ use meta_signal_harness::MetaHarnessReply;
 use orchestrate::{
     ActivityFilter, ActivityQuery, ActivitySubmission, AgentActivityRead, ApplicationFailure,
     ApplicationFailureReason, ApplicationSuccess, BoundedTableReaper, BoundedTableReclamation,
-    CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
+    BranchName, CURRENT_ACTIVITY_LIMIT, CreateRoleOrder, DownstreamComponent, HarnessKind,
     LaneAlreadyRegisteredResolution, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
-    LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest, LaneRegistry,
-    LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest, MissionDescription,
-    Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply, OrchestrateRequest,
-    OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration, OrchestratorTopicPath,
-    PartialApplied, RefreshRepositoryIndexOrder, ResolvedWorkflowRunRequest, RetireRoleOrder,
-    Retirement, Role, RoleClaim, RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason,
-    ScopeReference, SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim,
-    StoredLaneRegistration, StoredWorkflowModelResolutionOutcome, TaskToken, TimestampNanos,
-    TopicName, TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest,
-    WorkflowRunner,
+    LaneName, LaneOwner, LaneReconciliation, LaneRegistrationMode, LaneRegistrationRequest,
+    LaneRegistry, LaneUnregistrationRequest, MetaOrchestrateReply, MetaOrchestrateRequest,
+    MissionDescription, Observation, ObservationSubscription, OrchestrateLayout, OrchestrateReply,
+    OrchestrateRequest, OrchestrateService, OrchestrateTables, OrchestratorAgentRegistration,
+    OrchestratorTopicPath, PartialApplied, PurposeText, PushedState, RefreshRepositoryIndexOrder,
+    RepositoryName, ResolvedWorkflowRunRequest, RetireRoleOrder, Retirement, Role, RoleClaim,
+    RoleHandoff, RoleName, RoleRelease, RoleToken, ScopeReason, ScopeReference,
+    SessionClearRequest, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
+    StoredWorkflowModelResolutionOutcome, StoredWorktree, TaskToken, TimestampNanos, TopicName,
+    TopicSelection, WirePath, WorkflowResolutionUnavailable, WorkflowRunRequest, WorkflowRunner,
+    WorktreeStatus,
 };
 use signal_criome::{
     AttestedMoment, AttestedMomentProposition, AuthorizedObjectKind, AuthorizedObjectReference,
@@ -1163,7 +1164,7 @@ fn claim_cleanup_removes_rows_for_missing_lanes() {
 }
 
 #[test]
-fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
+fn reconcile_keeps_arbitrarily_inactive_active_lanes_and_reaps_expired_terminal_lanes() {
     let temporary = tempfile::Builder::new()
         .prefix("orchestrate-lane-reconcile")
         .tempdir()
@@ -1194,7 +1195,8 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
         at(0),
         orchestrate::LaneStatus::Active,
     );
-    // A leaked lane: Active but idle far past the generous liveness window.
+    // An active lane may be silent indefinitely. Its timestamp remains
+    // inspection metadata, not authority to infer abandonment.
     let idle_active = StoredLaneRegistration::new(
         lane_registration(
             "ReconcileSession",
@@ -1238,6 +1240,21 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
     ] {
         tables.insert_lane(registration).expect("insert lane");
     }
+    let active_worktree_path = temporary.path().join("idle-active-worktree");
+    std::fs::create_dir_all(&active_worktree_path).expect("active worktree directory");
+    tables
+        .insert_worktree(&StoredWorktree {
+            repository: RepositoryName::from_text("orchestrate").expect("repository"),
+            branch: BranchName::from_text("idle-active-worktree").expect("branch"),
+            path: WirePath::from_absolute_path(active_worktree_path.to_string_lossy().into_owned())
+                .expect("worktree path"),
+            owning_lane: LaneName::from_text("idle-active").expect("lane"),
+            status: WorktreeStatus::Active,
+            purpose: PurposeText::from_text("silence must not abandon work").expect("purpose"),
+            last_activity: at(25),
+            pushed_state: PushedState::AncestorOfMain,
+        })
+        .expect("insert active worktree");
     tables
         .replace_all_claims(&[
             StoredClaim::new(
@@ -1264,9 +1281,10 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
 
     let reconciliation: LaneReconciliation =
         LaneRegistry::new(&tables).reconcile().expect("reconcile");
-    assert_eq!(reconciliation.reaped_idle_active, 1);
+    assert_eq!(reconciliation.reaped_idle_active, 0);
     assert_eq!(reconciliation.reaped_terminal, 1);
-    assert_eq!(reconciliation.total_reaped(), 2);
+    assert_eq!(reconciliation.total_reaped(), 1);
+    assert_eq!(reconciliation.flagged_abandoned_worktrees, 0);
 
     let survivors: Vec<String> = tables
         .lane_records()
@@ -1274,10 +1292,10 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
         .into_iter()
         .map(|registration| registration.assignment.lane.as_wire_token().to_string())
         .collect();
-    assert_eq!(survivors.len(), 2);
+    assert_eq!(survivors.len(), 3);
     assert!(survivors.contains(&"fresh-active".to_string()));
+    assert!(survivors.contains(&"idle-active".to_string()));
     assert!(survivors.contains(&"recent-terminal".to_string()));
-    assert!(!survivors.contains(&"idle-active".to_string()));
     assert!(!survivors.contains(&"expired-terminal".to_string()));
     let remaining_claim_lanes: Vec<String> = tables
         .claim_records()
@@ -1285,7 +1303,135 @@ fn reconcile_reaps_idle_active_and_expired_terminal_lanes_only() {
         .into_iter()
         .map(|claim| claim.lane.as_wire_token().to_string())
         .collect();
-    assert_eq!(remaining_claim_lanes, vec!["recent-terminal"]);
+    assert_eq!(
+        remaining_claim_lanes,
+        vec!["idle-active", "recent-terminal"]
+    );
+    assert_eq!(
+        tables.worktree_records().expect("worktrees")[0].status,
+        WorktreeStatus::Active,
+        "silence must not mutate a live worktree to Abandoned"
+    );
+}
+
+#[test]
+fn explicit_lane_unregistration_commits_lane_and_claims_together() {
+    let (_temporary, tables) = lane_tables("orchestrate-atomic-unregister");
+    let registry = LaneRegistry::new(&tables);
+    registry
+        .register(lane_registration(
+            "AtomicSession",
+            "atomic-worker",
+            role_vector(&["Operator"]),
+        ))
+        .expect("register lane");
+    tables
+        .replace_all_claims(&[StoredClaim::new(
+            lane("atomic-worker"),
+            path("/tmp/atomic-worker"),
+            reason("atomic ownership fixture"),
+            tables.current_timestamp().expect("clock"),
+        )])
+        .expect("seed claim");
+
+    let before = tables.current_commit_sequence().expect("sequence");
+    registry
+        .unregister(LaneUnregistrationRequest {
+            session: session("AtomicSession"),
+            lane: lane("atomic-worker"),
+            details: LaneDetails::from_text("explicitly finished").expect("details"),
+        })
+        .expect("unregister");
+    assert_eq!(
+        tables.current_commit_sequence().expect("sequence"),
+        before + 1,
+        "the lane status and canonical claim removal share one commit"
+    );
+    assert_eq!(
+        tables
+            .first_lane_record(&lane("atomic-worker"))
+            .expect("read lane")
+            .expect("lane retained for terminal inspection")
+            .status,
+        orchestrate::LaneStatus::Released
+    );
+    assert!(tables.claim_records().expect("claims").is_empty());
+
+    registry
+        .register(lane_registration(
+            "AtomicSession",
+            "retired-worker",
+            role_vector(&["Designer"]),
+        ))
+        .expect("register retiring lane");
+    tables
+        .replace_all_claims(&[StoredClaim::new(
+            lane("retired-worker"),
+            path("/tmp/retired-worker"),
+            reason("atomic retirement fixture"),
+            tables.current_timestamp().expect("clock"),
+        )])
+        .expect("seed retirement claim");
+    let before_retire = tables.current_commit_sequence().expect("sequence");
+    registry
+        .retire(lane("retired-worker"))
+        .expect("explicit retire");
+    assert_eq!(
+        tables.current_commit_sequence().expect("sequence"),
+        before_retire + 1,
+        "explicit retirement removes lane and canonical claims in one commit"
+    );
+    assert!(
+        tables
+            .first_lane_record(&lane("retired-worker"))
+            .expect("read lane")
+            .is_none()
+    );
+    assert!(tables.claim_records().expect("claims").is_empty());
+}
+
+#[test]
+fn rejected_lifecycle_transition_preserves_canonical_lane_and_claim_ownership() {
+    let (_temporary, tables) = lane_tables("orchestrate-atomic-rejection");
+    let registry = LaneRegistry::new(&tables);
+    registry
+        .register(lane_registration(
+            "CorrectSession",
+            "guarded-worker",
+            role_vector(&["Operator"]),
+        ))
+        .expect("register lane");
+    tables
+        .replace_all_claims(&[StoredClaim::new(
+            lane("guarded-worker"),
+            path("/tmp/guarded-worker"),
+            reason("failure atomicity fixture"),
+            tables.current_timestamp().expect("clock"),
+        )])
+        .expect("seed claim");
+    let before = tables.current_commit_sequence().expect("sequence");
+
+    let error = registry
+        .unregister(LaneUnregistrationRequest {
+            session: session("WrongSession"),
+            lane: lane("guarded-worker"),
+            details: LaneDetails::from_text("unauthorized session").expect("details"),
+        })
+        .expect_err("wrong-session unregister must fail before mutation");
+    assert!(matches!(
+        error,
+        orchestrate::Error::LaneNotRegistered { .. }
+    ));
+    assert_eq!(tables.current_commit_sequence().expect("sequence"), before);
+    assert_eq!(
+        tables
+            .first_lane_record(&lane("guarded-worker"))
+            .expect("read lane")
+            .expect("lane remains")
+            .status,
+        orchestrate::LaneStatus::Active
+    );
+    assert_eq!(tables.claim_records().expect("claims").len(), 1);
 }
 
 fn lane_tables(prefix: &str) -> (TempDir, OrchestrateTables) {
@@ -1475,7 +1621,7 @@ fn backdate_agent_activity(
 }
 
 #[test]
-fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topic_seats() {
+fn bounded_reaper_keeps_inactive_active_agents_and_deletes_expired_terminal_agents() {
     let (_temporary, tables) = workflow_resolution_tables("orchestrate-agent-reap");
     let now = tables.current_timestamp().expect("clock");
 
@@ -1488,7 +1634,8 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
             signal_orchestrate::MintedIdentitySelection::None,
         )
         .expect("register fresh agent");
-    // A leaked Active agent, idle far past the liveness window: reaper retires it.
+    // An Active agent may be silent indefinitely; only explicit terminal
+    // status authorizes retention cleanup.
     let idle = tables
         .register_orchestrator_agent(
             session("LeakSession"),
@@ -1510,9 +1657,8 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
         .retire_orchestrator_agent(&retired.agent_identifier)
         .expect("retire agent");
 
-    // Seat both the idle and the retired agent on a shared topic, so seat reaping
-    // tracks agent reaping: the deleted agent's seat goes, the surviving (now
-    // retired) agent's seat stays.
+    // Seat the silent Active and terminal agent on a shared topic, so terminal
+    // cleanup removes only the explicitly retired agent's seat.
     let topic = OrchestratorTopicPath::from_wire_token("engineering").expect("topic path");
     tables
         .ensure_orchestrator_topic(
@@ -1534,7 +1680,7 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
     let reclamation: BoundedTableReclamation = BoundedTableReaper::new(now)
         .reconcile(&tables)
         .expect("reconcile");
-    assert_eq!(reclamation.retired_idle_agents, 1);
+    assert_eq!(reclamation.retired_idle_agents, 0);
     assert_eq!(reclamation.reaped_retired_agents, 1);
 
     let agents = tables.orchestrator_agent_records().expect("agents");
@@ -1550,12 +1696,12 @@ fn bounded_reaper_retires_idle_agents_and_deletes_retired_agents_with_their_topi
     );
     assert_eq!(
         status_of(&idle.agent_identifier),
-        Some(orchestrate::OrchestratorAgentStatus::Retired)
+        Some(orchestrate::OrchestratorAgentStatus::Active)
     );
     assert_eq!(status_of(&retired.agent_identifier), None);
 
-    // The deleted agent's topic seat is gone; the retired-but-present agent's
-    // seat remains, so the topic is still populated.
+    // The explicitly terminal agent's topic seat is gone; the silent Active
+    // agent remains seated, so the topic is still populated.
     let members = tables
         .topic_member_identifiers(&topic)
         .expect("topic members");
@@ -2976,7 +3122,7 @@ fn terminal_cell_reachability(
 }
 
 #[test]
-fn bounded_reaper_refreshes_idle_aged_agent_with_live_command_child() {
+fn bounded_reaper_does_not_use_observed_activity_to_mutate_active_agent_ownership() {
     let (_temporary, tables) = workflow_resolution_tables("orchestrate-busy-refresh");
     let process_root = tempfile::TempDir::new().expect("proc root");
     // The harness (pid 100) holds a live command child (pid 101): an agent
@@ -3017,7 +3163,7 @@ fn bounded_reaper_refreshes_idle_aged_agent_with_live_command_child() {
         .reconcile(&tables)
         .expect("reconcile");
 
-    assert_eq!(reclamation.refreshed_busy_agents, 1);
+    assert_eq!(reclamation.refreshed_busy_agents, 0);
     assert_eq!(reclamation.retired_idle_agents, 0);
     let refreshed = tables
         .orchestrator_agent_record(&busy.agent_identifier)
@@ -3028,14 +3174,14 @@ fn bounded_reaper_refreshes_idle_aged_agent_with_live_command_child() {
         orchestrate::OrchestratorAgentStatus::Active,
         "a live command child keeps the agent Active however long it has run"
     );
-    assert!(
-        refreshed.last_activity.value() > backdated.value(),
-        "positive activity re-arms the idle deadline"
+    assert_eq!(
+        refreshed.last_activity, backdated,
+        "activity observation does not mutate active ownership metadata"
     );
 }
 
 #[test]
-fn bounded_reaper_retires_idle_aged_agent_with_no_observed_activity() {
+fn bounded_reaper_keeps_silent_active_agent_without_observed_activity() {
     let (_temporary, tables) = workflow_resolution_tables("orchestrate-stale-retire");
     let process_root = tempfile::TempDir::new().expect("proc root");
     // The harness (pid 100) is alive but childless: no command in flight.
@@ -3066,14 +3212,14 @@ fn bounded_reaper_retires_idle_aged_agent_with_no_observed_activity() {
         .expect("reconcile");
 
     assert_eq!(reclamation.refreshed_busy_agents, 0);
-    assert_eq!(reclamation.retired_idle_agents, 1);
+    assert_eq!(reclamation.retired_idle_agents, 0);
     assert_eq!(
         tables
             .orchestrator_agent_record(&stale.agent_identifier)
             .expect("read")
             .expect("present")
             .status,
-        orchestrate::OrchestratorAgentStatus::Retired,
-        "silent and childless past the idle window retires as before"
+        orchestrate::OrchestratorAgentStatus::Active,
+        "silence and missing activity do not authorize active-agent retirement"
     );
 }
