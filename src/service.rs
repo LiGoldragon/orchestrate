@@ -111,7 +111,7 @@ impl OrchestrateService {
     /// Attach the kernel exit watcher to this daemon's ordinary socket and arm
     /// it from durable state: every `Active` agent's pinned harness process is
     /// watched immediately, so a harness that dies while the daemon runs is
-    /// pushed dead by the kernel rather than aged out by the idle backstop.
+    /// marked dead from the kernel-reported process-exit fact.
     pub fn with_harness_liveness_watch(
         mut self,
         ordinary_socket_path: std::path::PathBuf,

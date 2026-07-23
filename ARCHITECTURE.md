@@ -405,27 +405,23 @@ Task scopes render in bracketed human form:
   on every `Active` agent's discovered harness process (the pid pinned by its
   `/proc` start time, so a recycled pid is never mistaken for the agent's
   harness), and a process exit makes the pidfd readable — the
-  `HarnessLivenessWatch` worker re-enters through the ordinary Signal path,
-  exactly like the lane reclaimer. The truth transition never trusts the wake:
-  at the head of every ordinary turn `HarnessLivenessReconciliation` reads
-  `/proc` and marks the typed `OrchestratorAgentStatus::Dead` on every `Active`
-  agent whose pinned generation is gone. `Dead` is terminal beside `Retired`
-  (same retention, distinct meaning: dead agents are the messenger's
-  killed-mark source and are bounced-to, never respawn-delivered). Agents
-  without discovered reachability have no pid to watch and stay on the
-  idle-age backstop.
-- The idle-aged retire decision reads real activity first
-  (`src/activity_read.rs`, layer 3 of the coordination-liveliness design,
-  psyche-ruled: "better to actually read the agent's latest activity; a single
-  command could take hours"). When an `Active` agent's idle age reaches the
-  reaper's retire decision — and only then; nothing scans on a clock —
-  `AgentActivityRead` reads the agent's genuine latest activity: a live
-  descendant of the pinned harness process (a running command, however long)
-  or a terminal-cell session artifact written after the stored stamp is
-  positive liveness that refreshes `last_activity` and re-arms the idle
-  deadline; a silent, childless agent retires as before. The descendant scan
-  only trusts a live generation pin, so a recycled pid's children are never
-  attributed to the agent.
+  `HarnessLivenessWatch` worker re-enters through the ordinary Signal path.
+  The truth transition never trusts the wake: at the head of every ordinary
+  turn `HarnessLivenessReconciliation` reads `/proc` and marks the typed
+  `OrchestratorAgentStatus::Dead` only when its pinned process generation is
+  gone. `Dead` is terminal beside `Retired` (same retention, distinct meaning:
+  dead agents are the messenger's killed-mark source and are bounced-to, never
+  respawn-delivered). Agents without discovered reachability remain `Active`
+  until an explicit authorized lifecycle operation changes them.
+- `AgentActivityRead` (`src/activity_read.rs`, layer 3 of the
+  coordination-liveliness design) may inspect a pinned harness descendant tree
+  or terminal-cell session artifacts and report what was observed. Its
+  timestamps and assessments are observational metadata only. Neither a recent
+  observation nor silence, missing activity, an idle age, or an unreadable
+  surface authorizes warning, recovery, retirement, claim release, abandonment,
+  or any other lifecycle transition for an active lane, session, or agent.
+  The descendant scan still trusts only a live generation pin, so a recycled
+  pid's children are never attributed to the agent.
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path

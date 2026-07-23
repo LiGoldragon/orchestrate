@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rkyv::api::high::HighDeserializer;
@@ -56,8 +57,8 @@ where
 // re-insert. Every other family stays pinned at its own last-layout version.
 //
 // Bumped 7 -> 8 for the orchestrator-agent activity stamp: the agent registry
-// gained a `last_activity` field so the interim table reaper can reap an agent
-// by its own idle age, exactly as the lane reaper reaps a lane. Only the
+// gained a `last_activity` field for inspection and terminal-record retention.
+// It never authorizes a lifecycle transition for an active agent. Only the
 // orchestrator-agent family layout changed, so only its family hash advances to
 // v8; every other family stays pinned to the version at which its own layout was
 // last set (stable claim/role/lane/worktree tables at v5, workflow model
@@ -148,6 +149,7 @@ pub struct OrchestrateTables {
     orchestrator_topic_membership: TableReference<StoredOrchestratorTopicMembership>,
     orchestrator_triage_audit: TableReference<StoredOrchestratorTriageRecord>,
     orchestrator_triage_next_slot: TableReference<u64>,
+    atomic_commit_failure_for_test: AtomicBool,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -308,8 +310,8 @@ pub struct StoredOrchestratorAgent {
 }
 
 impl StoredOrchestratorAgent {
-    /// The elapsed idle age against an observation instant, read from the
-    /// last-activity stamp — the reaper's sole liveness signal for an agent.
+    /// The elapsed time from an observation instant. It is used only to retain
+    /// already-terminal records; it never authorizes an active-agent transition.
     pub fn idle_age_at(&self, observed_at: TimestampNanos) -> DurationNanos {
         TimestampInterval::new(self.last_activity, observed_at).duration()
     }
@@ -334,11 +336,12 @@ pub struct StoredOrchestratorAgentV7 {
 }
 
 impl StoredOrchestratorAgentV7 {
-    /// Carry a prior-shape row to the current shape. The `last_activity` reaper
-    /// clock the bump introduced starts at `registered_at` for a freshly
-    /// registered agent, so a migrated row adopts that same origin — the honest
-    /// default, since a store written before the bump never recorded a distinct
-    /// last-use instant.
+    /// Carry a prior-shape row to the current shape. The `last_activity`
+    /// observation stamp starts at `registered_at` for a freshly registered
+    /// agent, so a migrated row adopts that same origin — the honest default,
+    /// since a store written before the bump never recorded a distinct last-use
+    /// instant. It can govern only terminal-record retention, never active-agent
+    /// lifecycle authority.
     fn into_current(self) -> StoredOrchestratorAgent {
         StoredOrchestratorAgent {
             agent_identifier: self.agent_identifier,
@@ -612,6 +615,7 @@ impl OrchestrateTables {
             orchestrator_topic_membership,
             orchestrator_triage_audit,
             orchestrator_triage_next_slot,
+            atomic_commit_failure_for_test: AtomicBool::new(false),
         })
     }
 
@@ -783,16 +787,35 @@ impl OrchestrateTables {
             operations += 1;
         }
         if operations > 0 {
-            self.engine.commit_atomic(commit)?;
+            self.commit_atomic(commit)?;
         }
         Ok(())
     }
 
-    /// Refresh an active lane's last-activity stamp (`updated_at`) to now, the
-    /// liveness signal the reaper reads: any real use of a lane — a claim,
-    /// release, handoff, or recovery re-registration — pushes its idle clock
-    /// back so genuine long-running work is never aged out. A lane that is not
-    /// currently active is left untouched.
+    fn commit_atomic(&self, commit: sema_engine::AtomicCommit) -> Result<()> {
+        if self
+            .atomic_commit_failure_for_test
+            .swap(false, Ordering::AcqRel)
+        {
+            return Err(std::io::Error::other("injected atomic commit failure").into());
+        }
+        self.engine.commit_atomic(commit)?;
+        Ok(())
+    }
+
+    /// Make the next fully constructed ownership commit fail at its storage
+    /// boundary. This test seam proves callers expose no partial canonical state
+    /// when the atomic storage commit is refused.
+    #[doc(hidden)]
+    pub fn fail_next_atomic_commit_for_test(&self) {
+        self.atomic_commit_failure_for_test
+            .store(true, Ordering::Release);
+    }
+
+    /// Refresh an active lane's observational `updated_at` stamp after real
+    /// use. This metadata supports inspection only; it never authorizes a
+    /// warning, recovery, retirement, claim release, or abandonment. A lane
+    /// that is not currently active is left untouched.
     pub fn touch_lane(&self, lane: &LaneIdentifier) -> Result<()> {
         if let Some(mut registration) = self.active_lane_record(lane)? {
             registration.updated_at = self.current_timestamp()?;
@@ -1169,9 +1192,9 @@ impl OrchestrateTables {
         Ok(agent)
     }
 
-    /// Refresh an agent's last-activity stamp to now, the way a lane's
-    /// `updated_at` advances on real use, so an actively used agent never ages
-    /// out under the reaper. A no-op when the identifier is absent.
+    /// Refresh an agent's observational last-activity stamp after real use. It
+    /// supports inspection and never authorizes retirement or abandonment. A
+    /// no-op when the identifier is absent.
     pub fn touch_orchestrator_agent(
         &self,
         agent_identifier: &OrchestratorAgentIdentifier,
@@ -1299,8 +1322,8 @@ impl OrchestrateTables {
             return Ok(None);
         };
         agent.reachability = Some(reachability);
-        // Reachability discovery is real use of the agent, so it refreshes the
-        // reaper's idle-age clock alongside the reachability write.
+        // Reachability discovery records a fresh observation alongside the
+        // reachability write; it does not alter lifecycle authority.
         agent.last_activity = self.current_timestamp()?;
         self.insert_orchestrator_agent(&agent)?;
         Ok(Some(agent))
@@ -1436,8 +1459,8 @@ impl OrchestrateTables {
             ORCHESTRATOR_TRIAGE_NEXT_SLOT_KEY,
             &slot.next_value(),
         )?;
-        // A triaged message is real activity for its sender, so it refreshes the
-        // sender agent's idle-age clock and keeps a message-active agent alive.
+        // A triaged message records fresh sender activity for inspection; it
+        // does not alter lifecycle authority.
         self.touch_orchestrator_agent(&record.sender)?;
         self.trim_orchestrator_triage_records()?;
         Ok(record)

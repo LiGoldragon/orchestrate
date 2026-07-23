@@ -373,10 +373,10 @@ impl<'service> OrchestrateSemaEngine<'service> {
         // The actor mailbox serialises every write; no sequence lock is needed.
         // Reconcile the interim-bounded stores at the head of every ordinary turn
         // — including the reclamation worker's timed `Observe Lanes` re-entry — so
-        // dead lanes, agents, topic seats, topics, workflow resolutions, and
-        // vanished worktree rows are reaped by their own idle age before the turn
-        // reads or writes. Reaping only removes records already past their window,
-        // never a record a live request targets.
+        // terminal lanes and agents, empty topic state, workflow resolutions, and
+        // terminal or missing worktree rows are cleaned up before the turn reads
+        // or writes. Elapsed time retains only terminal history; observation and
+        // inactivity never authorize a transition for live ownership.
         self.service.reconcile_bounded_state()?;
         match input {
             sema_schema::SemaWriteInput::ApplyOrdinary(input) => {

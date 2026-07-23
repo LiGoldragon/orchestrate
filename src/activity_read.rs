@@ -1,29 +1,22 @@
-//! Activity-read liveness for registered agents — layer 3 of the liveliness
-//! design (`coordination-liveliness-messenger` design §3.3, psyche-ruled
-//! 2026-07-17): "better to actually read the agent's latest activity; a single
-//! command could take hours (rebuilding nixos from source)".
+//! Observational activity reads for registered agents — layer 3 of the
+//! coordination-liveliness design. A long-running command can produce no
+//! orchestration traffic for hours, so this module can inspect operating-system
+//! evidence without treating output silence as a conclusion.
 //!
-//! Where layer 1 (`harness_liveness`) hears the kernel push a harness exit,
-//! this layer answers the opposite ambiguity: an `Active` agent whose idle age
-//! reached the reaper's retire decision may be silently busy — one
-//! long-running command writes no orchestrate activity for hours. At that
-//! decision moment — and only then; nothing scans on a clock — the reaper
-//! reads the agent's real latest activity:
+//! It reports only what it observes:
 //!
-//! - the harness process's live descendant tree: a live child process (a
-//!   running command) is positive liveness however long it has run;
-//! - the terminal-cell session directory's artifact recency: a file written
-//!   after the agent's stored activity stamp is positive liveness.
+//! - the harness process's live descendant tree, including a running command;
+//! - the terminal-cell session directory's artifact recency.
 //!
-//! Positive evidence refreshes the agent's activity stamp, re-arming its idle
-//! deadline; no evidence lets the ordinary idle-retire path proceed. Output
-//! silence alone never judges an agent: silence with a live child is a build,
-//! silence with nothing is abandonment.
+//! An observation, its timestamp, and the absence of either are inspection
+//! metadata. They never authorize warning, recovery, retirement, claim release,
+//! abandonment, or any other lifecycle transition for an active agent, session,
+//! or lane.
 //!
 //! Everything here is an operating-system-boundary read (`/proc` text and
 //! directory modification times), parsed in this module and never on a wire
 //! path, mirroring `agent_reachability`. The read is best-effort in the same
-//! way discovery is: an unreadable surface is simply no evidence, never an
+//! way discovery is: an unreadable surface is simply no observation, never an
 //! error.
 
 use std::path::{Path, PathBuf};
@@ -57,16 +50,15 @@ impl StoredAgentReachability {
     }
 }
 
-/// What one activity read established about an agent at the retire decision
-/// moment.
+/// What one observational activity read established about an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentActivityAssessment {
-    /// Positive liveness: the agent's real latest activity was observed. The
-    /// agent's activity stamp is refreshed and it stays `Active`.
+    /// The agent's real latest activity was observed. This is inspection
+    /// metadata and does not change lifecycle ownership.
     ActivityObserved(ObservedAgentActivity),
-    /// No evidence: no live command process under the harness and no session
-    /// artifact written after the stored stamp. The ordinary idle-retire path
-    /// proceeds.
+    /// No observation: no live command process under the harness and no
+    /// session artifact written after the stored stamp. This is not evidence of
+    /// abandonment and does not authorize a lifecycle transition.
     NoActivityObserved,
 }
 
@@ -101,10 +93,9 @@ impl AgentActivityRead {
         Self::new(DEFAULT_PROCESS_ROOT)
     }
 
-    /// Read one agent's genuine recent activity. An agent without discovered
-    /// reachability has no process pin and no session directory to read — no
-    /// evidence sources means no evidence, and the idle backstop alone governs
-    /// it.
+    /// Read one agent's observed activity. An agent without discovered
+    /// reachability has no process pin and no session directory to inspect, so
+    /// the read reports no observation and leaves ownership unchanged.
     ///
     /// The descendant scan only runs while the pinned harness generation is
     /// still alive: children of a recycled pid belong to a stranger and are
@@ -456,7 +447,7 @@ mod tests {
         assert_eq!(
             AgentActivityRead::new("/nonexistent-proc").assess(&agent),
             AgentActivityAssessment::NoActivityObserved,
-            "no reachability means no evidence sources; the idle backstop governs"
+            "no reachability produces no observation and leaves ownership unchanged"
         );
     }
 }

@@ -1434,6 +1434,62 @@ fn rejected_lifecycle_transition_preserves_canonical_lane_and_claim_ownership() 
     assert_eq!(tables.claim_records().expect("claims").len(), 1);
 }
 
+#[test]
+fn failed_atomic_commit_preserves_canonical_lane_session_and_claim_ownership() {
+    let (_temporary, tables) = lane_tables("orchestrate-atomic-commit-failure");
+    let registry = LaneRegistry::new(&tables);
+    let registration = lane_registration(
+        "AtomicCommitSession",
+        "atomic-commit-worker",
+        role_vector(&["Operator"]),
+    );
+    registry.register(registration).expect("register lane");
+    let claim = StoredClaim::new(
+        lane("atomic-commit-worker"),
+        path("/tmp/atomic-commit-worker"),
+        reason("atomic commit failure fixture"),
+        tables.current_timestamp().expect("clock"),
+    );
+    tables
+        .replace_all_claims(std::slice::from_ref(&claim))
+        .expect("seed claim");
+    let before_sequence = tables.current_commit_sequence().expect("sequence");
+    let before_lane = tables
+        .first_lane_record(&lane("atomic-commit-worker"))
+        .expect("read lane")
+        .expect("active lane");
+
+    // The transition has built both the terminal lane mutation and claim
+    // retraction when the atomic storage boundary rejects it.
+    tables.fail_next_atomic_commit_for_test();
+    let error = registry
+        .unregister(LaneUnregistrationRequest {
+            session: session("AtomicCommitSession"),
+            lane: lane("atomic-commit-worker"),
+            details: LaneDetails::from_text("explicitly finished").expect("details"),
+        })
+        .expect_err("injected atomic commit failure must escape");
+    assert!(matches!(error, orchestrate::Error::Io(_)));
+
+    assert_eq!(
+        tables.current_commit_sequence().expect("sequence"),
+        before_sequence,
+        "a refused atomic storage commit creates no commit"
+    );
+    assert_eq!(
+        tables
+            .first_lane_record(&lane("atomic-commit-worker"))
+            .expect("read lane"),
+        Some(before_lane),
+        "the canonical lane/session record is unchanged"
+    );
+    assert_eq!(
+        tables.claim_records().expect("claims"),
+        vec![claim],
+        "the canonical claim remains owned by the active lane"
+    );
+}
+
 fn lane_tables(prefix: &str) -> (TempDir, OrchestrateTables) {
     let temporary = tempfile::Builder::new()
         .prefix(prefix)

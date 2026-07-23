@@ -82,9 +82,9 @@ impl HarnessLivenessReconciliation {
     }
 
     /// Mark `Dead` every `Active` agent with discovered reachability whose
-    /// process generation is gone, returning how many were marked. Agents
-    /// without reachability have no pid to read and stay on the idle-age
-    /// backstop (the activity-read layer covers them separately).
+    /// pinned process generation is gone, returning how many were marked.
+    /// Agents without reachability have no process-generation fact to inspect
+    /// and remain `Active` until an explicit authorized lifecycle operation.
     pub fn reconcile(&self, tables: &OrchestrateTables) -> Result<u32> {
         let mut marked = 0;
         for agent in tables.orchestrator_agent_records()? {
@@ -344,8 +344,8 @@ impl HarnessLivenessWatchWorker {
         }
         if generation_gone {
             // A wanted generation was gone before its watch opened; wake the
-            // engine so the truth read marks its agent dead now rather than at
-            // the idle backstop.
+            // engine so the truth read records the explicit process-exit fact
+            // without waiting for another ordinary turn.
             self.submit_exit_event();
         }
     }
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(
             status_of(&unreachable.agent_identifier),
             OrchestratorAgentStatus::Active,
-            "an agent without reachability stays on the idle backstop"
+            "an agent without reachability remains Active without an exit fact"
         );
     }
 

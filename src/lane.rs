@@ -45,8 +45,8 @@ impl<'tables> LaneRegistry<'tables> {
                 LaneRegistrationMode::Fresh => LaneAlreadyRegisteredResolution::FreshConflict,
                 LaneRegistrationMode::Recovery => {
                     // Recovery is real use: resuming a lane refreshes its
-                    // last-activity stamp so an inherited lane does not age out
-                    // from under the agent that just reclaimed it.
+                    // observational activity stamp without changing lifecycle
+                    // authority over the inherited active lane.
                     self.tables.touch_lane(&request.assignment.lane)?;
                     LaneAlreadyRegisteredResolution::RecoveryInherited
                 }
