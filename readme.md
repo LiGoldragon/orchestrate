@@ -1,85 +1,69 @@
-# orchestrate
+# Orchestrate
+
+Use `meta-orchestrate` for lane `Register` and `Unregister`; use
+`orchestrate` for `RequestWorktree`, `Claim`, `Submit`, `Release`, and
+`ConcludeWorktree`. Each command takes exactly one shell-quoted NOTA
+expression.
+
+## Cold start
+
+Use this structural-owner flow unchanged for a disposable proof. It makes a
+new identity on every run; do not copy a fixed lane name. `tag` is decimal,
+`session` and `worktree` are bare PascalCase atoms, and `lane` is the
+lowercase-hyphen form of the role vector `[Cold Start $tag]`.
 
 ```sh
-meta-orchestrate '(Register ((DocumentationSession documentation-operator ([Documentation Operator] Structural) [correct operational documentation]) Fresh))'
-orchestrate '(Claim (documentation-operator [(Path /absolute/path/to/readme.md)] [correct operational documentation]))'
-orchestrate '(Submit (documentation-operator (Path /absolute/path/to/readme.md) [checked command syntax]))'
-orchestrate '(Release documentation-operator)'
-meta-orchestrate '(Unregister (DocumentationSession documentation-operator [documentation complete]))'
+tag="$(date -u +%s%N)$$"
+session="ColdStart${tag}"
+lane="cold-start-${tag}"
+worktree="ColdStart${tag}"
+reason='cold start probe'
+
+meta-orchestrate "(Register ((${session} ${lane} ([Cold Start ${tag}] Structural) [${reason}]) Fresh))"
+orchestrate "(RequestWorktree (orchestrate ${worktree} ${lane} [${reason}]))"
 ```
 
-`meta-orchestrate` performs meta-policy lane registration and closeout:
-`Register` and `Unregister`. `orchestrate` performs ordinary work: `Claim`,
-`Submit`, `Release`, `RequestWorktree`, and `ConcludeWorktree`. Pass exactly
-one quoted NOTA expression; these are not flag commands.
+`Register` is nested exactly as
+`(Register ((SESSION LANE ([ROLE TOKENS] AUTHORITY) [DETAILS]) MODE))`.
+`[ROLE TOKENS]` and `[DETAILS]` are nonempty bracketed vectors. Use `Fresh`
+for a new lane; use `Recovery` only for the exact handed-over assignment.
+`Structural` is the authority for the lane that owns this worktree and its
+paths. `Support` is the only other authority and is for a helper, not this
+owner flow.
 
-## Lane shape
-
-The registration payload is exactly:
-
-```text
-(Register ((Session Lane ([Role Tokens] Authority) [details]) Fresh))
-```
-
-The inner `(Session Lane ([Role Tokens] Authority) [details])` is the
-`LaneAssignment`; the outer pair adds `Fresh` (or `Recovery`). Choose a
-PascalCase session, a nonempty role vector, a lane identifier, and a brief
-reason. The normal structural flow is the first block.
-
-Derive the base lane identifier by lowercasing and hyphenating its role vector:
-`[Documentation Operator]` becomes `documentation-operator`. Give a second
-same-role lane an ordinal prefix, such as `second-documentation-operator`. A
-support helper conventionally uses `documentation-operator-assistant`. The
-daemon stores the supplied identifier; it does not derive or validate this
-convention, and a live identifier cannot be reused.
-
-Choose `Structural` for the lane that owns the change or worktree. Use `Support`
-for a helper lane; it uses the same ordinary claim and closeout operations:
+The second reply is `WorktreeScaffolded`. Copy its absolute worktree-path
+field into `worktree_path`, then use a unique disposable path beneath it. Do
+not create this path: it is a harmless claim-only probe.
 
 ```sh
-meta-orchestrate '(Register ((DocumentationSession documentation-operator-assistant ([Documentation Operator] Support) [assist documentation owner]) Fresh))'
-orchestrate '(Claim (documentation-operator-assistant [(Path /absolute/path/to/readme.md)] [assist documentation owner]))'
-orchestrate '(Release documentation-operator-assistant)'
-meta-orchestrate '(Unregister (DocumentationSession documentation-operator-assistant [assistance complete]))'
+worktree_path='/absolute/path/from/WorktreeScaffolded'
+probe_path="${worktree_path}/.orchestrate-cold-start-${tag}"
+
+orchestrate "(Claim (${lane} [(Path ${probe_path})] [${reason}]))"
+orchestrate "(Submit (${lane} (Path ${probe_path}) [cold start stamp]))"
 ```
 
-## Worktrees
+`Claim` requires a lane, a bracketed vector of scopes, and a reason; this
+scope is exactly `(Path ABSOLUTE_PATH)`. `Submit` is the activity stamp: its
+required fields are the lane, one scope, and a reason. There is no `Stamp`
+request name.
 
-After registering a structural lane, request its worktree, claim exact paths in
-the returned absolute path, then release before conclusion:
+Success reply heads, in order, are `LaneRegistered`, `WorktreeScaffolded`,
+`ClaimAcceptance`, and `ActivityAcknowledgment`. Any other reply is not a
+successful cold start.
+
+## Closeout
+
+After a disposable probe, or after committing and pushing an edit, release
+claims before closing the worktree and lane:
 
 ```sh
-orchestrate '(RequestWorktree (orchestrate DocumentationCorrection documentation-operator [correct operational documentation]))'
-orchestrate '(Release documentation-operator)'
-# choose one conclusion:
-orchestrate '(ConcludeWorktree (documentation-operator Merged))'
-orchestrate '(ConcludeWorktree (documentation-operator Rejected))'
+orchestrate "(Release ${lane})"
+orchestrate "(ConcludeWorktree (${lane} Rejected))"
+meta-orchestrate "(Unregister (${session} ${lane} [cold start complete]))"
 ```
 
-`Merged` auto-lands work with no review gate. `Rejected` pushes
-`discard/<branch>` before teardown. If that push is refused, the daemon leaves
-the worktree intact; do not remove it by hand—repair the push path and retry.
-
-## Recovery and replies
-
-Use `Recovery` only for the exact handed-over assignment:
-
-```sh
-meta-orchestrate '(Register ((DocumentationSession documentation-operator ([Documentation Operator] Structural) [resume exact handover]) Recovery))'
-```
-
-A live lane returns `LaneAlreadyRegistered` with `RecoveryInherited`; a
-released or absent lane returns `LaneRegistered`. `Fresh` against a live lane
-returns `FreshConflict`. A malformed expression or a request sent to the wrong
-binary is rejected by that client; `ClaimRejection`, `PartialApplied`, and
-`WorktreeRequestRejected` are daemon replies. Read the reply and do not force
-state files or lock projections.
-
-The deployed PATH wrappers currently send `orchestrate` to
-`$XDG_RUNTIME_DIR/orchestrate/orchestrate.sock` and `meta-orchestrate` to
-`$XDG_RUNTIME_DIR/orchestrate/orchestrate-owner.sock` (with the usual
-`/run/user/$(id -u)` fallback). They overwrite
-`PERSONA_ORCHESTRATE_SOCKET` and `PERSONA_ORCHESTRATE_META_SOCKET` before
-starting the client, so neither variable is a deployed-client isolation switch.
-These are ordinary live daemon lifecycle operations; use a uniquely named lane
-when rehearsing one.
+`Rejected` pushes `discard/<worktree>` and tears the worktree down without
+landing it. Do not use `Merged` unless automatic landing without a review gate
+is intended. Expected reply heads are `ReleaseAcknowledgment`,
+`WorktreeConcluded`, and `LaneUnregistered`.
