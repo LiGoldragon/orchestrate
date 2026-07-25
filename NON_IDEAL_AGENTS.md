@@ -154,3 +154,25 @@ Proper fix: use the platform-appropriate explicit mode API to restore the fixtur
 file's intended writable permissions, with a portable non-Unix branch where needed,
 then format the fixture and restore the full Clippy and format checks as green
 repository gates.
+
+## Reader-facing projections cannot render spans in the contract NOTA dialect
+
+Symptom: the ordinary CLI renders elapsed spans through
+`relative-age-display`, which pins `nota` 0.9.0, while the contract stack and
+the `worktrees.nota` GC manifest encode through `nota` 0.5.1. The two are
+distinct crate instances with distinct traits and distinct text: 0.5.1 writes a
+whitespace-bearing string as `[a purpose]`, 0.9.0 writes `(a purpose)`. Human
+CLI replies therefore live in one dialect and the manifest in another, and a
+rendered span cannot be added to the manifest without silently rewriting every
+string field in it.
+
+Current workaround: the ordinary CLI reply variants render their spans and the
+manifest stays entirely in the contract dialect with raw stamps. A reader who
+wants worktree ages runs `orchestrate "(Observe Worktrees)"`, which renders and
+is always measured at the moment it is asked.
+
+Proper fix: repin `relative-age-display` onto the same `nota` the contract
+stack uses, so one dialect spans contract records and rendered spans. Only then
+should the manifest carry a rendered span — and it needs a freshness decision
+first, because the manifest is rewritten only when the worktree table changes,
+so a span written into it ages until the next write while a stamp does not.

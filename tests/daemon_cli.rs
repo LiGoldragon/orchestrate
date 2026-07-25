@@ -1051,7 +1051,9 @@ fn cli_observes_sessions_session_lanes_all_lanes_and_resource_claims() {
     )
     .parse()
     .expect("typed human CLI output decodes");
-    let HumanOutput::LanesObserved(human_lanes) = human;
+    let HumanOutput::LanesObserved(human_lanes) = human else {
+        panic!("expected human lanes observed, got {human:?}");
+    };
     let beta_lane = human_lanes
         .lanes()
         .iter()
