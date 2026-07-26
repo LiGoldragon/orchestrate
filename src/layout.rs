@@ -47,12 +47,6 @@ impl OrchestrateLayout {
         &self.worktree_index_root
     }
 
-    pub fn worktrees_projection_path(&self) -> PathBuf {
-        self.workspace_root
-            .join("orchestrate")
-            .join("worktrees.nota")
-    }
-
     pub fn report_lane_path(&self, role: &RoleName) -> PathBuf {
         self.workspace_root
             .join("reports")

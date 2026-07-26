@@ -1,6 +1,6 @@
 //! Smoke test for the worktree registry (Spirit eh5a): register a worktree
-//! against a TEMP store, observe the list, and confirm `worktrees.nota` is
-//! projected. Exercises the daemon end-to-end through `handle` / `handle_meta`
+//! against a TEMP store and observe the list back from the daemon's own
+//! database. Exercises the daemon end-to-end through `handle` / `handle_meta`
 //! without touching the live store.
 
 use std::path::PathBuf;
@@ -299,7 +299,7 @@ fn read_jj(repository: &std::path::Path, arguments: &[&str]) -> String {
 }
 
 #[test]
-fn register_worktree_observe_and_project_manifest() {
+fn register_worktree_and_observe() {
     let mut fixture = WorktreeFixture::new("orchestrate-worktree-smoke");
     let path = fixture.make_worktree_repository("orchestrate", "worktree-registry");
     let wire_path = WirePath::from_absolute_path(path.to_string_lossy().into_owned())
@@ -344,26 +344,14 @@ fn register_worktree_observe_and_project_manifest() {
     };
     assert_eq!(snapshot.worktrees.len(), 1);
     assert_eq!(snapshot.worktrees[0].branch.as_str(), "worktree-registry");
-
-    let manifest = fixture.workspace.join("orchestrate").join("worktrees.nota");
-    let body = std::fs::read_to_string(&manifest).expect("worktrees.nota written");
-    assert!(
-        body.contains("orchestrate") && body.contains("worktree-registry"),
-        "manifest body: {body}"
+    assert_eq!(snapshot.worktrees[0].repository.as_str(), "orchestrate");
+    assert_eq!(snapshot.worktrees[0].owning_lane.as_str(), "designer");
+    assert_eq!(
+        snapshot.worktrees[0].purpose.as_str(),
+        "prototype the worktree registry"
     );
-    assert!(body.contains("designer"), "manifest body: {body}");
-    // Positional NOTA record: one parenthesised tuple per worktree, fields in
-    // declared order, whitespace-bearing strings bracketed, and quote-free.
-    assert!(body.starts_with('('), "manifest body: {body}");
-    assert!(
-        body.contains("[prototype the worktree registry]"),
-        "purpose must be bracketed: {body}"
-    );
-    assert!(
-        body.contains("Active") && body.contains("Unpushed"),
-        "manifest body: {body}"
-    );
-    assert!(!body.contains('"'), "manifest must be quote-free: {body}");
+    assert_eq!(snapshot.worktrees[0].status, WorktreeStatus::Active);
+    assert_eq!(snapshot.worktrees[0].pushed_state, PushedState::Unpushed);
 }
 
 #[test]

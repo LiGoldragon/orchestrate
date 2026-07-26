@@ -155,24 +155,13 @@ file's intended writable permissions, with a portable non-Unix branch where need
 then format the fixture and restore the full Clippy and format checks as green
 repository gates.
 
-## Reader-facing projections cannot render spans in the contract NOTA dialect
+## Reader-facing projections cannot render spans in the contract NOTA dialect — resolved by deleting the projection
 
-Symptom: the ordinary CLI renders elapsed spans through
-`relative-age-display`, which pins `nota` 0.9.0, while the contract stack and
-the `worktrees.nota` GC manifest encode through `nota` 0.5.1. The two are
-distinct crate instances with distinct traits and distinct text: 0.5.1 writes a
-whitespace-bearing string as `[a purpose]`, 0.9.0 writes `(a purpose)`. Human
-CLI replies therefore live in one dialect and the manifest in another, and a
-rendered span cannot be added to the manifest without silently rewriting every
-string field in it.
-
-Current workaround: the ordinary CLI reply variants render their spans and the
-manifest stays entirely in the contract dialect with raw stamps. A reader who
-wants worktree ages runs `orchestrate "(Observe Worktrees)"`, which renders and
-is always measured at the moment it is asked.
-
-Proper fix: repin `relative-age-display` onto the same `nota` the contract
-stack uses, so one dialect spans contract records and rendered spans. Only then
-should the manifest carry a rendered span — and it needs a freshness decision
-first, because the manifest is rewritten only when the worktree table changes,
-so a span written into it ages until the next write while a stamp does not.
+Resolved 2026-07-26: the daemon no longer writes `worktrees.nota`. A daemon's
+only data file is its sema database (psyche ruling); the file was a drifted
+mirror of the `worktrees` table, not a second source of truth. The dialect
+mismatch this entry documented (`relative-age-display` on `nota` 0.9.0 versus
+the contract stack's `nota` 0.5.1) no longer applies because there is no
+manifest to encode. A reader who wants worktree ages still runs
+`orchestrate "(Observe Worktrees)"`, which renders through the CLI's dialect
+and is always measured at the moment it is asked.

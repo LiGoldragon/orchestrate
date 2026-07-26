@@ -454,8 +454,9 @@ Task scopes render in bracketed human form:
   `WorktreeStatus::Archived`. A refresh is a filesystem discovery floor:
   for a known `(repository, branch)` it re-derives only `jj` facts and
   preserves the durable owner, purpose, and lifecycle state instead of
-  replacing them with scanner guesses. `WorktreeProjection::gc_candidates`
-  reads the `Archived`/`Recycled` projection entries back for later GC.
+  replacing them with scanner guesses. `Archived`/`Recycled` rows are read
+  from the `worktrees` table directly — the daemon's sema database is the
+  only worktree record; it no longer mirrors one to a file.
   Infrastructure-minted fields (`last_activity`, `pushed_state`) are derived
   from `jj` by the daemon, never agent-supplied.
 - The present conclusion request selects its worktree by owning lane even
@@ -522,10 +523,6 @@ src/repository.rs local repository-index refresh handler
 src/worktree.rs   worktree registry: register, refresh-index, and archive
                   lifecycle handlers; `WorktreePathProbe` derives
                   `PushedState` and `last_activity` from `jj`
-src/worktree_projection.rs
-                  `worktrees.nota` GC manifest writer (`project`) and
-                  reader (`gc_candidates`) — returns entries in
-                  `Archived` or `Recycled` status for external GC
 src/service.rs    ordinary, meta, and upgrade request dispatch
 src/main.rs       daemon binary, one NOTA config argument
 src/bin/orchestrate.rs

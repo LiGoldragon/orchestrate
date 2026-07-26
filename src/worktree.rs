@@ -6,8 +6,8 @@
 //! `~/wt/github.com/LiGoldragon/<repo>/<name>` layout designer lanes use),
 //! derives each worktree's [`PushedState`] and `last_activity` from `jj`, and
 //! serves the `RegisterWorktree` / `RefreshWorktreeIndex` meta orders plus the
-//! `Observe(Worktrees)` working read. The GC manifest is the
-//! [`crate::WorktreeProjection`] sibling that renders `orchestrate/worktrees.nota`.
+//! `Observe(Worktrees)` working read. The `worktrees` redb table is the sole
+//! record — the daemon no longer mirrors it to a file.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

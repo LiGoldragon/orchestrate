@@ -524,16 +524,12 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.register_orchestrator_agent(registration)?
             }
             ordinary_contract::OrchestrateRequest::RequestWorktree(order) => {
-                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .request(order)?;
-                self.service.project_worktrees()?;
-                reply
+                WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .request(order)?
             }
             ordinary_contract::OrchestrateRequest::ConcludeWorktree(order) => {
-                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .conclude(order)?;
-                self.service.project_worktrees()?;
-                reply
+                WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .conclude(order)?
             }
             ordinary_contract::OrchestrateRequest::MintAgentIdentity(request) => {
                 self.mint_agent_identity(request)?
@@ -588,22 +584,15 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
             }
             meta_contract::MetaOrchestrateRequest::RegisterWorktree(order) => {
-                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .register(order)?;
-                self.service.project_worktrees()?;
-                reply
+                WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .register(order)?
             }
             meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(_order) => {
-                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .refresh()?;
-                self.service.project_worktrees()?;
-                reply
+                WorktreeRegistry::new(self.service.tables(), self.service.layout()).refresh()?
             }
             meta_contract::MetaOrchestrateRequest::ArchiveWorktree(order) => {
-                let reply = WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .archive(order)?;
-                self.service.project_worktrees()?;
-                reply
+                WorktreeRegistry::new(self.service.tables(), self.service.layout())
+                    .archive(order)?
             }
         };
         self.service.reschedule_lane_reclamation()?;

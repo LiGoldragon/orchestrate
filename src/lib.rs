@@ -32,7 +32,6 @@ pub mod tables;
 pub mod upgrade_frame;
 pub mod workflow;
 pub mod worktree;
-pub mod worktree_projection;
 
 pub use activity::ActivityLedger;
 pub use activity_read::{
@@ -121,4 +120,3 @@ pub use tables::{
 pub use upgrade_frame::UpgradeRequestFrame;
 pub use workflow::{HarnessModelResolver, MetaHarnessResolver, WorkflowRunner};
 pub use worktree::WorktreeRegistry;
-pub use worktree_projection::WorktreeProjection;

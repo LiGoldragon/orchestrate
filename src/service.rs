@@ -180,15 +180,7 @@ impl OrchestrateService {
         self.harness_liveness.reconcile(&self.tables)?;
         crate::LaneRegistry::new(&self.tables).reconcile()?;
         self.tables.remove_claims_without_lanes()?;
-        let table_reclamation = crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;
-        // Terminal worktree tombstone cleanup or a missing checkout changes the
-        // worktree table, so refresh the GC manifest to match. Lane silence
-        // never changes worktree status.
-        if table_reclamation.reaped_missing_worktrees > 0
-            || table_reclamation.reaped_terminal_worktrees > 0
-        {
-            crate::WorktreeProjection::new(&self.tables, &self.layout).project()?;
-        }
+        crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;
         Ok(())
     }
 
@@ -402,10 +394,6 @@ impl OrchestrateService {
 
     pub(crate) fn project_locks(&self) -> Result<()> {
         LockProjection::new(&self.tables, &self.layout).project()
-    }
-
-    pub(crate) fn project_worktrees(&self) -> Result<()> {
-        crate::WorktreeProjection::new(&self.tables, &self.layout).project()
     }
 
     pub(crate) fn next_observation_token(&mut self) -> Result<ObservationToken> {
