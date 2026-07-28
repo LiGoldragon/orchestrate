@@ -41,7 +41,7 @@ expect() {
   local expected=$2
   local tier=ordinary
   case $expected in
-    RoleCreated|RoleCreationRejected|RoleRetired|RepositoryIndexRefreshed|LaneRegistered|LaneAlreadyRegistered|LaneUnregistered|SessionCleared|LaneRetired|LaneAuthoritySet|WorktreeRegistered|WorktreeIndexRefreshed|WorktreeArchived)
+    RoleCreated|RoleCreationRejected*|RoleRetired|RepositoryIndexRefreshed|LaneRegistered|LaneAlreadyRegistered*|LaneUnregistered|SessionCleared|LaneRetired|LaneAuthoritySet|WorktreeRegistered|WorktreeIndexRefreshed|WorktreeArchived)
       tier=meta
       ;;
   esac
@@ -57,7 +57,7 @@ ordinary_rejected() {
 
 # Roles: create, duplicate refusal, and explicit retirement.
 expect "$(meta '(Create (scenario-role Codex))')" RoleCreated
-expect "$(meta '(Create (scenario-role Codex))')" RoleCreationRejected
+expect "$(meta '(Create (scenario-role Codex))')" RoleCreationRejected:RoleAlreadyExists
 expect "$(meta '(Retire (Role scenario-role))')" RoleRetired
 
 # Three synthetic lanes establish Fresh, duplicate Fresh refusal, Recovery,
@@ -65,8 +65,8 @@ expect "$(meta '(Retire (Role scenario-role))')" RoleRetired
 expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha state]) Fresh))')" LaneRegistered
 expect "$(meta '(Register ((Beta beta ([Beta Operator] Structural) [beta state]) Fresh))')" LaneRegistered
 expect "$(meta '(Register ((Gamma gamma ([Gamma Operator] Structural) [gamma state]) Fresh))')" LaneRegistered
-expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha retry]) Fresh))')" LaneAlreadyRegistered
-expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha recovery]) Recovery))')" LaneAlreadyRegistered
+expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha retry]) Fresh))')" LaneAlreadyRegistered:FreshConflict
+expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha recovery]) Recovery))')" LaneAlreadyRegistered:RecoveryInherited
 expect "$(meta '(SetAuthority (gamma Support))')" LaneAuthoritySet
 
 # Claims: nested path contention, atomic handoff, and release all use the
@@ -138,7 +138,13 @@ expect "$(meta '(RefreshWorktreeIndex ())')" WorktreeIndexRefreshed
 rejected_path=$temporary/declared-rejected
 expect "$(meta "(RegisterWorktree (orchestrate rejected $rejected_path alpha Active [state only conclusion] 1 Unpushed))")" WorktreeRegistered
 expect "$(ordinary '(ConcludeWorktree (alpha Rejected))')" WorktreeConcluded
-ordinary_rejected '(ConcludeWorktree (gamma Merged))'
+expect "$(ordinary '(ConcludeWorktree (gamma Merged))')" PartialApplied
+
+ambiguous_one=$temporary/declared-ambiguous-one
+ambiguous_two=$temporary/declared-ambiguous-two
+expect "$(meta "(RegisterWorktree (orchestrate ambiguous-one $ambiguous_one gamma Active [ambiguous conclusion] 1 Unpushed))")" WorktreeRegistered
+expect "$(meta "(RegisterWorktree (orchestrate ambiguous-two $ambiguous_two gamma Active [ambiguous conclusion] 1 Unpushed))")" WorktreeRegistered
+expect "$(ordinary '(ConcludeWorktree (gamma Merged))')" PartialApplied
 
 merged_path=$temporary/declared-merged
 expect "$(meta "(RegisterWorktree (orchestrate merged $merged_path beta Active [state only conclusion] 1 Unpushed))")" WorktreeRegistered

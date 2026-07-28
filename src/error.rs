@@ -193,6 +193,7 @@ impl Error {
             self,
             Error::SignalOrchestrate(_)
                 | Error::LaneNotRegistered { .. }
+                | Error::WorktreeLaneNotFound { .. }
                 | Error::WorktreeLaneAmbiguous { .. }
                 | Error::UnknownPreMintedAgentIdentity { .. }
         )
@@ -208,6 +209,14 @@ mod tests {
         let error = Error::WorktreeLaneAmbiguous {
             lane: "MultiRepositoryLane".to_owned(),
             worktrees: "orchestrate/feature, message/feature".to_owned(),
+        };
+        assert!(error.is_caller_rejection());
+    }
+
+    #[test]
+    fn missing_worktree_lane_is_a_caller_rejection() {
+        let error = Error::WorktreeLaneNotFound {
+            lane: "MissingLane".to_owned(),
         };
         assert!(error.is_caller_rejection());
     }

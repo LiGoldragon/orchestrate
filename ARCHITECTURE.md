@@ -109,9 +109,8 @@ meta request handlers project public contract payloads into
 and delegate durable reads/writes to `OrchestrateSemaEngine` through
 the generated `SemaEngine` trait. The previous hand-written
 `signal-executor` lowering and command-executor implementation has
-been removed from the runtime dependency graph. `OperationLowering`
-remains only as an observation-classification helper for the current
-tests and compatibility vocabulary.
+been removed from the runtime dependency graph. Observation classes remain
+compatibility vocabulary only; no `OperationLowering` runtime exists.
 
 The daemon/CLI boundary did not change: each CLI remains a thin
 NOTA-to-Signal adapter for one contract tier, and the daemon remains
@@ -474,9 +473,7 @@ The ordinary and meta wire contracts remain separate contract crates:
 imports those wire roots and binds them to distinct ordinary and meta
 listener tiers through `triad-runtime`.
 
-`OperationLowering` remains the hand-written contract-to-command
-translation point for the service slice that has not yet been
-rewritten as generated Nexus decisions. The meta-signal contract
+The meta-signal contract
 surface (`Create` / `Retire` / `Refresh`) is distinct from the
 ordinary surface (`Claim` / `Release` / `Handoff` / `Observe` /
 `Submit` / `Query` / `Watch` / `Unwatch`); both are inexpressible on

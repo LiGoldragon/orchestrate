@@ -88,16 +88,40 @@ impl ScenarioNotaAssertion {
                 _ => self.verify_ordinary_route(output),
             };
         }
-        let actual_route = match self.tier.as_str() {
-            "meta" => format!(
-                "{:?}",
-                NotaSource::new(&self.reply)
-                    .parse::<MetaOutput>()
-                    .map_err(|error| error.to_string())?
-                    .route()
-            ),
-            other => return Err(format!("unknown tier {other}")),
-        };
+        let meta_output = NotaSource::new(&self.reply)
+            .parse::<MetaOutput>()
+            .map_err(|error| error.to_string())?;
+        match self.expected_route.as_str() {
+            "RoleCreationRejected:RoleAlreadyExists" => match meta_output {
+                MetaOutput::RoleCreationRejected(refusal)
+                    if matches!(
+                        refusal.role_creation_rejection_reason,
+                        meta_signal_orchestrate::schema::lib::RoleCreationRejectionReason::RoleAlreadyExists
+                    ) => Ok(()),
+                other => Err(format!("expected RoleAlreadyExists, got {:?}", other.route())),
+            },
+            "LaneAlreadyRegistered:FreshConflict" => match meta_output {
+                MetaOutput::LaneAlreadyRegistered(reply)
+                    if matches!(
+                        reply.lane_already_registered_resolution,
+                        meta_signal_orchestrate::schema::lib::LaneAlreadyRegisteredResolution::FreshConflict
+                    ) => Ok(()),
+                other => Err(format!("expected FreshConflict, got {:?}", other.route())),
+            },
+            "LaneAlreadyRegistered:RecoveryInherited" => match meta_output {
+                MetaOutput::LaneAlreadyRegistered(reply)
+                    if matches!(
+                        reply.lane_already_registered_resolution,
+                        meta_signal_orchestrate::schema::lib::LaneAlreadyRegisteredResolution::RecoveryInherited
+                    ) => Ok(()),
+                other => Err(format!("expected RecoveryInherited, got {:?}", other.route())),
+            },
+            _ => self.verify_meta_route(meta_output),
+        }
+    }
+
+    fn verify_meta_route(self, output: MetaOutput) -> Result<(), String> {
+        let actual_route = format!("{:?}", output.route());
         if actual_route == self.expected_route {
             Ok(())
         } else {

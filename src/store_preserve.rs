@@ -129,7 +129,8 @@ mod tests {
 
     #[test]
     fn stamp_matches_store_directory_preserve_convention() {
-        // 2026-07-17T09:36:11Z, the instant in the store directory's existing
+        // A fixed UTC instant used only to prove deterministic preserve-path
+        // rendering; it is not evidence of a live store or reaping policy.
         // `orchestrate.sema.v8-preserve-20260717T093611Z` name.
         let stamp = UtcStamp {
             seconds_since_epoch: 1_784_280_971,
