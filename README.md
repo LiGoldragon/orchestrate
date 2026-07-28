@@ -2,6 +2,12 @@
 
 Typed workspace orchestration state for Persona agents.
 
+The daemon's authority stops at its own durable Sema state and Unix sockets.
+It does not scan or mutate repositories, worktrees, role directories, lock
+files, terminals, or process state. Worktree registration records the complete
+caller-supplied row; a worktree scaffold request is typed-refused because it
+does not carry a row to record. Observations and activity queries are read-only.
+
 This crate models role ownership, claimed scopes, handoffs, and the activity
 log that replaces primary workspace lock files over time.
 

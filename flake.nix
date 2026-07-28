@@ -40,20 +40,6 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
-          # `jj` pushes the salvage bookmark through the `git` CLI subprocess,
-          # so both binaries must be on the check PATH.
-          nativeCheckInputs = [
-            pkgs.jujutsu
-            pkgs.git
-          ];
-          # The worktree tests shell out to `jj`, which needs a writable config
-          # home: `jj config set --repo` and any later op on a repo-configured
-          # checkout read/write the per-repo "secure config" under
-          # `$HOME/.config/jj/repos/…`. The hermetic sandbox sets
-          # `HOME=/homeless-shelter`, which is unwritable, so give the check a
-          # fresh writable HOME inside the sandbox. Fully hermetic: no network,
-          # and the salvage test's "remote" is a local throwaway repo.
-          preCheck = "export HOME=$(mktemp -d)";
         };
         packageArgs = commonArgs // {
           cargoExtraArgs = "--features nota-text";
@@ -77,32 +63,11 @@
             }
           );
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
-          test-dynamic-role-creation = craneLib.cargoTest (
+          test-state-only = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test ledger dynamic_role_creation_creates_report_lane_and_lock_identity";
-            }
-          );
-          test-repository-refresh = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test ledger repository_refresh_indexes_local_checkouts_and_workspace_links";
-            }
-          );
-          test-cli-boundary = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test architecture";
-            }
-          );
-          test-daemon-cli = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoTestExtraArgs = "--features nota-text --test daemon_cli";
+              cargoTestExtraArgs = "--test state_only";
             }
           );
           test-doc = craneLib.cargoTest (
@@ -143,7 +108,6 @@
         devShells.default = pkgs.mkShell {
           name = "orchestrate";
           packages = [
-            pkgs.jujutsu
             pkgs.pkg-config
             toolchain
           ];

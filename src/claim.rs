@@ -1,14 +1,12 @@
-use signal_orchestrate::{
-    Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, DurationNanos, HandoffAcceptance,
-    HandoffRejection, HandoffRejectionReason, LaneIdentifier, LaneName, OrchestrateReply,
-    ReleaseAcknowledgment, RepositoryMainContended, RoleClaim, RoleHandoff, RoleName, RoleRelease,
-    RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference, WirePath, Worktree, WorktreeStatus,
-};
-
-use crate::repository::RepositoryDirectory;
 use crate::{
-    Error, LaneRegistry, OrchestrateLayout, OrchestrateTables, Result, StoredActivity, StoredClaim,
-    StoredLaneRegistration, StoredRepository, WorktreeRegistry,
+    Error, LaneRegistry, OrchestrateTables, Result, StoredActivity, StoredClaim,
+    StoredLaneRegistration,
+};
+use signal_orchestrate::{
+    Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, HandoffAcceptance, HandoffRejection,
+    HandoffRejectionReason, LaneIdentifier, OrchestrateReply, ReleaseAcknowledgment, RoleClaim,
+    RoleHandoff, RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,
+    Worktree,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,30 +40,21 @@ impl ClaimState {
 
 pub struct ClaimLedger<'tables> {
     tables: &'tables OrchestrateTables,
-    layout: &'tables OrchestrateLayout,
 }
 
 impl<'tables> ClaimLedger<'tables> {
     const ROLE_OBSERVATION_ACTIVITY_LIMIT: usize = 20;
 
-    pub fn new(tables: &'tables OrchestrateTables, layout: &'tables OrchestrateLayout) -> Self {
-        Self { tables, layout }
+    pub fn new(tables: &'tables OrchestrateTables) -> Self {
+        Self { tables }
     }
 
     pub fn apply_claim(&self, claim: RoleClaim) -> Result<OrchestrateReply> {
-        let claim = Self::canonicalized_claim(claim);
         let claimant = ClaimLane::from_role_name(&claim.role)?.registered(self.tables)?;
         self.tables.touch_lane(claimant.lane())?;
         let entries = self.tables.claim_records()?;
         let conflicts = Self::conflicts_for(&entries, &claim, claimant.lane())?;
         if !conflicts.is_empty() {
-            let repositories = self.tables.repository_records()?;
-            let directory = RepositoryDirectory::new(&repositories, self.layout);
-            if let Some(contention) =
-                RepositoryContention::detect(&entries, &claim, claimant.lane(), &directory)
-            {
-                return contention.answer(self.tables, self.layout, &claim);
-            }
             return Ok(OrchestrateReply::ClaimRejection(ClaimRejection {
                 role: claim.role,
                 conflicts,
@@ -134,36 +123,6 @@ impl<'tables> ClaimLedger<'tables> {
         ))
     }
 
-    /// Claim scopes are compared and stored in canonical filesystem form: a
-    /// path that reaches a checkout through a symlink — the workspace
-    /// `repos/<name>` link — names the same files as the checkout path, so
-    /// both must be one scope (one repository, however many local paths).
-    /// Best-effort: a path that does not (yet) exist keeps its claimed form.
-    fn canonicalized_claim(claim: RoleClaim) -> RoleClaim {
-        RoleClaim {
-            role: claim.role,
-            scopes: claim
-                .scopes
-                .into_iter()
-                .map(Self::canonicalized_scope)
-                .collect(),
-            reason: claim.reason,
-        }
-    }
-
-    fn canonicalized_scope(scope: ScopeReference) -> ScopeReference {
-        match scope {
-            ScopeReference::Path(path) => {
-                let canonical = std::fs::canonicalize(path.as_str())
-                    .ok()
-                    .and_then(|resolved| resolved.to_str().map(str::to_owned))
-                    .and_then(|resolved| WirePath::from_absolute_path(resolved).ok());
-                ScopeReference::Path(canonical.unwrap_or(path))
-            }
-            other => other,
-        }
-    }
-
     /// The release-time contention notice: for every registered repository
     /// whose main checkout the released scopes covered, the un-integrated
     /// feature worktrees other lanes started while this lane held it —
@@ -175,33 +134,8 @@ impl<'tables> ClaimLedger<'tables> {
         released_scopes: &[ScopeReference],
         releasing_lane: &LaneIdentifier,
     ) -> Result<Vec<Worktree>> {
-        let repositories = self.tables.repository_records()?;
-        let directory = RepositoryDirectory::new(&repositories, self.layout);
-        let held_repositories = repositories
-            .iter()
-            .filter(|repository| {
-                released_scopes
-                    .iter()
-                    .any(|scope| directory.scope_covers_repository(scope, repository))
-            })
-            .map(|repository| repository.name.as_str().to_owned())
-            .collect::<Vec<_>>();
-        if held_repositories.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(self
-            .tables
-            .worktree_records()?
-            .into_iter()
-            .filter(|record| {
-                held_repositories
-                    .iter()
-                    .any(|name| name == record.repository.as_str())
-                    && record.status != WorktreeStatus::Recycled
-                    && record.owning_lane.as_str() != releasing_lane.as_wire_token()
-            })
-            .map(Worktree::from)
-            .collect())
+        let _ = (released_scopes, releasing_lane);
+        Ok(Vec::new())
     }
 
     pub fn apply_handoff(&self, handoff: RoleHandoff) -> Result<OrchestrateReply> {
@@ -450,79 +384,6 @@ struct RegisteredClaimLane {
 impl RegisteredClaimLane {
     fn lane(&self) -> &LaneIdentifier {
         &self.lane
-    }
-}
-
-/// The repo-main contention contact point: a claim blocked because another
-/// live lane holds a registered repository's whole main checkout. Detection
-/// is deliberately tight — the holder must cover the repository root (the
-/// working-on-main default), not merely a narrow path inside it; narrow-path
-/// conflicts keep the plain [`ClaimRejection`].
-struct RepositoryContention {
-    repository: StoredRepository,
-    holding: StoredClaim,
-}
-
-impl RepositoryContention {
-    /// First conflict pair where the requested scope falls inside a
-    /// registered repository whose root the holding lane's scope covers.
-    /// Resolution goes through the identity-keyed directory, so any local
-    /// path of the one repository — the git-index checkout or the workspace
-    /// link — names the same repository.
-    fn detect(
-        entries: &[StoredClaim],
-        claim: &RoleClaim,
-        claimant: &LaneIdentifier,
-        directory: &RepositoryDirectory<'_>,
-    ) -> Option<Self> {
-        for scope in &claim.scopes {
-            let Some(repository) = directory.repository_covering_scope(scope) else {
-                continue;
-            };
-            let holding = entries.iter().find(|entry| {
-                entry.lane != *claimant
-                    && directory.scope_covers_repository(&entry.scope, repository)
-            });
-            if let Some(holding) = holding {
-                return Some(Self {
-                    repository: repository.clone(),
-                    holding: holding.clone(),
-                });
-            }
-        }
-        None
-    }
-
-    /// The automatic answer: who holds main and for how long, plus the
-    /// claimant's own feature worktree — scaffolded on the spot with the
-    /// branch named after the claimant's lane, or the one already standing.
-    fn answer(
-        &self,
-        tables: &OrchestrateTables,
-        layout: &OrchestrateLayout,
-        claim: &RoleClaim,
-    ) -> Result<OrchestrateReply> {
-        let repository = self.repository.name.clone();
-        let lane = LaneName::from_text(claim.role.as_wire_token().to_owned())?;
-        let redirect = WorktreeRegistry::new(tables, layout).feature_worktree_for(
-            repository.clone(),
-            lane,
-            &claim.reason,
-        )?;
-        let observed_at = tables.current_timestamp()?;
-        Ok(OrchestrateReply::RepositoryMainContended(
-            RepositoryMainContended {
-                repository,
-                holder: ClaimLane::new(self.holding.lane.clone()).as_role_name()?,
-                held_reason: self.holding.reason.clone(),
-                held_age: DurationNanos::new(
-                    observed_at
-                        .value()
-                        .saturating_sub(self.holding.claimed_at.value()),
-                ),
-                redirect,
-            },
-        ))
     }
 }
 

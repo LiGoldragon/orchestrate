@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use meta_signal_orchestrate as meta_contract;
 use meta_signal_orchestrate::schema::lib as meta_schema;
 use signal_frame::{
@@ -9,15 +7,13 @@ use signal_harness as harness_contract;
 use signal_orchestrate as ordinary_contract;
 use signal_orchestrate::schema::lib as ordinary_schema;
 
-use crate::agent_reachability::ProcessStat;
 use crate::schema::{nexus as nexus_schema, sema as sema_schema};
 use crate::{
-    ActivityLedger, AgentReachabilityDiscovery, ClaimLedger, Error, HarnessModelResolver,
-    LaneRegistry, MessengerRegistrationDegradation, MessengerRegistryPush, MetaHarnessResolver,
+    ActivityLedger, ClaimLedger, Error, HarnessModelResolver, LaneRegistry,
+    MessengerRegistrationDegradation, MessengerRegistryPush, MetaHarnessResolver,
     OrchestrateService, OrchestratorAgentStatus, RepositoryRegistry, Result, RoleRegistry,
-    RouterActorRegistration, RouterRegistrationDegradation, StoredAgentEndpointKind,
-    StoredAgentReachability, StoredGuidanceMagnitude, StoredOrchestratorMessageKind,
-    StoredTriageRejectionReason, StoredTriageVerdict, WorkflowRunner, WorktreeRegistry,
+    StoredGuidanceMagnitude, StoredOrchestratorMessageKind, StoredTriageRejectionReason,
+    StoredTriageVerdict, WorkflowRunner, WorktreeRegistry,
 };
 
 /// The NOTA delivery note an orchestrator message becomes on its messenger
@@ -62,24 +58,7 @@ impl OrchestrateService {
         &mut self,
         input: ordinary_schema::Input,
     ) -> Result<ordinary_schema::Output> {
-        self.handle_signal_input_from_caller(input, None).await
-    }
-
-    /// Drive one ordinary working `Input`, carrying the peer's kernel-vouched
-    /// process identifier so the registration handler can discover the caller's
-    /// reachability. The daemon boundary supplies the pid from the accepted
-    /// connection's credentials; the pid is recorded for the duration of this
-    /// one request and cleared before returning, correct because the actor
-    /// mailbox serialises requests.
-    pub async fn handle_signal_input_from_caller(
-        &mut self,
-        input: ordinary_schema::Input,
-        caller_process_id: Option<u32>,
-    ) -> Result<ordinary_schema::Output> {
-        self.set_pending_caller_process_id(caller_process_id);
-        let output = self.drive_ordinary_signal_input(input).await;
-        self.set_pending_caller_process_id(None);
-        output
+        self.drive_ordinary_signal_input(input).await
     }
 
     async fn drive_ordinary_signal_input(
@@ -238,9 +217,26 @@ impl<'service> OrchestrateNexusEngine<'service> {
         match input {
             nexus_schema::SignalInput::OrdinaryInput(input) => {
                 self.signal_tier = Some(SignalTier::Ordinary);
-                nexus_schema::NexusAction::command_sema_write(
-                    sema_schema::SemaWriteInput::apply_ordinary(input),
-                )
+                match input.clone().project_into() {
+                    Ok(ordinary_contract::OrchestrateRequest::Observe(
+                        ordinary_contract::Observation::Roles,
+                    )) => nexus_schema::NexusAction::command_sema_read(
+                        sema_schema::SemaReadInput::read_roles(sema_schema::ReadRoles {}),
+                    ),
+                    Ok(ordinary_contract::OrchestrateRequest::Observe(
+                        ordinary_contract::Observation::Lanes,
+                    )) => nexus_schema::NexusAction::command_sema_read(
+                        sema_schema::SemaReadInput::read_lanes(sema_schema::ReadLanes {}),
+                    ),
+                    Ok(ordinary_contract::OrchestrateRequest::Query(_)) => {
+                        nexus_schema::NexusAction::command_sema_read(
+                            sema_schema::SemaReadInput::read_activity(sema_schema::ReadActivity {}),
+                        )
+                    }
+                    _ => nexus_schema::NexusAction::command_sema_write(
+                        sema_schema::SemaWriteInput::apply_ordinary(input),
+                    ),
+                }
             }
             nexus_schema::SignalInput::MetaInput(input) => {
                 self.signal_tier = Some(SignalTier::Meta);
@@ -370,14 +366,6 @@ impl<'service> OrchestrateSemaEngine<'service> {
         &mut self,
         input: sema_schema::SemaWriteInput,
     ) -> Result<sema_schema::SemaWriteOutput> {
-        // The actor mailbox serialises every write; no sequence lock is needed.
-        // Reconcile the interim-bounded stores at the head of every ordinary turn
-        // — including the reclamation worker's timed `Observe Lanes` re-entry — so
-        // terminal lanes and agents, empty topic state, workflow resolutions, and
-        // terminal or missing worktree rows are cleaned up before the turn reads
-        // or writes. Elapsed time retains only terminal history; observation and
-        // inactivity never authorize a transition for live ownership.
-        self.service.reconcile_bounded_state()?;
         match input {
             sema_schema::SemaWriteInput::ApplyOrdinary(input) => {
                 let request = input.into_payload().project_into()?;
@@ -402,8 +390,7 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<sema_schema::SemaReadOutput> {
         match input {
             sema_schema::SemaReadInput::ReadRoles(_) => {
-                let reply =
-                    ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?;
+                let reply = ClaimLedger::new(self.service.tables()).observe()?;
                 let ordinary_schema::Output::RoleSnapshot(snapshot) = reply.project_into()? else {
                     return Err(Error::SchemaBridge {
                         message: "role observation did not produce RoleSnapshot".to_string(),
@@ -443,26 +430,17 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<ordinary_contract::OrchestrateReply> {
         let reply = match request {
             ordinary_contract::OrchestrateRequest::Claim(claim) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
-                    .apply_claim(claim)?;
-                self.service.project_locks()?;
-                reply
+                ClaimLedger::new(self.service.tables()).apply_claim(claim)?
             }
             ordinary_contract::OrchestrateRequest::Release(release) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
-                    .apply_release(release)?;
-                self.service.project_locks()?;
-                reply
+                ClaimLedger::new(self.service.tables()).apply_release(release)?
             }
             ordinary_contract::OrchestrateRequest::Handoff(handoff) => {
-                let reply = ClaimLedger::new(self.service.tables(), self.service.layout())
-                    .apply_handoff(handoff)?;
-                self.service.project_locks()?;
-                reply
+                ClaimLedger::new(self.service.tables()).apply_handoff(handoff)?
             }
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Roles,
-            ) => ClaimLedger::new(self.service.tables(), self.service.layout()).observe()?,
+            ) => ClaimLedger::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Sessions,
             ) => LaneRegistry::new(self.service.tables()).observe_sessions()?,
@@ -474,10 +452,10 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ) => LaneRegistry::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Worktrees,
-            ) => WorktreeRegistry::new(self.service.tables(), self.service.layout()).observe()?,
+            ) => WorktreeRegistry::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Repositories,
-            ) => RepositoryRegistry::new(self.service.tables(), self.service.layout()).observe()?,
+            ) => RepositoryRegistry::new(self.service.tables()).observe()?,
             ordinary_contract::OrchestrateRequest::Observe(
                 ordinary_contract::Observation::Topics,
             ) => ordinary_contract::OrchestrateReply::TopicTree(ordinary_contract::TopicTree {
@@ -524,12 +502,10 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.register_orchestrator_agent(registration)?
             }
             ordinary_contract::OrchestrateRequest::RequestWorktree(order) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .request(order)?
+                WorktreeRegistry::new(self.service.tables()).request(order)?
             }
             ordinary_contract::OrchestrateRequest::ConcludeWorktree(order) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .conclude(order)?
+                WorktreeRegistry::new(self.service.tables()).conclude(order)?
             }
             ordinary_contract::OrchestrateRequest::MintAgentIdentity(request) => {
                 self.mint_agent_identity(request)?
@@ -542,7 +518,6 @@ impl<'service> OrchestrateSemaEngine<'service> {
             }
         };
         self.service.reschedule_lane_reclamation()?;
-        self.service.reschedule_harness_liveness_watch()?;
         Ok(reply)
     }
 
@@ -552,24 +527,18 @@ impl<'service> OrchestrateSemaEngine<'service> {
     ) -> Result<meta_contract::MetaOrchestrateReply> {
         let reply = match request {
             meta_contract::MetaOrchestrateRequest::Create(order) => {
-                let reply = RoleRegistry::new(self.service.tables(), self.service.layout())
-                    .create_role(order)?;
-                self.service.project_locks()?;
-                reply
+                RoleRegistry::new(self.service.tables(), self.service.layout())
+                    .create_role(order)?
             }
             meta_contract::MetaOrchestrateRequest::Retire(meta_contract::Retirement::Role(
                 order,
-            )) => {
-                let reply = RoleRegistry::new(self.service.tables(), self.service.layout())
-                    .retire_role(order)?;
-                self.service.project_locks()?;
-                reply
-            }
+            )) => RoleRegistry::new(self.service.tables(), self.service.layout())
+                .retire_role(order)?,
             meta_contract::MetaOrchestrateRequest::Retire(meta_contract::Retirement::Lane(
                 lane,
             )) => LaneRegistry::new(self.service.tables()).retire(lane)?,
             meta_contract::MetaOrchestrateRequest::Refresh(_order) => {
-                RepositoryRegistry::new(self.service.tables(), self.service.layout()).refresh()?
+                RepositoryRegistry::new(self.service.tables()).refresh()?
             }
             meta_contract::MetaOrchestrateRequest::Register(request) => {
                 LaneRegistry::new(self.service.tables()).register(request)?
@@ -584,19 +553,16 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 LaneRegistry::new(self.service.tables()).set_authority(change)?
             }
             meta_contract::MetaOrchestrateRequest::RegisterWorktree(order) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .register(order)?
+                WorktreeRegistry::new(self.service.tables()).register(order)?
             }
             meta_contract::MetaOrchestrateRequest::RefreshWorktreeIndex(_order) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout()).refresh()?
+                WorktreeRegistry::new(self.service.tables()).refresh()?
             }
             meta_contract::MetaOrchestrateRequest::ArchiveWorktree(order) => {
-                WorktreeRegistry::new(self.service.tables(), self.service.layout())
-                    .archive(order)?
+                WorktreeRegistry::new(self.service.tables()).archive(order)?
             }
         };
         self.service.reschedule_lane_reclamation()?;
-        self.service.reschedule_harness_liveness_watch()?;
         Ok(reply)
     }
 
@@ -5775,7 +5741,6 @@ impl OrchestrateSemaEngine<'_> {
                 assigned_topics.push(leaf.into_orchestrator_topic());
             }
         }
-        self.discover_agent_reachability(&agent.agent_identifier)?;
         Ok(ordinary_contract::OrchestrateReply::AgentRegistered(
             ordinary_contract::AgentRegistered {
                 agent_identifier: agent.agent_identifier,
@@ -5783,32 +5748,6 @@ impl OrchestrateSemaEngine<'_> {
                 assignment_source: ordinary_contract::TopicAssignmentSource::Explicit,
             },
         ))
-    }
-
-    /// Discover and persist the registering agent's reachability from the peer's
-    /// kernel-vouched pid: walk the caller's `/proc` ancestry and match it
-    /// against the terminal-cell session index, attaching the endpoint on a
-    /// match. A direct contract-level caller supplies no pid, and no match
-    /// leaves the agent registered without reachability — its identity and
-    /// topics are valid regardless, and delivery parks until an endpoint exists.
-    fn discover_agent_reachability(
-        &mut self,
-        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
-    ) -> Result<()> {
-        let Some(caller_process_id) = self.service.take_pending_caller_process_id() else {
-            return Ok(());
-        };
-        let Some(reachability) =
-            AgentReachabilityDiscovery::from_process_environment().discover(caller_process_id)
-        else {
-            return Ok(());
-        };
-        self.service
-            .tables()
-            .attach_agent_reachability(agent_identifier, reachability.clone())?;
-        self.propagate_registration_to_router(agent_identifier, &reachability)?;
-        self.propagate_reachability_to_messenger(agent_identifier, &reachability)?;
-        Ok(())
     }
 
     /// Allocate an agent identity ahead of launch: the orchestrator is the
@@ -6049,13 +5988,6 @@ impl OrchestrateSemaEngine<'_> {
         };
         match reply {
             meta_signal_harness::MetaHarnessReply::SessionLaunched(launched) => {
-                if let Some(directory) = &launched.session_directory {
-                    self.seed_reachability_from_launch(
-                        &request.agent_identifier,
-                        directory,
-                        launched.child_process_id,
-                    )?;
-                }
                 Ok(ordinary_contract::OrchestrateReply::AgentLaunched(
                     ordinary_contract::AgentLaunched {
                         agent_identifier: request.agent_identifier,
@@ -6095,33 +6027,6 @@ impl OrchestrateSemaEngine<'_> {
         )
     }
 
-    /// Seed the allocated row's reachability from launch facts: the endpoint
-    /// is the session's data socket, and the pid pin's start time is read
-    /// from `/proc` so the generation pin carries discovery's semantics.
-    /// Best-effort: a child that vanished before the read leaves the row for
-    /// ordinary registration-time discovery.
-    fn seed_reachability_from_launch(
-        &self,
-        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
-        session_directory: &meta_signal_harness::SessionDirectory,
-        child_process_id: u32,
-    ) -> Result<()> {
-        let Some(stat) = ProcessStat::read(Path::new("/proc"), child_process_id) else {
-            return Ok(());
-        };
-        let reachability = StoredAgentReachability {
-            endpoint_kind: StoredAgentEndpointKind::TerminalCell,
-            target: format!("{}/data.sock", session_directory.as_str()),
-            harness_pid: child_process_id,
-            harness_start_time: stat.start_time_ticks,
-        };
-        self.service
-            .tables()
-            .attach_agent_reachability(agent_identifier, reachability.clone())?;
-        self.propagate_reachability_to_messenger(agent_identifier, &reachability)?;
-        Ok(())
-    }
-
     /// Push a minted or registered identity into the messenger's durable
     /// registry so the messenger holds the consumer view of identity. The
     /// messenger is a co-resident peer, so this is best-effort: an
@@ -6136,27 +6041,6 @@ impl OrchestrateSemaEngine<'_> {
             return Ok(());
         };
         match MessengerRegistryPush::new(socket_path.to_path_buf()).seat_identity(agent_identifier)
-        {
-            Ok(()) => Ok(()),
-            Err(degradation) => {
-                self.record_messenger_push_divergence(agent_identifier, degradation)
-            }
-        }
-    }
-
-    /// Push a discovered reachability into the messenger's delivery registry
-    /// as an endpoint binding, carrying the pid + start-time pin. Best-effort
-    /// like the identity push.
-    fn propagate_reachability_to_messenger(
-        &self,
-        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
-        reachability: &StoredAgentReachability,
-    ) -> Result<()> {
-        let Some(socket_path) = self.service.messenger_registration_endpoint() else {
-            return Ok(());
-        };
-        match MessengerRegistryPush::new(socket_path.to_path_buf())
-            .bind_endpoint(agent_identifier, reachability)
         {
             Ok(()) => Ok(()),
             Err(degradation) => {
@@ -6200,84 +6084,6 @@ impl OrchestrateSemaEngine<'_> {
                 failed: vec![failure],
             })?;
         Ok(())
-    }
-
-    /// Propagate a discovered registration to the router so the minted identity
-    /// becomes a live delivery target. The router is a co-resident peer, so this
-    /// is best-effort: a router that is unreachable or that refuses the
-    /// registration is recorded as a divergence (the router leg of the
-    /// registration did not apply), never a failure of the agent's own
-    /// registration. When no router socket is configured, propagation is skipped
-    /// with no divergence.
-    fn propagate_registration_to_router(
-        &self,
-        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
-        reachability: &StoredAgentReachability,
-    ) -> Result<()> {
-        let Some(socket_path) = self.service.router_registration_endpoint() else {
-            return Ok(());
-        };
-        match RouterActorRegistration::new(socket_path.to_path_buf())
-            .register(agent_identifier, reachability)
-        {
-            Ok(_disposition) => Ok(()),
-            Err(degradation) => {
-                self.record_router_registration_divergence(agent_identifier, degradation)
-            }
-        }
-    }
-
-    /// Record a router-registration degradation as a divergence: the router
-    /// downstream leg failed while the agent's own registration succeeded. An
-    /// unreachable router maps to `Unreachable`; a router refusal maps to
-    /// `Rejected` carrying the typed reason.
-    fn record_router_registration_divergence(
-        &self,
-        agent_identifier: &ordinary_contract::OrchestratorAgentIdentifier,
-        degradation: RouterRegistrationDegradation,
-    ) -> Result<()> {
-        let (reason, detail) = match degradation {
-            RouterRegistrationDegradation::Unreachable(detail) => (
-                ordinary_contract::ApplicationFailureReason::Unreachable,
-                format!(
-                    "router registration for agent {} degraded: {detail}",
-                    agent_identifier.as_str()
-                ),
-            ),
-            RouterRegistrationDegradation::Rejected(refusal) => (
-                ordinary_contract::ApplicationFailureReason::Rejected,
-                format!(
-                    "router refused registration for agent {}: {}",
-                    agent_identifier.as_str(),
-                    Self::router_refusal_detail(refusal)
-                ),
-            ),
-        };
-        let failure = ordinary_contract::ApplicationFailure {
-            component: ordinary_contract::DownstreamComponent::Router,
-            reason,
-            detail: ordinary_contract::ScopeReason::from_text(detail)?,
-        };
-        self.service
-            .tables()
-            .append_divergence(ordinary_contract::PartialApplied {
-                succeeded: Vec::new(),
-                failed: vec![failure],
-            })?;
-        Ok(())
-    }
-
-    fn router_refusal_detail(
-        refusal: signal_router::ActorRegistrationRefusalReason,
-    ) -> &'static str {
-        match refusal {
-            signal_router::ActorRegistrationRefusalReason::ProcessIdentifierOutOfRange => {
-                "process identifier out of range"
-            }
-            signal_router::ActorRegistrationRefusalReason::RemoteRouterEndpointNotLocal => {
-                "remote-router endpoint is not a local delivery target"
-            }
-        }
     }
 
     fn observe_orchestrator_topic(

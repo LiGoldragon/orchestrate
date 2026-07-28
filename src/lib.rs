@@ -1,6 +1,4 @@
 pub mod activity;
-pub mod activity_read;
-pub mod agent_reachability;
 pub mod claim;
 pub mod configuration;
 pub mod daemon;
@@ -8,13 +6,10 @@ pub mod divergence;
 pub mod error;
 pub mod execution;
 pub mod handover;
-pub mod harness_liveness;
 pub mod lane;
 pub mod lane_reclamation;
 pub mod layout;
-pub mod legacy_lock_import;
 pub mod location;
-pub mod lock_projection;
 pub mod messenger_registration;
 pub mod orchestrator_agent_identifier;
 pub mod orchestrator_presentation;
@@ -34,14 +29,6 @@ pub mod workflow;
 pub mod worktree;
 
 pub use activity::ActivityLedger;
-pub use activity_read::{
-    AgentActivityAssessment, AgentActivityRead, ObservedAgentActivity, ProcessDescendantScan,
-    SessionArtifactSurface,
-};
-pub use agent_reachability::{
-    AgentReachabilityDiscovery, AncestorProcess, ProcessAncestryWalk, ProcessStat,
-    TerminalCellSessionIndex, TerminalCellSessionRecord,
-};
 pub use claim::{ClaimLedger, ClaimState};
 pub use configuration::{ConfigurationError, DaemonConfiguration};
 pub use daemon::{OrchestrateDaemon, OrchestrateDaemonError};
@@ -52,15 +39,10 @@ pub use execution::{
     OrchestrateSemaEngine,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
-pub use harness_liveness::{
-    HarnessLivenessReconciliation, HarnessLivenessWatch, WatchedHarnessProcess,
-};
 pub use lane::{LaneReapReason, LaneReconciliation, LaneRegistry};
 pub use lane_reclamation::LaneReclaimer;
 pub use layout::OrchestrateLayout;
-pub use legacy_lock_import::LegacyLockImport;
 pub use location::StoreLocation;
-pub use lock_projection::LockProjection;
 pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegistryPush};
 pub use meta_signal_orchestrate::{
     CreateRoleOrder, LaneAlreadyRegistered, LaneAlreadyRegisteredResolution, LaneAuthorityChange,

@@ -12,7 +12,6 @@ use signal_orchestrate::{
     OrchestratorAgentIdentifier, OrchestratorAgentStatus, TimestampNanos, WorktreeStatus,
 };
 
-use crate::activity_read::AgentActivityRead;
 use crate::{OrchestrateTables, Result};
 
 /// How long a terminal (`Retired` or `Dead`) orchestrator agent is retained
@@ -55,14 +54,6 @@ impl BoundedTableReaper {
         Self { now }
     }
 
-    /// Point the retire-decision activity read at fixture roots instead of the
-    /// live host's `/proc`.
-    pub fn with_activity_read(self, _activity: AgentActivityRead) -> Self {
-        // Preserved so callers can continue constructing fixture reapers. The
-        // activity read no longer participates in ownership retirement.
-        self
-    }
-
     /// Reap every dead record across the interim-bounded stores in one pass and
     /// report the tally. Order matters: agents are retired then deleted first, so
     /// a topic left empty by a deleted agent's departed seats is reapable in the
@@ -73,7 +64,6 @@ impl BoundedTableReaper {
         self.reap_orphan_topic_memberships(tables, &mut reclamation)?;
         self.reap_empty_topics(tables, &mut reclamation)?;
         self.reap_workflow_model_resolutions(tables, &mut reclamation)?;
-        self.reap_missing_worktrees(tables, &mut reclamation)?;
         self.reap_terminal_worktrees(tables, &mut reclamation)?;
         Ok(reclamation)
     }
@@ -214,23 +204,6 @@ impl BoundedTableReaper {
             if idle_nanos >= WORKFLOW_MODEL_RESOLUTION_RETENTION_NANOS {
                 tables.remove_workflow_model_resolution(&resolution.handle)?;
                 reclamation.reaped_workflow_resolutions += 1;
-            }
-        }
-        Ok(())
-    }
-
-    /// A missing checkout is immediate state truth, not a retention decision:
-    /// the index must not keep a row for a resource that no longer exists.
-    /// This retracts only the durable row; no filesystem resource is touched.
-    fn reap_missing_worktrees(
-        &self,
-        tables: &OrchestrateTables,
-        reclamation: &mut BoundedTableReclamation,
-    ) -> Result<()> {
-        for worktree in tables.worktree_records()? {
-            if !std::path::Path::new(worktree.path.as_str()).exists() {
-                tables.remove_worktree(&worktree)?;
-                reclamation.reaped_missing_worktrees += 1;
             }
         }
         Ok(())

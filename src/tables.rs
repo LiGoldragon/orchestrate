@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,9 +18,9 @@ use signal_orchestrate::{
     LaneAssignment, LaneIdentifier, LaneName, LaneRegistration, LaneResourceClaim, LaneStatus,
     MintedIdentitySelection, MissionDescription, OrchestratorAgentIdentifier,
     OrchestratorAgentStatus, OrchestratorTopic, OrchestratorTopicPath, PartialApplied, PurposeText,
-    PushedState, RepositoryIdentityState, RepositoryName, ResolvedWorkflowRunRequest, Role,
-    RoleName, ScopeReason, ScopeReference, SessionIdentifier, TimestampNanos, TopicName, WirePath,
-    WorkflowRunHandle, Worktree, WorktreeStatus,
+    PushedState, RepositoryIdentityGap, RepositoryIdentityState, RepositoryName,
+    ResolvedWorkflowRunRequest, Role, RoleName, ScopeReason, ScopeReference, SessionIdentifier,
+    TimestampNanos, TopicName, WirePath, WorkflowRunHandle, Worktree, WorktreeStatus,
 };
 
 use crate::orchestrator_agent_identifier::OrchestratorAgentIdentifierMint;
@@ -229,9 +228,10 @@ impl StoredRepositoryV5 {
             };
             RepositoryName::from_text(alias).expect("sanitized repository alias")
         });
-        let identity =
-            crate::repository::RepositoryIdentityProbe::new(PathBuf::from(self.path.as_str()))
-                .derive();
+        let identity = RepositoryIdentityState::IdentityUnknown(
+            RepositoryIdentityGap::from_text("legacy repository identity was not supplied")
+                .expect("static repository identity gap"),
+        );
         StoredRepository {
             identity,
             name,
@@ -3184,47 +3184,10 @@ mod tests {
     #[test]
     fn store_with_prior_shape_repository_index_migrates_rows_forward() {
         let temporary = TemporaryStore::new("orchestrate-repository-identity-migration");
-        let scratch = tempfile::Builder::new()
-            .prefix("orchestrate-repo-identity-checkout")
-            .tempdir()
-            .expect("checkout tempdir");
-        let checkout = scratch.path().join("orchestrate");
-        std::fs::create_dir_all(&checkout).expect("checkout dir");
-        let init = std::process::Command::new("jj")
-            .args(["--no-pager", "git", "init", "--colocate"])
-            .arg(&checkout)
-            .env("JJ_USER", "smoke")
-            .env("JJ_EMAIL", "smoke@example.invalid")
-            .output()
-            .expect("run jj git init");
-        assert!(
-            init.status.success(),
-            "jj git init failed: {}",
-            String::from_utf8_lossy(&init.stderr)
-        );
-        let remote = std::process::Command::new("jj")
-            .arg("--ignore-working-copy")
-            .arg("-R")
-            .arg(&checkout)
-            .args([
-                "git",
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/LiGoldragon/orchestrate.git",
-            ])
-            .output()
-            .expect("run jj git remote add");
-        assert!(
-            remote.status.success(),
-            "jj git remote add failed: {}",
-            String::from_utf8_lossy(&remote.stderr)
-        );
-
         let identified_row = StoredRepositoryV5 {
             name: "orchestrate".to_owned(),
-            path: WirePath::from_absolute_path(checkout.to_str().expect("utf8 checkout path"))
-                .expect("checkout wire path"),
+            path: WirePath::from_absolute_path("/owner-supplied/orchestrate")
+                .expect("owner supplied path"),
             active: true,
             refreshed_at: TimestampNanos::new(700),
         };
@@ -3256,10 +3219,7 @@ mod tests {
             "expected a stale-identity rejection for repositories from the plain open path"
         );
 
-        // The repaired open evolves both rows forward through the declared
-        // prior: a readable checkout derives its real identity from the
-        // actual remote; an unreadable one keeps a typed identity-unknown gap
-        // instead of being dropped.
+        // The repaired open retains both rows without probing their paths.
         let migrated =
             OrchestrateTables::open(&temporary.location()).expect("migrated store opens");
         let mut rows = migrated.repository_records().expect("repository rows");
@@ -3274,13 +3234,10 @@ mod tests {
         );
         let identified = &rows[1];
         assert_eq!(identified.name.as_str(), "orchestrate");
-        match &identified.identity {
-            RepositoryIdentityState::Identified(identity) => assert_eq!(
-                identity.canonical_text(),
-                "github.com/LiGoldragon/orchestrate"
-            ),
-            other => panic!("expected identified repository, got {other:?}"),
-        }
+        assert!(matches!(
+            &identified.identity,
+            RepositoryIdentityState::IdentityUnknown(_)
+        ));
 
         let preserves = premigration_preserves(temporary.path.as_path());
         assert_eq!(

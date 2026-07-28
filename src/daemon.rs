@@ -93,7 +93,6 @@ impl ComponentDaemon for OrchestrateDaemon {
             ),
         )?
         .with_lane_reclamation_socket(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
-        .with_harness_liveness_watch(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
         .with_public_socket_retirement(PublicSocketRetirement::new(
             PathBuf::from(configuration.ordinary_socket_path.as_str()),
             PathBuf::from(configuration.meta_socket_path.as_str()),
@@ -114,21 +113,9 @@ impl ComponentDaemon for OrchestrateDaemon {
     async fn handle_working_input<'connection>(
         engine: &'connection mut Self::Engine,
         input: Input,
-        connection: &'connection ConnectionContext,
+        _connection: &'connection ConnectionContext,
     ) -> Result<Output, Self::Error> {
-        // The registering peer's kernel-vouched pid (SO_PEERCRED) is the seed
-        // for reachability discovery. A Unix-socket peer carries it; a TCP peer
-        // does not, so registration then lands without reachability. The pid is
-        // a positive kernel value; a non-positive credential is treated as
-        // absent rather than coerced.
-        let caller_process_id = connection
-            .unix_credentials()
-            .map(triad_runtime::UnixCredentials::process_id)
-            .filter(|process_id| *process_id > 0)
-            .map(|process_id| process_id as u32);
-        Ok(engine
-            .handle_signal_input_from_caller(input, caller_process_id)
-            .await?)
+        Ok(engine.handle_signal_input(input).await?)
     }
 
     /// Serve one owner-only meta connection: decode a meta `Input` off the

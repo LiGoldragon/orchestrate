@@ -244,7 +244,9 @@ impl HumanOutput {
             "LanesObserved" => Ok(Self::LanesObserved(HumanLaneAgeReport::from_nota_block(
                 payload,
             )?)),
-            "RoleSnapshot" => Ok(Self::RoleSnapshot(HumanRoleReport::from_nota_block(payload)?)),
+            "RoleSnapshot" => Ok(Self::RoleSnapshot(HumanRoleReport::from_nota_block(
+                payload,
+            )?)),
             "WorktreesObserved" => Ok(Self::WorktreesObserved(
                 HumanWorktreeReport::from_nota_block(payload)?,
             )),
@@ -528,7 +530,8 @@ impl NotaEncode for HumanRoleReport {
 
 impl NotaDecode for HumanRoleReport {
     fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleReport", 2)?;
+        let fields =
+            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleReport", 2)?;
         Ok(Self {
             roles: NotaBlock::new(&fields[0])
                 .expect_delimited(Delimiter::SquareBracket, "HumanRoleReport")?
@@ -585,7 +588,8 @@ impl NotaEncode for HumanRoleStatus {
 
 impl NotaDecode for HumanRoleStatus {
     fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleStatus", 3)?;
+        let fields =
+            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleStatus", 3)?;
         Ok(Self {
             role: String::from_nota_block(&fields[0])?,
             harness: HumanHarnessKind::from_nota_block(&fields[1])?,
@@ -632,7 +636,8 @@ impl NotaEncode for HumanClaimEntry {
 
 impl NotaDecode for HumanClaimEntry {
     fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanClaimEntry", 3)?;
+        let fields =
+            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanClaimEntry", 3)?;
         Ok(Self {
             scope: HumanScopeReference::from_nota_block(&fields[0])?,
             reason: String::from_nota_block(&fields[1])?,
@@ -871,8 +876,11 @@ impl NotaEncode for HumanWorktreeConclusion {
 
 impl NotaDecode for HumanWorktreeConclusion {
     fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanWorktreeConclusion", 2)?;
+        let fields = NotaBlock::new(block).expect_children(
+            Delimiter::Brace,
+            "HumanWorktreeConclusion",
+            2,
+        )?;
         Ok(Self {
             worktree: HumanWorktree::from_nota_block(&fields[0])?,
             main_integration: HumanMainIntegration::from_nota_block(&fields[1])?,
@@ -938,20 +946,19 @@ impl From<&ScopeReference> for HumanScopeReference {
 impl NotaEncode for HumanScopeReference {
     fn to_nota(&self) -> String {
         match self {
-            Self::Path(path) => {
-                Delimiter::Parenthesis.wrap(["Path".to_owned(), path.to_nota()])
-            }
-            Self::Task(task) => {
-                Delimiter::Parenthesis.wrap(["Task".to_owned(), task.to_nota()])
-            }
+            Self::Path(path) => Delimiter::Parenthesis.wrap(["Path".to_owned(), path.to_nota()]),
+            Self::Task(task) => Delimiter::Parenthesis.wrap(["Task".to_owned(), task.to_nota()]),
         }
     }
 }
 
 impl NotaDecode for HumanScopeReference {
     fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Parenthesis, "HumanScopeReference", 2)?;
+        let fields = NotaBlock::new(block).expect_children(
+            Delimiter::Parenthesis,
+            "HumanScopeReference",
+            2,
+        )?;
         let variant = fields[0]
             .demote_to_string()
             .ok_or(NotaDecodeError::ExpectedAtom {

@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.16.0"
+version      = "0.17.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -30,14 +30,6 @@ required-features = ["nota-text"]
 [[bin]]
 name = "orchestrate-write-configuration"
 path = "src/bin/orchestrate_write_configuration.rs"
-
-# The daemon-and-CLI end-to-end test drives the schema-frame `orchestrate` CLI
-# binary, which decodes/encodes NOTA — so it needs `nota-text` active to build
-# that binary. `cargo test --features nota-text` runs the full suite.
-[[test]]
-name = "daemon_cli"
-path = "tests/daemon_cli.rs"
-required-features = ["nota-text"]
 
 [features]
 default   = []
@@ -69,7 +61,6 @@ nota-human                   = { package = "nota", git = "https://github.com/LiG
 version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", branch = "main" }
 getrandom                   = "0.4"
 redb                        = "4.1"
-rustix                      = { version = "1", features = ["event", "fs", "process"] }
 rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 thiserror                   = "2"
 tokio                       = { version = "1", features = ["rt-multi-thread", "io-util"] }

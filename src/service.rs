@@ -14,10 +14,9 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    Error, HarnessLivenessReconciliation, HarnessLivenessWatch, LaneReclaimer, LegacyLockImport,
-    LockProjection, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
-    OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, RoleRegistry,
-    StoreLocation, StoredDivergence, WatchedHarnessProcess,
+    Error, LaneReclaimer, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
+    OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, StoreLocation,
+    StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
@@ -32,13 +31,6 @@ pub struct OrchestrateService {
     next_observation_token: u64,
     handover: HandoverState,
     public_sockets: PublicSocketRetirement,
-    /// The kernel-vouched process identifier of the peer whose working request
-    /// is currently in flight, when the daemon boundary supplied it. The actor
-    /// mailbox serialises requests, so exactly one working request is ever in
-    /// flight; the registration handler reads this to discover the caller's
-    /// reachability. Direct contract-level callers (tests) leave it `None`, so
-    /// registration simply lands without reachability.
-    pending_caller_process_id: Option<u32>,
     /// The router working socket a discovered agent's registration is propagated
     /// to, so the minted identity becomes a live router delivery target. `None`
     /// when the daemon was not configured with a router socket (or in tests):
@@ -56,15 +48,6 @@ pub struct OrchestrateService {
     /// deadlines after lane mutations and re-enters through Signal at expiry;
     /// it never opens or mutates the store itself.
     lane_reclaimer: Option<LaneReclaimer>,
-    /// The engine-side harness liveness truth read, run at the head of every
-    /// ordinary turn: an `Active` agent whose pinned harness process generation
-    /// is gone from `/proc` is marked with the typed `Dead` status.
-    harness_liveness: HarnessLivenessReconciliation,
-    /// The daemon-lifecycle kernel exit watcher. It holds a pidfd per watched
-    /// harness process and re-enters through Signal when the kernel pushes an
-    /// exit; it never opens or mutates the store itself. `None` in tests and
-    /// store-only openings.
-    harness_liveness_watch: Option<HarnessLivenessWatch>,
 }
 
 impl OrchestrateService {
@@ -74,26 +57,16 @@ impl OrchestrateService {
 
     pub fn open_with_layout(store: &StoreLocation, layout: OrchestrateLayout) -> Result<Self> {
         let tables = OrchestrateTables::open(store)?;
-        RoleRegistry::new(&tables, &layout).seed_current_workspace_roles()?;
-        LegacyLockImport::new(&tables, &layout).import_if_store_has_no_claims()?;
         let service = Self {
             tables,
             layout,
             next_observation_token: 1,
             handover: HandoverState::Active,
             public_sockets: PublicSocketRetirement::none(),
-            pending_caller_process_id: None,
             router_registration_endpoint: None,
             messenger_registration_endpoint: None,
             lane_reclaimer: None,
-            harness_liveness: HarnessLivenessReconciliation::from_process_environment(),
-            harness_liveness_watch: None,
         };
-        // Reap terminal or otherwise explicitly stale durable state at startup:
-        // terminal lanes and agents past retention, orphaned topic seats, empty
-        // topics, aged workflow model resolutions, and worktree rows whose
-        // checkout has vanished. Active ownership survives silence unchanged.
-        service.reconcile_bounded_state()?;
         Ok(service)
     }
 
@@ -108,21 +81,6 @@ impl OrchestrateService {
         Ok(self)
     }
 
-    /// Attach the kernel exit watcher to this daemon's ordinary socket and arm
-    /// it from durable state: every `Active` agent's pinned harness process is
-    /// watched immediately, so a harness that dies while the daemon runs is
-    /// marked dead from the kernel-reported process-exit fact.
-    pub fn with_harness_liveness_watch(
-        mut self,
-        ordinary_socket_path: std::path::PathBuf,
-    ) -> Result<Self> {
-        let watch =
-            HarnessLivenessWatch::spawn(ordinary_socket_path, std::path::PathBuf::from("/proc"))?;
-        watch.reconcile(WatchedHarnessProcess::desired_set(&self.tables)?);
-        self.harness_liveness_watch = Some(watch);
-        Ok(self)
-    }
-
     /// Publish the current earliest expiry after an engine turn. The worker
     /// waits for this exact deadline and sends one internal event when it is
     /// due; no human observation or background polling is involved.
@@ -131,18 +89,6 @@ impl OrchestrateService {
             return Ok(());
         };
         reclaimer.reschedule(self.next_reclamation_deadline()?);
-        Ok(())
-    }
-
-    /// Push the desired harness watch set after an engine turn: the exit
-    /// watcher opens pidfds for newly registered reachability and drops fds
-    /// whose agents went terminal. State flows engine → watcher only; the
-    /// watcher's own signal back is the ordinary Signal re-entry.
-    pub(crate) fn reschedule_harness_liveness_watch(&self) -> Result<()> {
-        let Some(watch) = &self.harness_liveness_watch else {
-            return Ok(());
-        };
-        watch.reconcile(WatchedHarnessProcess::desired_set(&self.tables)?);
         Ok(())
     }
 
@@ -165,25 +111,6 @@ impl OrchestrateService {
         })
     }
 
-    /// Reap terminal or otherwise explicitly stale durable records in one pass
-    /// — terminal lanes, orphaned claims, terminal orchestrator agents,
-    /// orphaned topic seats, empty topics, aged workflow model resolutions, and
-    /// worktree rows whose checkout vanished. This runs at startup and on every
-    /// ordinary engine turn; timestamps never authorize mutation of active lane
-    /// or agent ownership.
-    pub(crate) fn reconcile_bounded_state(&self) -> Result<()> {
-        let now = self.tables.current_timestamp()?;
-        // Liveness truth first: an `Active` agent whose pinned harness process
-        // generation is gone from `/proc` becomes typed `Dead` this turn — the
-        // kernel exit watcher only wakes the turn, the transition is always
-        // derived here from process truth.
-        self.harness_liveness.reconcile(&self.tables)?;
-        crate::LaneRegistry::new(&self.tables).reconcile()?;
-        self.tables.remove_claims_without_lanes()?;
-        crate::BoundedTableReaper::new(now).reconcile(&self.tables)?;
-        Ok(())
-    }
-
     /// Register the router working socket a discovered agent's registration is
     /// propagated to. The daemon's `build_runtime` calls this with the configured
     /// path; tests and router-less deployments leave it unset, so registration
@@ -194,12 +121,6 @@ impl OrchestrateService {
     ) -> Self {
         self.router_registration_endpoint = endpoint;
         self
-    }
-
-    /// The router working socket to propagate a discovered registration to, when
-    /// configured.
-    pub(crate) fn router_registration_endpoint(&self) -> Option<&std::path::Path> {
-        self.router_registration_endpoint.as_deref()
     }
 
     /// Register the messenger working socket minted identities and discovered
@@ -226,20 +147,6 @@ impl OrchestrateService {
 
     pub(crate) fn messenger_registration_endpoint(&self) -> Option<&std::path::Path> {
         self.messenger_registration_endpoint.as_deref()
-    }
-
-    /// Record the peer process identifier for the working request about to be
-    /// driven, so the registration handler can discover its reachability. The
-    /// daemon boundary sets this from the accepted connection's kernel-vouched
-    /// credentials; it is cleared once the request completes.
-    pub fn set_pending_caller_process_id(&mut self, process_id: Option<u32>) {
-        self.pending_caller_process_id = process_id;
-    }
-
-    /// Take the pending caller process identifier, clearing it. Called once by
-    /// the registration handler.
-    pub(crate) fn take_pending_caller_process_id(&mut self) -> Option<u32> {
-        self.pending_caller_process_id.take()
     }
 
     /// Register the ordinary and meta socket paths the engine retires once a
@@ -390,10 +297,6 @@ impl OrchestrateService {
 
     pub(crate) fn layout(&self) -> &OrchestrateLayout {
         &self.layout
-    }
-
-    pub(crate) fn project_locks(&self) -> Result<()> {
-        LockProjection::new(&self.tables, &self.layout).project()
     }
 
     pub(crate) fn next_observation_token(&mut self) -> Result<ObservationToken> {
