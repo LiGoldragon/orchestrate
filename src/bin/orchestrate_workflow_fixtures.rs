@@ -8,7 +8,7 @@ use signal_orchestrate::schema::lib::{
 };
 
 fn main() {
-    let workflow = workflow_request();
+    let workflow = workflow_request("stateful-workflow");
     for input in [
         Input::RunWorkflow(workflow.clone()),
         Input::ObserveWorkflowRun(WorkflowRunObservation::new(WorkflowRunDigest::new(
@@ -17,28 +17,34 @@ fn main() {
         Input::WorkflowRunObservationRetraction(WorkflowRunObservationToken::new(
             WorkflowRunDigest::new("stateful-workflow-run"),
         )),
-        Input::RunResolvedWorkflow(ResolvedWorkflowRunRequest {
-            workflow_run_request: workflow,
-            model_resolution_request: ModelResolutionRequest {
-                model_request: ModelRequest {
-                    model_selector: ModelSelector::CapabilityProfile(CapabilityProfile::new(
-                        "orchestrator",
-                    )),
-                    effort_request: EffortRequest::High,
-                },
-                continuation_request: ContinuationRequest::Prefer(ContinuationHandle::Codex(
-                    CodexContinuationIdentifier::new("stateful-workflow"),
-                )),
-            },
-        }),
+        resolved_workflow_request("stateful-workflow-absent"),
+        resolved_workflow_request("stateful-workflow-accepted"),
+        resolved_workflow_request("stateful-workflow-unavailable"),
     ] {
         println!("{}", input.to_nota());
     }
 }
 
-fn workflow_request() -> WorkflowRunRequest {
+fn resolved_workflow_request(workflow: &str) -> Input {
+    Input::RunResolvedWorkflow(ResolvedWorkflowRunRequest {
+        workflow_run_request: workflow_request(workflow),
+        model_resolution_request: ModelResolutionRequest {
+            model_request: ModelRequest {
+                model_selector: ModelSelector::CapabilityProfile(CapabilityProfile::new(
+                    "orchestrator",
+                )),
+                effort_request: EffortRequest::High,
+            },
+            continuation_request: ContinuationRequest::Prefer(ContinuationHandle::Codex(
+                CodexContinuationIdentifier::new(workflow),
+            )),
+        },
+    })
+}
+
+fn workflow_request(workflow: &str) -> WorkflowRunRequest {
     WorkflowRunRequest {
-        workflow_digest: WorkflowDigest::new(ObjectDigest::new("stateful-workflow")),
+        workflow_digest: WorkflowDigest::new(ObjectDigest::new(workflow)),
         authorized_object_reference: AuthorizedObjectReference {
             component_kind: ComponentKind::Spirit,
             object_digest: ObjectDigest::new("stateful-operation"),

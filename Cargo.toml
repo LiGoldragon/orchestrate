@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.18.4"
+version      = "0.18.5"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -40,6 +40,14 @@ path = "src/bin/orchestrate_upgrade_scenario.rs"
 name = "orchestrate-workflow-fixtures"
 path = "src/bin/orchestrate_workflow_fixtures.rs"
 required-features = ["nota-text"]
+
+[[bin]]
+name = "orchestrate-workflow-harness"
+path = "src/bin/orchestrate_workflow_harness.rs"
+
+[[bin]]
+name = "orchestrate-store-assert"
+path = "src/bin/orchestrate_store_assert.rs"
 
 [features]
 default   = []

@@ -79,7 +79,9 @@
               ${self.packages.${system}.default}/bin/meta-orchestrate \
               ${self.packages.${system}.default}/bin/orchestrate-nota-assert \
               ${self.packages.${system}.default}/bin/orchestrate-upgrade-scenario \
-              ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures
+              ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures \
+              ${self.packages.${system}.default}/bin/orchestrate-workflow-harness \
+              ${self.packages.${system}.default}/bin/orchestrate-store-assert
             touch $out
           '';
           test-doc = craneLib.cargoTest (
