@@ -76,7 +76,10 @@
             ${pkgs.bash}/bin/bash ${./checks/stateful-nix-scenario.sh} \
               ${self.packages.${system}.default}/bin/orchestrate-daemon \
               ${self.packages.${system}.default}/bin/orchestrate \
-              ${self.packages.${system}.default}/bin/meta-orchestrate
+              ${self.packages.${system}.default}/bin/meta-orchestrate \
+              ${self.packages.${system}.default}/bin/orchestrate-nota-assert \
+              ${self.packages.${system}.default}/bin/orchestrate-upgrade-scenario \
+              ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures
             touch $out
           '';
           test-doc = craneLib.cargoTest (

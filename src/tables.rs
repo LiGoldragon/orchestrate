@@ -2248,7 +2248,7 @@ impl ScopeKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use signal_orchestrate::{LaneAuthority, LaneDetails, LaneOwner, Role, RoleToken};
+    use signal_orchestrate::{LaneAuthority, LaneDetails, LaneOwner, Role, RoleToken, TaskToken};
 
     struct TemporaryStore {
         path: std::path::PathBuf,
@@ -2398,6 +2398,26 @@ mod tests {
         }
         let records = tables.divergence_records().expect("divergences");
         assert_eq!(records.len(), CURRENT_DIVERGENCE_LIMIT);
+        assert_eq!(records.iter().map(|record| record.slot).min(), Some(1));
+    }
+
+    #[test]
+    fn activity_records_are_bounded_to_current_reality() {
+        let temporary = TemporaryStore::new("orchestrate-bounded-activity");
+        let tables = OrchestrateTables::open(&temporary.location()).expect("tables open");
+        for _ in 0..=CURRENT_ACTIVITY_LIMIT {
+            tables
+                .append_activity(
+                    RoleName::from_wire_token("stateful-scenario").expect("role"),
+                    ScopeReference::Task(
+                        TaskToken::from_wire_token("scenario-bound").expect("task"),
+                    ),
+                    ScopeReason::from_text("bounded activity").expect("reason"),
+                )
+                .expect("append activity");
+        }
+        let records = tables.activity_records().expect("activities");
+        assert_eq!(records.len(), CURRENT_ACTIVITY_LIMIT);
         assert_eq!(records.iter().map(|record| record.slot).min(), Some(1));
     }
 

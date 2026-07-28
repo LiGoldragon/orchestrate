@@ -48,23 +48,6 @@ registration succeeds), or accept family descriptors at open so identity is
 validated before any write. This is a sema-engine finding, reported upstream, not
 patched around here.
 
-## Worktree scaffolding assumes existing Jujutsu metadata
-
-Symptom: `RequestWorktree` on an indexed checkout that is a Git repository but
-has no colocated `.jj` metadata invokes `jj workspace add` and fails. The
-orchestrator therefore does not yet fulfill the mechanical worktree setup
-promise for every indexed Git checkout.
-
-Current workaround: initialize Jujutsu colocated in the known source checkout
-with `jj git init --colocate`, track its existing `main` remote bookmark, then
-request the worktree again.
-
-Proper fix: `WorktreeRegistry` should explicitly recognize a Git-only indexed
-checkout and either perform the safe colocated Jujutsu bootstrap before
-scaffolding or return a dedicated typed refusal that names the required
-bootstrap. The intended automatic lifecycle needs a deliberate choice between
-those behaviors rather than leaking a `jj` subprocess failure.
-
 ## Upgrade tier still closes without a reply on engine error
 
 The working tier (generated spine, schema-rust 0.7.1) and the meta tier
@@ -126,10 +109,9 @@ handlers compile. Pinning only one dependency creates duplicate Rust trait
 universes across shared signal types; a local path patch would make deployment
 non-portable.
 
-Current workaround: use the deployed ordinary lifecycle and immediate
-missing-checkout reaper for stale worktree rows. Do not hand-edit the daemon
-store. The exact meta removal vocabulary remains producer-side only until its
-consumer family is portable.
+Current workaround: use only the deployed state-only lifecycle. Do not
+hand-edit the daemon store. The exact meta removal vocabulary remains
+producer-side only until its consumer family is portable.
 
 Proper fix: publish a coherent, consumer-tested legacy contract dependency set,
 or finish the new Protos generator plus legacy-bridge migration and move the

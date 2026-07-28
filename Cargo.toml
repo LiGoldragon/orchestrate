@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.18.2"
+version      = "0.18.3"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -25,6 +25,20 @@ required-features = ["nota-text"]
 [[bin]]
 name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
+required-features = ["nota-text"]
+
+[[bin]]
+name = "orchestrate-nota-assert"
+path = "src/bin/orchestrate_nota_assert.rs"
+required-features = ["nota-text"]
+
+[[bin]]
+name = "orchestrate-upgrade-scenario"
+path = "src/bin/orchestrate_upgrade_scenario.rs"
+
+[[bin]]
+name = "orchestrate-workflow-fixtures"
+path = "src/bin/orchestrate_workflow_fixtures.rs"
 required-features = ["nota-text"]
 
 [features]

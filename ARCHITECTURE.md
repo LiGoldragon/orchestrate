@@ -372,7 +372,9 @@ Task scopes render in bracketed human form:
   lifecycle operation changes it. A lane's `updated_at` is inspection metadata,
   never authority to infer abandonment: silence cannot warn, nudge, recover,
   terminate, abandon, retire, or remove an active lane or its claims. The
-  component has no automatic lane or table reclaimer.
+  component has no automatic age/path-based lane or table reclaimer. Activity,
+  divergence, and triage tables are instead count-bounded current-reality
+  windows.
 - Because only real lanes count, registration reads a lane's identity, not its
   history. A terminal record (`Released` / `HandoverEnded`) never blocks: a
   `Fresh` registration over one supersedes it — the dead record and its stale
@@ -444,32 +446,21 @@ src/divergence.rs partial downstream application recorder
 src/handover.rs   version-handover marker state plus Mirror snapshot
                   encoding, validation, decoding, and restoration
 src/location.rs   sema store path wrapper
-src/layout.rs     workspace/git-index path policy
-src/lock_projection.rs
-                  compatibility lock-file projection
-src/lowering.rs   contract-operation to Sema-effect lowering
-src/tables.rs     sema-backed claim/activity/role/repository tables
+src/layout.rs     declared role-report path projection
+src/tables.rs     sema-backed durable state tables and count-bounded
+                  activity/divergence/triage current-reality windows
 src/claim.rs      claim, release, handoff, and observation handlers
 src/activity.rs   activity submission and query handlers
 src/role.rs       meta role creation and retirement handlers
-src/repository.rs local repository-index refresh handler
+src/repository.rs state-only repository-index observation and refresh-count handler
 src/worktree.rs   worktree registry: register, refresh-index, and archive
-                  lifecycle handlers; `WorktreePathProbe` derives
-                  `PushedState` and `last_activity` from `jj`
+                  lifecycle handlers; no checkout, VCS, or path probe
 src/service.rs    ordinary, meta, and upgrade request dispatch
-src/main.rs       daemon binary, one NOTA config argument
+src/main.rs       daemon binary, six explicit runtime path arguments
 src/bin/orchestrate.rs
                   one-line signal_frame::signal_cli! thin client
-tests/ledger.rs   sema-backed claim/activity/role/repository and lowering witnesses
-                  plus the first record-divergence partial-failure witness
-tests/architecture.rs
-                  CLI boundary source-scan witnesses
-tests/daemon_cli.rs
-                  production daemon + production CLI socket witnesses
-                  including private upgrade-socket handover witnesses
-tests/handover.rs version-handover Mirror payload encode/decode/restore
-                  service witnesses
-tests/smoke.rs    legacy claim-state smoke test
+tests/state_only.rs pure-read and no-host-probe witnesses
+checks/stateful-nix-scenario.sh packaged daemon/client stateful scenario
 ```
 
 ## Schema-Engine Shape
