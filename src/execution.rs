@@ -492,7 +492,6 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 self.send_orchestrator_message(submission)?
             }
         };
-        self.service.reschedule_lane_reclamation()?;
         Ok(reply)
     }
 
@@ -537,7 +536,6 @@ impl<'service> OrchestrateSemaEngine<'service> {
                 WorktreeRegistry::new(self.service.tables()).archive(order)?
             }
         };
-        self.service.reschedule_lane_reclamation()?;
         Ok(reply)
     }
 

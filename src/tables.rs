@@ -175,11 +175,10 @@ pub struct StoredRole {
     pub report_lane_path: WirePath,
 }
 
-/// One indexed repository. `identity` is the identifying key — where the
-/// repository truly lives (host/owner/name), derived from the checkout's
-/// actual remote; `name` is the local index alias and `path` the incidental
-/// local hosting. An unreadable identity is kept as a typed
-/// [`RepositoryIdentityState::IdentityUnknown`] gap, never dropped.
+/// One caller-supplied repository state record. `identity` is the identifying
+/// key; `name` is the local alias and `path` is retained state. A legacy row
+/// without identity becomes a typed [`RepositoryIdentityState::IdentityUnknown`]
+/// gap, never dropped.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredRepository {
     pub identity: RepositoryIdentityState,
@@ -202,12 +201,10 @@ pub struct StoredRepositoryV5 {
 }
 
 impl StoredRepositoryV5 {
-    /// Carry a prior-shape row to the current shape, deriving the real
-    /// identity from the recorded checkout's actual remote — a typed
-    /// identity-unknown gap when unreadable. The evolution conversion is
+    /// Carry a prior-shape row to the current shape without reading the host.
+    /// A missing identity becomes a typed gap. The evolution conversion is
     /// infallible, so a stored name that cannot form a [`RepositoryName`] is
-    /// carried under a sanitized alias rather than silently dropped; the next
-    /// index refresh replaces the row wholesale from the filesystem.
+    /// carried under a sanitized alias rather than silently dropped.
     fn into_current(self) -> StoredRepository {
         let name = RepositoryName::from_text(self.name.as_str()).unwrap_or_else(|_| {
             let sanitized: String = self
@@ -293,10 +290,7 @@ pub enum StoredWorkflowModelResolutionOutcome {
 ///
 /// `last_activity` records observed activity for inspection. It is refreshed
 /// on real use (reachability discovery and a triage message), but it never
-/// grants authority to retire an active agent. The interim table reaper deletes
-/// only explicitly terminal (`Retired`/`Dead`) agents past terminal retention;
-/// the terminal transition re-stamps `last_activity` so that window is measured
-/// from explicit retirement or death.
+/// grants authority to retire an active agent or to delete a terminal record.
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct StoredOrchestratorAgent {
     pub agent_identifier: OrchestratorAgentIdentifier,
@@ -481,8 +475,7 @@ impl OrchestrateTables {
     /// The same descriptor declaring the pre-identity v5 prior for the
     /// preserved migration re-open: the engine decodes each legacy row as
     /// [`StoredRepositoryV5`] and carries it through
-    /// [`StoredRepositoryV5::into_current`], deriving the real identity from
-    /// the recorded checkout's actual remote in the same write transaction.
+    /// [`StoredRepositoryV5::into_current`] without host inspection.
     fn evolving_repository_descriptor() -> TableDescriptor<StoredRepository> {
         Self::current_repository_descriptor().with_prior::<StoredRepositoryV5>(
             Self::family_schema_hash(
@@ -910,8 +903,7 @@ impl OrchestrateTables {
 
     /// Flip every `Active` worktree owned by `owning_lane` to
     /// [`WorktreeStatus::Abandoned`], returning how many were flipped. A pure
-    /// status transition on durable state — no filesystem effect — so the lane
-    /// reaper can flag orphans without the worktree layout.
+    /// status transition on durable state — no filesystem effect.
     pub fn mark_worktrees_abandoned_for_lane(&self, owning_lane: &str) -> Result<u32> {
         let mut flagged = 0;
         for mut record in self.worktree_records()? {
@@ -2058,9 +2050,8 @@ enum StoreRepair {
     /// in the current shape. Every other family is untouched.
     MigrateAgentRegistry,
     /// The repository index is registered under its pre-real-identity family
-    /// hash. Same evolution path: the engine carries each row forward with
-    /// its real identity derived from the recorded checkout's actual remote —
-    /// a typed identity-unknown gap when unreadable, never a drop.
+    /// hash. Same evolution path: the engine carries each row forward with an
+    /// identity-unknown gap, never a drop.
     MigrateRepositoryRegistry,
 }
 

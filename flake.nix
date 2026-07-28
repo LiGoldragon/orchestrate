@@ -70,6 +70,15 @@
               cargoTestExtraArgs = "--test state_only";
             }
           );
+          stateful-nix-scenario = pkgs.runCommand "orchestrate-stateful-nix-scenario" {
+            nativeBuildInputs = [ pkgs.bash ];
+          } ''
+            ${pkgs.bash}/bin/bash ${./checks/stateful-nix-scenario.sh} \
+              ${self.packages.${system}.default}/bin/orchestrate-daemon \
+              ${self.packages.${system}.default}/bin/orchestrate \
+              ${self.packages.${system}.default}/bin/meta-orchestrate
+            touch $out
+          '';
           test-doc = craneLib.cargoTest (
             commonArgs
             // {

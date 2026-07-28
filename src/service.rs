@@ -2,9 +2,7 @@ use meta_signal_orchestrate::{MetaOrchestrateReply, MetaOrchestrateRequest};
 use signal_frame::{
     AcceptedOutcome, NonEmpty, Reply, Request, RequestPayload, RequestRejectionReason, SubReply,
 };
-use signal_orchestrate::{
-    ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied, TimestampNanos,
-};
+use signal_orchestrate::{ObservationToken, OrchestrateReply, OrchestrateRequest, PartialApplied};
 use signal_version_handover::{
     CompletionReport, DivergenceAcknowledgement, HandoverAcceptance, HandoverFinalization,
     HandoverMarker, HandoverRejection, HandoverRejectionReason, MarkerRequest,
@@ -14,7 +12,7 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    Error, LaneReclaimer, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
+    Error, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
     OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, StoreLocation,
     StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
@@ -44,10 +42,6 @@ pub struct OrchestrateService {
     /// orchestrate's own registry only, with no degradation recorded. The
     /// messenger is a co-resident peer, so the push is best-effort.
     messenger_registration_endpoint: Option<std::path::PathBuf>,
-    /// The daemon-lifecycle deadline worker. It receives state-derived expiry
-    /// deadlines after lane mutations and re-enters through Signal at expiry;
-    /// it never opens or mutates the store itself.
-    lane_reclaimer: Option<LaneReclaimer>,
 }
 
 impl OrchestrateService {
@@ -65,50 +59,8 @@ impl OrchestrateService {
             public_sockets: PublicSocketRetirement::none(),
             router_registration_endpoint: None,
             messenger_registration_endpoint: None,
-            lane_reclaimer: None,
         };
         Ok(service)
-    }
-
-    /// Attach lifecycle-driven lane expiry work to this daemon's ordinary
-    /// socket. It uses exact store-derived deadlines, not an interval scan.
-    pub fn with_lane_reclamation_socket(
-        mut self,
-        ordinary_socket_path: std::path::PathBuf,
-    ) -> Result<Self> {
-        let deadline = self.next_reclamation_deadline()?;
-        self.lane_reclaimer = Some(LaneReclaimer::spawn(ordinary_socket_path, deadline));
-        Ok(self)
-    }
-
-    /// Publish the current earliest expiry after an engine turn. The worker
-    /// waits for this exact deadline and sends one internal event when it is
-    /// due; no human observation or background polling is involved.
-    pub(crate) fn reschedule_lane_reclamation(&self) -> Result<()> {
-        let Some(reclaimer) = &self.lane_reclaimer else {
-            return Ok(());
-        };
-        reclaimer.reschedule(self.next_reclamation_deadline()?);
-        Ok(())
-    }
-
-    /// The earliest durable expiry across every deadline-driven store: the lane
-    /// registry and the interim-bounded orchestrator-seat and workflow-resolution
-    /// tables. The single reclamation worker sleeps to this instant and re-enters
-    /// through the ordinary Signal path — no interval scan.
-    fn next_reclamation_deadline(&self) -> Result<Option<TimestampNanos>> {
-        let lane_deadline = crate::LaneRegistry::new(&self.tables).next_reclamation_deadline()?;
-        let now = self.tables.current_timestamp()?;
-        let table_deadline = crate::BoundedTableReaper::new(now).next_deadline(&self.tables)?;
-        Ok(match (lane_deadline, table_deadline) {
-            (Some(lane), Some(table)) => Some(if lane.value() <= table.value() {
-                lane
-            } else {
-                table
-            }),
-            (Some(lane), None) => Some(lane),
-            (None, table) => table,
-        })
     }
 
     /// Register the router working socket a discovered agent's registration is

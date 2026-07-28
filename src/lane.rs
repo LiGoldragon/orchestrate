@@ -6,17 +6,11 @@ use meta_signal_orchestrate::{
     LaneUnregistrationRequest, MetaOrchestrateReply, SessionClearRequest, SessionCleared,
 };
 use signal_orchestrate::{
-    LaneAuthority, LaneIdentifier, LaneProjection, LaneStatus, LanesObserved, OrchestrateReply,
-    Role, RoleName, SessionProjection, SessionsObserved, TimestampNanos,
+    LaneAuthority, LaneIdentifier, LaneProjection, LanesObserved, OrchestrateReply, Role, RoleName,
+    SessionProjection, SessionsObserved,
 };
 
 use crate::{Error, OrchestrateTables, Result, StoredClaim, StoredLaneRegistration};
-
-/// How long a terminal lane record (`Released` / `HandoverEnded`) is retained
-/// after its last update before the reaper hard-deletes it. Terminal lanes are
-/// finished work; a short window keeps them briefly for post-mortem, then they
-/// are gone so the live view reflects only real lanes. Tunable.
-pub const TERMINAL_LANE_RETENTION_NANOS: u64 = 60 * 60 * 1_000_000_000;
 
 pub struct LaneRegistry<'tables> {
     tables: &'tables OrchestrateTables,
@@ -37,9 +31,8 @@ impl<'tables> LaneRegistry<'tables> {
         // `Recovery` one. A terminal record (`Released` / `HandoverEnded`) is
         // finished work, not a real lane, so it is invisible here and never
         // blocks — this is why "Fresh follows the closed lane record" is
-        // literally true. Lane identity is global (claims, liveness, and the
-        // reaper all key on the lane alone), so the live-lane check is global
-        // too: no two agents hold the same live lane name.
+        // literally true. Lane identity is global, so no two agents hold the
+        // same live lane name.
         if let Some(active) = self.tables.active_lane_record(&request.assignment.lane)? {
             let resolution = match request.mode {
                 LaneRegistrationMode::Fresh => LaneAlreadyRegisteredResolution::FreshConflict,
@@ -133,10 +126,8 @@ impl<'tables> LaneRegistry<'tables> {
         }
         self.tables
             .transition_lane_ownership(&cleared_lanes, &[], &remove_claim_keys, &[])?;
-        // Clearing a session ends the agents that registered under it. Retire
-        // them here as an explicit lifecycle event; the interim table reaper then
-        // deletes each retired agent (and its topic seats) after the terminal
-        // retention window, exactly as it does for a lane.
+        // Clearing a session ends the agents that registered under it as an
+        // explicit lifecycle event; their durable records remain observable.
         self.tables
             .retire_session_orchestrator_agents(&request.session)?;
         Ok(MetaOrchestrateReply::SessionCleared(SessionCleared {
@@ -179,45 +170,6 @@ impl<'tables> LaneRegistry<'tables> {
             lane: change.lane,
             authority: change.authority,
         }))
-    }
-
-    /// Report the current registry without reconciliation. Active and suspect
-    /// lanes remain owned until an explicit authorized lifecycle operation
-    /// changes them; terminal rows remain visible until an explicit reaper
-    /// transition. Timestamps are inspection metadata, never read authority.
-    pub fn reconcile(&self) -> Result<LaneReconciliation> {
-        let reaper = LaneReaper::new(self.tables.current_timestamp()?);
-        let mut reconciliation = LaneReconciliation::none();
-        for lane in self.tables.lane_records()? {
-            let Some(reason) = reaper.reap_reason(&lane) else {
-                continue;
-            };
-            self.tables.transition_lane_ownership(
-                std::slice::from_ref(&lane),
-                &[],
-                &self.claim_keys_for_lane(&lane.assignment.lane)?,
-                &[],
-            )?;
-            reconciliation.record(reason);
-        }
-        Ok(reconciliation)
-    }
-
-    /// Return the next terminal-record retention expiry. Active ownership has
-    /// no timestamp-derived deadline.
-    pub fn next_reclamation_deadline(&self) -> Result<Option<TimestampNanos>> {
-        Ok(self
-            .tables
-            .lane_records()?
-            .into_iter()
-            .filter(|lane| {
-                matches!(
-                    lane.status,
-                    LaneStatus::Released | LaneStatus::HandoverEnded
-                )
-            })
-            .map(|lane| LaneReaper::deadline_for(&lane))
-            .min_by_key(|deadline| deadline.value()))
     }
 
     pub fn observe(&self) -> Result<OrchestrateReply> {
@@ -373,76 +325,5 @@ impl<'tables> LaneRegistry<'tables> {
             10 => Ok("tenth"),
             _ => Err(Error::UnsupportedLaneOrdinal { ordinal }),
         }
-    }
-}
-
-/// Decides, against a single reconciliation instant, whether a terminal stored
-/// lane passed its retention window. `updated_at` on active and suspect lanes
-/// remains observable metadata, never inferred abandonment authority.
-struct LaneReaper {
-    now: TimestampNanos,
-}
-
-impl LaneReaper {
-    fn new(now: TimestampNanos) -> Self {
-        Self { now }
-    }
-
-    /// Why this lane should be reaped, or `None` to keep it. Only explicitly
-    /// terminal lanes use the retention window. A lane whose stamp is in the
-    /// future (clock skew) reads as zero elapsed age and is kept.
-    fn reap_reason(&self, lane: &StoredLaneRegistration) -> Option<LaneReapReason> {
-        let idle_nanos = self.now.value().saturating_sub(lane.updated_at.value());
-        match lane.status {
-            LaneStatus::Active | LaneStatus::Suspect => None,
-            LaneStatus::Released | LaneStatus::HandoverEnded => (idle_nanos
-                >= TERMINAL_LANE_RETENTION_NANOS)
-                .then_some(LaneReapReason::TerminalExpired),
-        }
-    }
-
-    fn deadline_for(lane: &StoredLaneRegistration) -> TimestampNanos {
-        let retention = match lane.status {
-            LaneStatus::Active | LaneStatus::Suspect => return lane.updated_at,
-            LaneStatus::Released | LaneStatus::HandoverEnded => TERMINAL_LANE_RETENTION_NANOS,
-        };
-        TimestampNanos::new(lane.updated_at.value().saturating_add(retention))
-    }
-}
-
-/// Why the reaper hard-deleted a lane. `ActiveIdle` is retained for source
-/// compatibility with historical observers but is never produced: silence has
-/// no ownership authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaneReapReason {
-    ActiveIdle,
-    TerminalExpired,
-}
-
-/// The tally of one reconciliation pass: how many lanes were reaped for each
-/// reason, so a caller (startup log, test) can witness the cleanup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct LaneReconciliation {
-    pub reaped_idle_active: u32,
-    pub reaped_terminal: u32,
-    pub flagged_abandoned_worktrees: u32,
-}
-
-impl LaneReconciliation {
-    fn none() -> Self {
-        Self::default()
-    }
-
-    fn record(&mut self, reason: LaneReapReason) {
-        match reason {
-            // Kept solely for compatibility with previously persisted or
-            // external reason values; the current reaper never returns it.
-            LaneReapReason::ActiveIdle => self.reaped_idle_active += 1,
-            LaneReapReason::TerminalExpired => self.reaped_terminal += 1,
-        }
-    }
-
-    pub fn total_reaped(&self) -> u32 {
-        self.reaped_idle_active + self.reaped_terminal
     }
 }

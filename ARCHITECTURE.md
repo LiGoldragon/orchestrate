@@ -372,56 +372,26 @@ Task scopes render in bracketed human form:
   lifecycle operation changes it. A lane's `updated_at` is inspection metadata,
   never authority to infer abandonment: silence cannot warn, nudge, recover,
   terminate, abandon, retire, or remove an active lane or its claims. The
-  `LaneReaper` schedules only explicitly terminal (`Released` /
-  `HandoverEnded`) record retention; after the short terminal window it removes
-  the terminal lane and its canonical claims in one durable transaction.
+  component has no automatic lane or table reclaimer.
 - Because only real lanes count, registration reads a lane's identity, not its
   history. A terminal record (`Released` / `HandoverEnded`) never blocks: a
   `Fresh` registration over one supersedes it — the dead record and its stale
   claims are dropped and the lane is registered anew in one operation — so
-  "Fresh follows the closed lane record" is literally true, and the short
-  retention window keeps a closed record for inspection, never to squat its
-  name. The only real registration that a `Fresh` request conflicts with, or a
+  "Fresh follows the closed lane record" is literally true. The only real
+  registration that a `Fresh` request conflicts with, or a
   `Recovery` request inherits, is a live `Active` lane of the same name: `Fresh`
   is refused (`FreshConflict`), `Recovery` inherits it and refreshes its
   liveness stamp (`RecoveryInherited`). Over a terminal or absent record both
   modes converge — the lane is genuinely (re)registered and the reply is a
   truthful `LaneRegistered`, never a silent no-op behind a success variant.
-- `src/table_reclamation.rs`'s `BoundedTableReaper` uses elapsed time only
-  as retention policy for explicitly terminal agents (`Retired`/`Dead`), empty
-  topics, workflow-resolution history, and concluded worktree tombstones. An
-  active or allocated orchestrator agent survives arbitrary inactivity and
-  missing observed activity; clearing a session remains an explicit retirement
-  operation. Worktree state is request-supplied Sema data; live `Active` and
-  `Abandoned` worktrees remain for typed conclusion. `Observe` and `Query` are
-  pure Sema projections: they do not reconcile, stamp time, emit receipts, or
-  derive state from a checkout or deadline.
+  Terminal agents, topics, workflow rows, and worktrees remain durable until
+  an explicit supported transition changes or removes them. `Observe` and
+  `Query` are pure Sema projections: they do not reconcile, stamp time, emit
+  receipts, or derive state from a checkout or deadline.
 - Lane/session lifecycle transitions update lane/session state and canonical
   durable claims in one Sema atomic commit. Claims are the authoritative durable
   view; lock files and `RoleSnapshot` are downstream projections and cannot
   create, retain, or override ownership.
-- Harness liveness is kernel-pushed, not aged (`src/harness_liveness.rs`,
-  layer 1 of the coordination-liveliness design): the daemon holds a `pidfd`
-  on every `Active` agent's discovered harness process (the pid pinned by its
-  `/proc` start time, so a recycled pid is never mistaken for the agent's
-  harness), and a process exit makes the pidfd readable — the
-  `HarnessLivenessWatch` worker re-enters through the ordinary Signal path.
-  The truth transition never trusts the wake: at the head of every ordinary
-  turn `HarnessLivenessReconciliation` reads `/proc` and marks the typed
-  `OrchestratorAgentStatus::Dead` only when its pinned process generation is
-  gone. `Dead` is terminal beside `Retired` (same retention, distinct meaning:
-  dead agents are the messenger's killed-mark source and are bounced-to, never
-  respawn-delivered). Agents without discovered reachability remain `Active`
-  until an explicit authorized lifecycle operation changes them.
-- `AgentActivityRead` (`src/activity_read.rs`, layer 3 of the
-  coordination-liveliness design) may inspect a pinned harness descendant tree
-  or terminal-cell session artifacts and report what was observed. Its
-  timestamps and assessments are observational metadata only. Neither a recent
-  observation nor silence, missing activity, an idle age, or an unreadable
-  surface authorizes warning, recovery, retirement, claim release, abandonment,
-  or any other lifecycle transition for an active lane, session, or agent.
-  The descendant scan still trusts only a live generation pin, so a recycled
-  pid's children are never attributed to the agent.
 - Role creation records a typed harness kind beside the role
   identifier; harness assignment is not hidden in the role string.
 - Role creation creates a report-repository path and report-lane path
@@ -429,10 +399,9 @@ Task scopes render in bracketed human form:
 - A fanned-out Mutate that has at least one downstream success and at
   least one downstream failure records a divergence and returns a typed
   `PartialApplied` reply instead of rolling back the successful leg. Activities,
-  divergences, and orchestrator triage audit rows are bounded current-reality
-  windows, not unbounded historical ledgers.
-- Repository refresh reads local checkouts from the configured Git
-  index root and creates workspace `repos/` links.
+  divergences, and orchestrator triage audit rows are durable state records.
+- Repository refresh reports the durable repository-row count. It does not
+  read checkouts or create workspace links.
 - Lock files are projections of typed state, not durable authority.
 - Version handover Mirror payloads for orchestrate carry
   `MirrorSnapshot` records: active claims plus lane registrations.
@@ -442,48 +411,12 @@ Task scopes render in bracketed human form:
   orchestrate. Completion retires the ordinary and meta socket paths;
   the upgrade socket remains available for private recovery protocol.
 - BEADS is never an owned claim scope.
-- Worktree lifecycle is daemon-owned. Ordinary `RequestWorktree` resolves
-  the indexed repository checkout, scaffolds a `jj` workspace from `main` at
-  the canonical worktree path, creates its feature bookmark, derives
-  infrastructure facts, and records its purpose and owner. Ordinary
-  `ConcludeWorktree` is the only teardown path: `Merged` auto-lands by
-  rebase and only then forgets the workspace and removes its directory;
-  `Rejected` pushes `discard/<branch>` before removal. Meta
-  `RegisterWorktree` and `RefreshWorktreeIndex` reconcile existing
-  checkouts, while `ArchiveWorktree` moves a named path to
-  `WorktreeStatus::Archived`. A refresh is a filesystem discovery floor:
-  for a known `(repository, branch)` it re-derives only `jj` facts and
-  preserves the durable owner, purpose, and lifecycle state instead of
-  replacing them with scanner guesses. `Archived`/`Recycled` rows are read
-  from the `worktrees` table directly — the daemon's sema database is the
-  only worktree record; it no longer mirrors one to a file.
-  Infrastructure-minted fields (`last_activity`, `pushed_state`) are derived
-  from `jj` by the daemon, never agent-supplied.
-- The present conclusion request selects its worktree by owning lane even
-  though one lane can correctly own worktrees in several repositories. Rather
-  than silently choose the first row, conclusion refuses an ambiguous lane
-  before it runs any `jj` or filesystem effect. This is a compatibility
-  containment, not an identity model: the future public conclusion request
-  must carry the exact `(repository, branch)` worktree identity when the new
-  schema producer is ready.
-- Repository-main contention (contention-flow MVP, psyche-ruled 2026-07-17):
-  a claim covering a registered repository whose whole checkout another live
-  lane holds is answered `RepositoryMainContended` — holder, held age, and a
-  feature worktree scaffolded on the spot with the claimant's lane name as
-  the branch (`FeatureWorktree::Scaffolded`/`Existing`). Narrow-path
-  conflicts inside a repository keep the plain `ClaimRejection`.
-- `ConcludeWorktree(Merged)` lands the work itself — the MVP has no review
-  gate ("first MVP doesnt, just merge in main"): work already an ancestor
-  passes through (`AlreadyAncestor`); otherwise `AutoLand` fetches, rebases
-  the salvage head onto the latest `main`, advances the bookmark, and pushes
-  (`FastForwarded`/`Rebased`). A conflicted rebase or a push rejected after
-  one retry is fully unwound via `jj op restore` and refused typed
-  (`AutoRebaseConflicted`/`MainPushRejected`) — the seam where the deferred
-  review gate lands later. `Rejected` conclusions report `Discarded`.
-  Releasing a lane whose scopes covered a repository main carries
-  `started_branches` in the acknowledgment: the un-integrated feature
-  worktrees other lanes started while main was held — a live view of the
-  worktree registry, never a separate ledger.
+- Worktree lifecycle is caller-supplied durable state. `RequestWorktree`
+  refuses rather than creating a checkout. Meta `RegisterWorktree` records a
+  supplied row, `RefreshWorktreeIndex` reports row count, and `ArchiveWorktree`
+  changes only its durable status. `ConcludeWorktree` selects exactly one active
+  row by lane and writes `Merged` or `Archived`; missing or ambiguous rows are
+  typed refusals. It runs no VCS command and has no directory effect.
 
 ## 8 - Invariants
 

@@ -121,27 +121,6 @@ pub enum Error {
     #[error("lane is not registered: {lane}")]
     LaneNotRegistered { lane: String },
 
-    #[error("worktree scan failed for {path}: {message}")]
-    WorktreeScan { path: String, message: String },
-
-    #[error("worktree scaffold failed at {path}: {message}")]
-    WorktreeScaffold { path: String, message: String },
-
-    #[error("Git linked-worktree metadata is malformed at {checkout}: {message}")]
-    WorktreeLinkedOwnerMalformed { checkout: String, message: String },
-
-    #[error("Git linked-worktree owner is unavailable for {checkout}: {owner}")]
-    WorktreeLinkedOwnerUnavailable { checkout: String, owner: String },
-
-    #[error("worktree teardown failed at {path}: {message}")]
-    WorktreeTeardown { path: String, message: String },
-
-    #[error("worktree auto-land failed at {path}: {message}")]
-    WorktreeAutoLand { path: String, message: String },
-
-    #[error("no feature worktree available for repository {repository}: {reason}")]
-    FeatureWorktreeUnavailable { repository: String, reason: String },
-
     #[error("no worktree is registered for owning lane {lane}")]
     WorktreeLaneNotFound { lane: String },
 
@@ -149,9 +128,6 @@ pub enum Error {
         "owning lane {lane} identifies multiple non-recycled worktrees: {worktrees}; refusing destructive conclusion"
     )]
     WorktreeLaneAmbiguous { lane: String, worktrees: String },
-
-    #[error("no source checkout found for repository {repository}")]
-    RepositoryCheckoutMissing { repository: String },
 
     #[error(
         "atomic batch has {operation_count} operations; orchestrate supports one operation per execution batch today"
@@ -218,8 +194,6 @@ impl Error {
             Error::SignalOrchestrate(_)
                 | Error::LaneNotRegistered { .. }
                 | Error::WorktreeLaneAmbiguous { .. }
-                | Error::WorktreeLinkedOwnerMalformed { .. }
-                | Error::WorktreeLinkedOwnerUnavailable { .. }
                 | Error::UnknownPreMintedAgentIdentity { .. }
         )
     }

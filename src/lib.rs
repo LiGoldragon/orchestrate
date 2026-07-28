@@ -7,7 +7,6 @@ pub mod error;
 pub mod execution;
 pub mod handover;
 pub mod lane;
-pub mod lane_reclamation;
 pub mod layout;
 pub mod location;
 pub mod messenger_registration;
@@ -22,7 +21,6 @@ pub mod service;
 pub mod signal_transport;
 pub mod socket_retirement;
 pub mod store_preserve;
-pub mod table_reclamation;
 pub mod tables;
 pub mod upgrade_frame;
 pub mod workflow;
@@ -39,8 +37,7 @@ pub use execution::{
     OrchestrateSemaEngine,
 };
 pub use handover::{MirrorSnapshot, MirrorVersions};
-pub use lane::{LaneReapReason, LaneReconciliation, LaneRegistry};
-pub use lane_reclamation::LaneReclaimer;
+pub use lane::LaneRegistry;
 pub use layout::OrchestrateLayout;
 pub use location::StoreLocation;
 pub use messenger_registration::{MessengerRegistrationDegradation, MessengerRegistryPush};
@@ -89,7 +86,6 @@ pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, Transpo
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
 pub use store_preserve::PreMigrationPreserve;
-pub use table_reclamation::{BoundedTableReaper, BoundedTableReclamation};
 pub use tables::{
     CURRENT_ACTIVITY_LIMIT, CURRENT_DIVERGENCE_LIMIT, CURRENT_ORCHESTRATOR_TRIAGE_LIMIT,
     OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,
