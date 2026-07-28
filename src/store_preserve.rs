@@ -2,9 +2,9 @@
 //!
 //! Before the first store repair mutates the file, the migration copies it
 //! aside under the store directory's existing preserve naming convention:
-//! `<store>.v<target>-premigration-<utc-stamp>Z`. The copy's age is readable
-//! from its own name, so it stays reap-eligible under the standing retention
-//! windows instead of accumulating silently.
+//! `<store>.v<target>-premigration-<utc-stamp>Z`. The copy remains beside the
+//! store: this component has no automatic reaper or retention window for
+//! pre-migration preserves.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
