@@ -392,10 +392,10 @@ Task scopes render in bracketed human form:
   topics, workflow-resolution history, and concluded worktree tombstones. An
   active or allocated orchestrator agent survives arbitrary inactivity and
   missing observed activity; clearing a session remains an explicit retirement
-  operation. A missing checkout is immediate index truth, while live `Active`
-  and `Abandoned` worktrees remain for `ConcludeWorktree` reclaim. Reconciliation
-  may run at startup or an ordinary turn, but no scan or deadline grants silence
-  authority over active ownership.
+  operation. Worktree state is request-supplied Sema data; live `Active` and
+  `Abandoned` worktrees remain for typed conclusion. `Observe` and `Query` are
+  pure Sema projections: they do not reconcile, stamp time, emit receipts, or
+  derive state from a checkout or deadline.
 - Lane/session lifecycle transitions update lane/session state and canonical
   durable claims in one Sema atomic commit. Claims are the authoritative durable
   view; lock files and `RoleSnapshot` are downstream projections and cannot
@@ -502,8 +502,8 @@ Task scopes render in bracketed human form:
 src/lib.rs        public library surface and re-exports
 src/error.rs      crate error enum
 src/configuration.rs
-                  daemon NOTA config record, including the private
-                  upgrade socket path
+                  typed six-path daemon argv contract, including optional
+                  router and messenger sockets
 src/daemon.rs     triad-runtime ordinary/meta/upgrade listener runtime,
                   bounded request workers, and frame dispatch with
                   ShortHeader ingress validation

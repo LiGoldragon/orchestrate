@@ -16,6 +16,42 @@ The runtime surface is a triad: `orchestrate-daemon` owns the
 `signal-orchestrate` CLI, and `meta-orchestrate` is the one-argument
 `meta-signal-orchestrate` policy CLI.
 
+## Daemon startup contract
+
+`orchestrate-daemon` receives its configuration as typed positional startup
+arguments, not through a configuration file or environment variables:
+
+```text
+orchestrate-daemon \
+  <sema-store> <ordinary-socket> <meta-socket> <upgrade-socket> \
+  <workspace-root> <git-index-root> \
+  [router=<socket>] [messenger=<socket>]
+```
+
+All six required paths and either optional socket value must be absolute and
+must not contain a parent-directory component. The daemon opens only the
+configured Sema store and binds the three configured Unix sockets. Its service
+manager must create their parent directories. Sema's pre-migration preserve
+remains beside the configured store, and the existing public-socket retirement
+on handover remains unchanged.
+
+The removed `orchestrate-write-configuration` program has no replacement: the
+service manager starts the daemon directly with that contract. For the current
+downstream declarative module,
+`CriomOS-home/modules/home/profiles/min/orchestrate.nix`, make these changes
+when updating its Orchestrate package pin:
+
+- Remove `signalPath` and the `ExecStartPre` invocation of
+  `orchestrate-write-configuration`.
+- Set `ExecStart` to the daemon followed by `storePath`, `ordinarySocketPath`,
+  `metaSocketPath`, `upgradeSocketPath`, `workspaceRoot`, `gitIndexRoot`, and
+  `messenger=${messengerSocketPath}` in that order.
+- Keep `StateDirectory`, `RuntimeDirectory`, the Sema store path, and all
+  three Unix socket paths; they now directly serve the daemon's startup
+  contract.
+- Remove the daemon `PATH` entries for Jujutsu and Git. This source boundary
+  does not execute VCS programs or scan host repositories.
+
 ## Ordinary CLI presentation
 
 Ordinary contract input is shorthand for a typed human presentation:

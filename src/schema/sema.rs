@@ -14,15 +14,13 @@ pub use signal_orchestrate::schema::lib::Input as OrdinaryInput;
 #[rustfmt::skip]
 pub use signal_orchestrate::schema::lib::Output as OrdinaryOutput;
 #[rustfmt::skip]
+pub use signal_orchestrate::schema::lib::Observation as Observation;
+#[rustfmt::skip]
+pub use signal_orchestrate::schema::lib::ActivityQuery as ActivityQuery;
+#[rustfmt::skip]
 pub use meta_signal_orchestrate::schema::lib::Input as MetaInput;
 #[rustfmt::skip]
 pub use meta_signal_orchestrate::schema::lib::Output as MetaOutput;
-#[rustfmt::skip]
-pub use signal_orchestrate::schema::lib::RoleSnapshot as RoleSnapshot;
-#[rustfmt::skip]
-pub use signal_orchestrate::schema::lib::LanesObserved as LanesObserved;
-#[rustfmt::skip]
-pub use signal_orchestrate::schema::lib::ActivityList as ActivityList;
 
 #[rustfmt::skip]
 #[cfg(feature = "nota-text")]
@@ -35,8 +33,7 @@ pub use nota::{NotaDecodeError, NotaEncode, NotaSource};
 )]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum SemaReadInput {
-    ReadRoles(ReadRoles),
-    ReadLanes(ReadLanes),
+    ReadObservation(ReadObservation),
     ReadActivity(ReadActivity),
 }
 
@@ -46,7 +43,7 @@ pub enum SemaReadInput {
     derive(nota::NotaDecode, nota::NotaDecodeTraced, nota::NotaEncode)
 )]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ReadRoles {}
+pub struct ReadObservation(Observation);
 
 #[rustfmt::skip]
 #[cfg_attr(
@@ -54,15 +51,7 @@ pub struct ReadRoles {}
     derive(nota::NotaDecode, nota::NotaDecodeTraced, nota::NotaEncode)
 )]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ReadLanes {}
-
-#[rustfmt::skip]
-#[cfg_attr(
-    feature = "nota-text",
-    derive(nota::NotaDecode, nota::NotaDecodeTraced, nota::NotaEncode)
-)]
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct ReadActivity {}
+pub struct ReadActivity(ActivityQuery);
 
 #[rustfmt::skip]
 #[cfg_attr(
@@ -71,9 +60,8 @@ pub struct ReadActivity {}
 )]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum SemaReadOutput {
-    RolesRead(RoleSnapshot),
-    LanesRead(LanesObserved),
-    ActivityRead(ActivityList),
+    ObservationRead(OrdinaryOutput),
+    ActivityRead(OrdinaryOutput),
     ReadMiss(ReadMiss),
 }
 
@@ -197,6 +185,44 @@ pub enum Output {
 }
 
 #[rustfmt::skip]
+impl ReadObservation {
+    pub fn new(payload: Observation) -> Self {
+        Self(payload)
+    }
+    pub fn payload(&self) -> &Observation {
+        &self.0
+    }
+    pub fn into_payload(self) -> Observation {
+        self.0
+    }
+}
+#[rustfmt::skip]
+impl From<Observation> for ReadObservation {
+    fn from(payload: Observation) -> Self {
+        Self::new(payload)
+    }
+}
+
+#[rustfmt::skip]
+impl ReadActivity {
+    pub fn new(payload: ActivityQuery) -> Self {
+        Self(payload)
+    }
+    pub fn payload(&self) -> &ActivityQuery {
+        &self.0
+    }
+    pub fn into_payload(self) -> ActivityQuery {
+        self.0
+    }
+}
+#[rustfmt::skip]
+impl From<ActivityQuery> for ReadActivity {
+    fn from(payload: ActivityQuery) -> Self {
+        Self::new(payload)
+    }
+}
+
+#[rustfmt::skip]
 impl ReadMiss {
     pub fn new(payload: ReadMissReason) -> Self {
         Self(payload)
@@ -274,26 +300,20 @@ impl From<WriteRejectionReason> for WriteRejected {
 
 #[rustfmt::skip]
 impl SemaReadInput {
-    pub fn read_roles(payload: ReadRoles) -> Self {
-        Self::ReadRoles(payload)
+    pub fn read_observation(payload: Observation) -> Self {
+        Self::ReadObservation(ReadObservation::new(payload))
     }
-    pub fn read_lanes(payload: ReadLanes) -> Self {
-        Self::ReadLanes(payload)
-    }
-    pub fn read_activity(payload: ReadActivity) -> Self {
-        Self::ReadActivity(payload)
+    pub fn read_activity(payload: ActivityQuery) -> Self {
+        Self::ReadActivity(ReadActivity::new(payload))
     }
 }
 
 #[rustfmt::skip]
 impl SemaReadOutput {
-    pub fn roles_read(payload: RoleSnapshot) -> Self {
-        Self::RolesRead(payload)
+    pub fn observation_read(payload: OrdinaryOutput) -> Self {
+        Self::ObservationRead(payload)
     }
-    pub fn lanes_read(payload: LanesObserved) -> Self {
-        Self::LanesRead(payload)
-    }
-    pub fn activity_read(payload: ActivityList) -> Self {
+    pub fn activity_read(payload: OrdinaryOutput) -> Self {
         Self::ActivityRead(payload)
     }
     pub fn read_miss(payload: ReadMissReason) -> Self {
@@ -345,16 +365,9 @@ impl Output {
 }
 
 #[rustfmt::skip]
-impl From<ReadRoles> for SemaReadInput {
-    fn from(payload: ReadRoles) -> Self {
-        Self::ReadRoles(payload)
-    }
-}
-
-#[rustfmt::skip]
-impl From<ReadLanes> for SemaReadInput {
-    fn from(payload: ReadLanes) -> Self {
-        Self::ReadLanes(payload)
+impl From<ReadObservation> for SemaReadInput {
+    fn from(payload: ReadObservation) -> Self {
+        Self::ReadObservation(payload)
     }
 }
 
@@ -362,27 +375,6 @@ impl From<ReadLanes> for SemaReadInput {
 impl From<ReadActivity> for SemaReadInput {
     fn from(payload: ReadActivity) -> Self {
         Self::ReadActivity(payload)
-    }
-}
-
-#[rustfmt::skip]
-impl From<RoleSnapshot> for SemaReadOutput {
-    fn from(payload: RoleSnapshot) -> Self {
-        Self::RolesRead(payload)
-    }
-}
-
-#[rustfmt::skip]
-impl From<LanesObserved> for SemaReadOutput {
-    fn from(payload: LanesObserved) -> Self {
-        Self::LanesRead(payload)
-    }
-}
-
-#[rustfmt::skip]
-impl From<ActivityList> for SemaReadOutput {
-    fn from(payload: ActivityList) -> Self {
-        Self::ActivityRead(payload)
     }
 }
 
@@ -504,8 +496,7 @@ impl std::fmt::Display for Output {
     Eq,
 )]
 pub enum SemaReadInputRoute {
-    ReadRoles,
-    ReadLanes,
+    ReadObservation,
     ReadActivity,
 }
 
@@ -513,8 +504,7 @@ pub enum SemaReadInputRoute {
 impl SemaReadInput {
     pub fn route(&self) -> SemaReadInputRoute {
         match self {
-            Self::ReadRoles(_) => SemaReadInputRoute::ReadRoles,
-            Self::ReadLanes(_) => SemaReadInputRoute::ReadLanes,
+            Self::ReadObservation(_) => SemaReadInputRoute::ReadObservation,
             Self::ReadActivity(_) => SemaReadInputRoute::ReadActivity,
         }
     }
@@ -536,8 +526,7 @@ impl SemaReadInput {
     Eq,
 )]
 pub enum SemaReadOutputRoute {
-    RolesRead,
-    LanesRead,
+    ObservationRead,
     ActivityRead,
     ReadMiss,
 }
@@ -546,8 +535,7 @@ pub enum SemaReadOutputRoute {
 impl SemaReadOutput {
     pub fn route(&self) -> SemaReadOutputRoute {
         match self {
-            Self::RolesRead(_) => SemaReadOutputRoute::RolesRead,
-            Self::LanesRead(_) => SemaReadOutputRoute::LanesRead,
+            Self::ObservationRead(_) => SemaReadOutputRoute::ObservationRead,
             Self::ActivityRead(_) => SemaReadOutputRoute::ActivityRead,
             Self::ReadMiss(_) => SemaReadOutputRoute::ReadMiss,
         }
@@ -653,8 +641,7 @@ impl SemaObjectName {
             }
             Self::ReadInput(route) => {
                 match route {
-                    SemaReadInputRoute::ReadRoles => "SemaReadInputReadRoles",
-                    SemaReadInputRoute::ReadLanes => "SemaReadInputReadLanes",
+                    SemaReadInputRoute::ReadObservation => "SemaReadInputReadObservation",
                     SemaReadInputRoute::ReadActivity => "SemaReadInputReadActivity",
                 }
             }
@@ -669,8 +656,9 @@ impl SemaObjectName {
             }
             Self::ReadOutput(route) => {
                 match route {
-                    SemaReadOutputRoute::RolesRead => "SemaReadOutputRolesRead",
-                    SemaReadOutputRoute::LanesRead => "SemaReadOutputLanesRead",
+                    SemaReadOutputRoute::ObservationRead => {
+                        "SemaReadOutputObservationRead"
+                    }
                     SemaReadOutputRoute::ActivityRead => "SemaReadOutputActivityRead",
                     SemaReadOutputRoute::ReadMiss => "SemaReadOutputReadMiss",
                 }

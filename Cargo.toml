@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.17.0"
+version      = "0.18.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -26,10 +26,6 @@ required-features = ["nota-text"]
 name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
 required-features = ["nota-text"]
-
-[[bin]]
-name = "orchestrate-write-configuration"
-path = "src/bin/orchestrate_write_configuration.rs"
 
 [features]
 default   = []

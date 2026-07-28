@@ -217,20 +217,15 @@ impl<'service> OrchestrateNexusEngine<'service> {
         match input {
             nexus_schema::SignalInput::OrdinaryInput(input) => {
                 self.signal_tier = Some(SignalTier::Ordinary);
-                match input.clone().project_into() {
-                    Ok(ordinary_contract::OrchestrateRequest::Observe(
-                        ordinary_contract::Observation::Roles,
-                    )) => nexus_schema::NexusAction::command_sema_read(
-                        sema_schema::SemaReadInput::read_roles(sema_schema::ReadRoles {}),
-                    ),
-                    Ok(ordinary_contract::OrchestrateRequest::Observe(
-                        ordinary_contract::Observation::Lanes,
-                    )) => nexus_schema::NexusAction::command_sema_read(
-                        sema_schema::SemaReadInput::read_lanes(sema_schema::ReadLanes {}),
-                    ),
-                    Ok(ordinary_contract::OrchestrateRequest::Query(_)) => {
+                match input.clone() {
+                    ordinary_schema::Input::Observe(observation) => {
                         nexus_schema::NexusAction::command_sema_read(
-                            sema_schema::SemaReadInput::read_activity(sema_schema::ReadActivity {}),
+                            sema_schema::SemaReadInput::read_observation(observation),
+                        )
+                    }
+                    ordinary_schema::Input::Query(query) => {
+                        nexus_schema::NexusAction::command_sema_read(
+                            sema_schema::SemaReadInput::read_activity(query),
                         )
                     }
                     _ => nexus_schema::NexusAction::command_sema_write(
@@ -268,20 +263,9 @@ impl<'service> OrchestrateNexusEngine<'service> {
         output: sema_schema::SemaReadOutput,
     ) -> nexus_schema::NexusAction {
         let signal_output = match output {
-            sema_schema::SemaReadOutput::RolesRead(snapshot) => {
-                nexus_schema::SignalOutput::ordinary_output(ordinary_schema::Output::role_snapshot(
-                    snapshot,
-                ))
-            }
-            sema_schema::SemaReadOutput::LanesRead(lanes) => {
-                nexus_schema::SignalOutput::ordinary_output(ordinary_schema::Output::LanesObserved(
-                    lanes,
-                ))
-            }
-            sema_schema::SemaReadOutput::ActivityRead(activity) => {
-                nexus_schema::SignalOutput::ordinary_output(ordinary_schema::Output::ActivityList(
-                    activity,
-                ))
+            sema_schema::SemaReadOutput::ObservationRead(output)
+            | sema_schema::SemaReadOutput::ActivityRead(output) => {
+                nexus_schema::SignalOutput::ordinary_output(output)
             }
             sema_schema::SemaReadOutput::ReadMiss(_) => self.rejection_output(),
         };
@@ -389,38 +373,53 @@ impl<'service> OrchestrateSemaEngine<'service> {
         input: sema_schema::SemaReadInput,
     ) -> Result<sema_schema::SemaReadOutput> {
         match input {
-            sema_schema::SemaReadInput::ReadRoles(_) => {
-                let reply = ClaimLedger::new(self.service.tables()).observe()?;
-                let ordinary_schema::Output::RoleSnapshot(snapshot) = reply.project_into()? else {
-                    return Err(Error::SchemaBridge {
-                        message: "role observation did not produce RoleSnapshot".to_string(),
-                    });
-                };
-                Ok(sema_schema::SemaReadOutput::roles_read(snapshot))
+            sema_schema::SemaReadInput::ReadObservation(observation) => {
+                let observation = observation.into_payload().project_into()?;
+                let reply = self.observe_ordinary_request(observation)?;
+                Ok(sema_schema::SemaReadOutput::observation_read(
+                    reply.project_into()?,
+                ))
             }
-            sema_schema::SemaReadInput::ReadLanes(_) => {
-                let reply = LaneRegistry::new(self.service.tables()).observe()?;
-                let ordinary_schema::Output::LanesObserved(lanes) = reply.project_into()? else {
-                    return Err(Error::SchemaBridge {
-                        message: "lane observation did not produce LanesObserved".to_string(),
-                    });
-                };
-                Ok(sema_schema::SemaReadOutput::lanes_read(lanes))
+            sema_schema::SemaReadInput::ReadActivity(query) => {
+                let query = query.into_payload().project_into()?;
+                let reply = ActivityLedger::new(self.service.tables()).query(query)?;
+                Ok(sema_schema::SemaReadOutput::activity_read(
+                    reply.project_into()?,
+                ))
             }
-            sema_schema::SemaReadInput::ReadActivity(_) => {
-                let reply = ActivityLedger::new(self.service.tables()).query(
-                    ordinary_contract::ActivityQuery {
-                        limit: 64,
-                        filters: Vec::new(),
-                    },
-                )?;
-                let ordinary_schema::Output::ActivityList(activity) = reply.project_into()? else {
-                    return Err(Error::SchemaBridge {
-                        message: "activity observation did not produce ActivityList".to_string(),
-                    });
-                };
-                Ok(sema_schema::SemaReadOutput::activity_read(activity))
+        }
+    }
+
+    fn observe_ordinary_request(
+        &self,
+        observation: ordinary_contract::Observation,
+    ) -> Result<ordinary_contract::OrchestrateReply> {
+        match observation {
+            ordinary_contract::Observation::Roles => {
+                ClaimLedger::new(self.service.tables()).observe()
             }
+            ordinary_contract::Observation::Sessions => {
+                LaneRegistry::new(self.service.tables()).observe_sessions()
+            }
+            ordinary_contract::Observation::SessionLanes(session) => {
+                LaneRegistry::new(self.service.tables()).observe_session(session)
+            }
+            ordinary_contract::Observation::Lanes => {
+                LaneRegistry::new(self.service.tables()).observe()
+            }
+            ordinary_contract::Observation::Worktrees => {
+                WorktreeRegistry::new(self.service.tables()).observe()
+            }
+            ordinary_contract::Observation::Repositories => {
+                RepositoryRegistry::new(self.service.tables()).observe()
+            }
+            ordinary_contract::Observation::Topics => Ok(
+                ordinary_contract::OrchestrateReply::TopicTree(ordinary_contract::TopicTree {
+                    topics: self.orchestrator_topics()?,
+                }),
+            ),
+            ordinary_contract::Observation::Topic(path) => self.observe_orchestrator_topic(path),
+            ordinary_contract::Observation::Agents => self.observe_orchestrator_agents(),
         }
     }
 
@@ -438,35 +437,11 @@ impl<'service> OrchestrateSemaEngine<'service> {
             ordinary_contract::OrchestrateRequest::Handoff(handoff) => {
                 ClaimLedger::new(self.service.tables()).apply_handoff(handoff)?
             }
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Roles,
-            ) => ClaimLedger::new(self.service.tables()).observe()?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Sessions,
-            ) => LaneRegistry::new(self.service.tables()).observe_sessions()?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::SessionLanes(session),
-            ) => LaneRegistry::new(self.service.tables()).observe_session(session)?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Lanes,
-            ) => LaneRegistry::new(self.service.tables()).observe()?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Worktrees,
-            ) => WorktreeRegistry::new(self.service.tables()).observe()?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Repositories,
-            ) => RepositoryRegistry::new(self.service.tables()).observe()?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Topics,
-            ) => ordinary_contract::OrchestrateReply::TopicTree(ordinary_contract::TopicTree {
-                topics: self.orchestrator_topics()?,
-            }),
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Topic(path),
-            ) => self.observe_orchestrator_topic(path)?,
-            ordinary_contract::OrchestrateRequest::Observe(
-                ordinary_contract::Observation::Agents,
-            ) => self.observe_orchestrator_agents()?,
+            ordinary_contract::OrchestrateRequest::Observe(_) => {
+                return Err(Error::SchemaBridge {
+                    message: "observation bypassed the Sema read dispatcher".to_string(),
+                });
+            }
             ordinary_contract::OrchestrateRequest::Submit(submission) => {
                 ActivityLedger::new(self.service.tables()).submit(submission)?
             }

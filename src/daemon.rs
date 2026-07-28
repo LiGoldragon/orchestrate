@@ -79,9 +79,9 @@ impl ComponentDaemon for OrchestrateDaemon {
     const PROCESS_NAME: &'static str = "orchestrate-daemon";
 
     fn load_configuration(
-        path: &std::path::Path,
+        _path: &std::path::Path,
     ) -> Result<Self::Configuration, Self::ConfigurationError> {
-        DaemonConfiguration::from_signal_file(path)
+        Err(ConfigurationError::ConfigurationFileBoundaryRemoved)
     }
 
     fn build_runtime(configuration: &Self::Configuration) -> Result<Self::Engine, Self::Error> {

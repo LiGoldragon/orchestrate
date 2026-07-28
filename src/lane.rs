@@ -181,10 +181,10 @@ impl<'tables> LaneRegistry<'tables> {
         }))
     }
 
-    /// Reap terminal lane records past their retention window, then report the
-    /// current registry. Active and suspect lanes remain owned until an explicit
-    /// authorized lifecycle operation changes them; timestamps are inspection
-    /// metadata and never authority to mutate active ownership.
+    /// Report the current registry without reconciliation. Active and suspect
+    /// lanes remain owned until an explicit authorized lifecycle operation
+    /// changes them; terminal rows remain visible until an explicit reaper
+    /// transition. Timestamps are inspection metadata, never read authority.
     pub fn reconcile(&self) -> Result<LaneReconciliation> {
         let reaper = LaneReaper::new(self.tables.current_timestamp()?);
         let mut reconciliation = LaneReconciliation::none();
@@ -221,7 +221,6 @@ impl<'tables> LaneRegistry<'tables> {
     }
 
     pub fn observe(&self) -> Result<OrchestrateReply> {
-        self.reconcile()?;
         let observed_at = self.tables.current_timestamp()?;
         let claims = self.tables.claim_records()?;
         let mut lanes = self
@@ -249,7 +248,6 @@ impl<'tables> LaneRegistry<'tables> {
         &self,
         session: signal_orchestrate::SessionIdentifier,
     ) -> Result<OrchestrateReply> {
-        self.reconcile()?;
         let observed_at = self.tables.current_timestamp()?;
         let claims = self.tables.claim_records()?;
         let mut lanes = self
@@ -268,7 +266,6 @@ impl<'tables> LaneRegistry<'tables> {
     }
 
     pub fn observe_sessions(&self) -> Result<OrchestrateReply> {
-        self.reconcile()?;
         let mut sessions = BTreeMap::new();
         for registration in self.tables.lane_records()? {
             let active_lanes = sessions.entry(registration.assignment.session).or_insert(0);
