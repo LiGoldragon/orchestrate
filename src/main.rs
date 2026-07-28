@@ -9,7 +9,10 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<(), StartupError> {
     let configuration = DaemonConfiguration::from_process_arguments()?;
-    let runtime = tokio::runtime::Runtime::new().map_err(DaemonError::Runtime)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(DaemonError::Runtime)?;
     runtime.block_on(async {
         <OrchestrateDaemon as DaemonBinder>::bind(configuration)?
             .run()

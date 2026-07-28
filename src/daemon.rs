@@ -92,7 +92,6 @@ impl ComponentDaemon for OrchestrateDaemon {
                 PathBuf::from(configuration.git_index_root.as_str()),
             ),
         )?
-        .with_lane_reclamation_socket(PathBuf::from(configuration.ordinary_socket_path.as_str()))?
         .with_public_socket_retirement(PublicSocketRetirement::new(
             PathBuf::from(configuration.ordinary_socket_path.as_str()),
             PathBuf::from(configuration.meta_socket_path.as_str()),
