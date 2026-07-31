@@ -18,3 +18,9 @@ deepening the transitional BEADS dependency.
 - Naming: the component is being renamed Orchestrate → Orchestrator. The rename
   proceeds incrementally as code is touched — new and edited surfaces adopt
   `Orchestrator`; there is no separate big-bang rename sweep.
+
+## Protos estate status
+
+Stack: correct-new destination
+Status: active component, current checkout legacy-wired
+This checkout is not proof of correct-new adoption.
