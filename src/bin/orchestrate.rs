@@ -1,8 +1,6 @@
 //! The orchestrate CLI — the daemon's first client.
 //!
-//! It speaks the schema-emitted `Input` frame the actor-shell daemon decodes
-//! (the same short-header wire spirit's CLI speaks), not the contract
-//! `ExchangeFrame` the retired `signal_cli!` client sent. One NOTA argument
+//! It speaks the canonical `signal-orchestrate` contract Frame. One Dotos argument
 //! lowers through a single request/presentation interpretation pipeline:
 //! ordinary contract input is shorthand for human presentation, while
 //! `(Explicit (Canonical (Observe Lanes)))` preserves the daemon's canonical
@@ -11,12 +9,12 @@
 
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use nota::{NotaDecodeError, NotaSource};
+use dotos::{DotosDecodeError, DotosSource};
 use orchestrate::{
     ExplicitOrchestratorInvocation, OrdinarySignalTransport, ResolvedOrchestratorInvocation,
     TransportError,
 };
-use signal_orchestrate::schema::lib::Input;
+use signal_orchestrate::OrchestrateRequest;
 use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
@@ -45,11 +43,11 @@ impl OrchestratorCli {
 
     fn run(&self) -> Result<(), OrchestratorCliError> {
         let invocation = RequestText::new(self.argument_text()?).parse()?;
-        let (_route, output) =
+        let output =
             OrdinarySignalTransport::connect(self.socket_path()?)?.exchange(invocation.input())?;
         println!(
             "{}",
-            invocation.presentation().present(&output).to_stdout_nota()
+            invocation.presentation().present(&output).to_stdout_dotos()
         );
         Ok(())
     }
@@ -71,20 +69,20 @@ impl OrchestratorCli {
     }
 
     fn argument_text(&self) -> Result<String, OrchestratorCliError> {
-        match self.command.nota_argument()? {
-            ComponentArgument::InlineNota(argument) => Ok(argument.into_string()),
-            ComponentArgument::NotaFile(file) => Self::read_nota_file(file.into_path()),
-            ComponentArgument::SignalFile(file) => Self::read_nota_file(file.into_path()),
+        match self.command.dotos_argument()? {
+            ComponentArgument::InlineDotos(argument) => Ok(argument.into_string()),
+            ComponentArgument::DotosFile(file) => Self::read_dotos_file(file.into_path()),
+            ComponentArgument::SignalFile(file) => Self::read_dotos_file(file.into_path()),
         }
     }
 
-    fn read_nota_file(path: PathBuf) -> Result<String, OrchestratorCliError> {
+    fn read_dotos_file(path: PathBuf) -> Result<String, OrchestratorCliError> {
         fs::read_to_string(&path)
-            .map_err(|source| OrchestratorCliError::ReadNotaFile { path, source })
+            .map_err(|source| OrchestratorCliError::ReadDotosFile { path, source })
     }
 }
 
-/// The unparsed CLI NOTA argument awaiting shorthand/explicit lowering.
+/// The unparsed CLI Dotos argument awaiting shorthand/explicit lowering.
 struct RequestText {
     text: String,
 }
@@ -95,13 +93,13 @@ impl RequestText {
     }
 
     fn parse(self) -> Result<ResolvedOrchestratorInvocation, OrchestratorCliError> {
-        let source = NotaSource::new(&self.text);
+        let source = DotosSource::new(&self.text);
         match source.parse::<ExplicitOrchestratorInvocation>() {
             Ok(explicit) => Ok(explicit.into_resolved()),
             Err(_) => source
-                .parse::<Input>()
+                .parse::<OrchestrateRequest>()
                 .map(ResolvedOrchestratorInvocation::human_shorthand)
-                .map_err(OrchestratorCliError::NotaDecode),
+                .map_err(OrchestratorCliError::DotosDecode),
         }
     }
 }
@@ -111,15 +109,15 @@ enum OrchestratorCliError {
     #[error("component argument error: {0}")]
     Argument(#[from] ArgumentError),
 
-    #[error("failed to read NOTA file {}: {source}", path.display())]
-    ReadNotaFile {
+    #[error("failed to read Dotos file {}: {source}", path.display())]
+    ReadDotosFile {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
 
-    #[error("invalid ordinary orchestrate invocation NOTA: {0}")]
-    NotaDecode(NotaDecodeError),
+    #[error("invalid ordinary orchestrate invocation Dotos: {0}")]
+    DotosDecode(DotosDecodeError),
 
     #[error("HOME environment variable is unavailable: {source}")]
     HomeDirectory {

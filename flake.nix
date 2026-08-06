@@ -26,23 +26,15 @@
           sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
         };
         inherit (rust) craneLib toolchain;
-        schemaFilter =
-          path: _type:
-          let
-            pathString = toString path;
-            schemaRoot = "${toString ./.}/schema";
-          in
-          pathString == schemaRoot || pkgs.lib.hasPrefix "${schemaRoot}/" pathString;
         src = rust.cleanSource {
           root = ./.;
-          extraFilters = [ schemaFilter ];
         };
         commonArgs = {
           inherit src;
           strictDeps = true;
         };
         packageArgs = commonArgs // {
-          cargoExtraArgs = "--features nota-text";
+          cargoExtraArgs = "--features dotos-text";
         };
         cargoArtifacts = craneLib.buildDepsOnly packageArgs;
       in
@@ -59,7 +51,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--features nota-text --all-targets";
+              cargoExtraArgs = "--features dotos-text --all-targets";
             }
           );
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
@@ -77,7 +69,7 @@
               ${self.packages.${system}.default}/bin/orchestrate-daemon \
               ${self.packages.${system}.default}/bin/orchestrate \
               ${self.packages.${system}.default}/bin/meta-orchestrate \
-              ${self.packages.${system}.default}/bin/orchestrate-nota-assert \
+              ${self.packages.${system}.default}/bin/orchestrate-dotos-assert \
               ${self.packages.${system}.default}/bin/orchestrate-upgrade-scenario \
               ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures \
               ${self.packages.${system}.default}/bin/orchestrate-workflow-harness \
@@ -103,7 +95,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--features nota-text --all-targets -- -D warnings";
+              cargoClippyExtraArgs = "--features dotos-text --all-targets -- -D warnings";
             }
           );
         };

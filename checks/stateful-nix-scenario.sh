@@ -4,7 +4,7 @@ set -euo pipefail
 daemon=$1
 ordinary_client=$2
 meta_client=$3
-nota_assert=$4
+dotos_assert=$4
 upgrade_scenario=$5
 workflow_fixtures=$6
 workflow_harness=$7
@@ -81,7 +81,7 @@ expect() {
       tier=meta
       ;;
   esac
-  "$nota_assert" "$tier" "$expected" "$reply"
+  "$dotos_assert" "$tier" "$expected" "$reply"
 }
 
 ordinary_rejected() {
@@ -101,18 +101,18 @@ meta_rejected() {
 start_daemon
 
 # Roles: create, duplicate refusal, and explicit retirement.
-expect "$(meta '(Create (scenario-role Codex))')" RoleCreated
-expect "$(meta '(Create (scenario-role Codex))')" RoleCreationRejected:RoleAlreadyExists
-expect "$(meta '(Retire (Role scenario-role))')" RoleRetired
+expect "$(meta '(Create {scenario-role Codex})')" RoleCreated
+expect "$(meta '(Create {scenario-role Codex})')" RoleCreationRejected:RoleAlreadyExists
+expect "$(meta '(Retire Role.{scenario-role})')" RoleRetired
 
 # Three synthetic lanes establish Fresh, duplicate Fresh refusal, Recovery,
 # authority mutation, release, and retirement semantics.
-expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha state]) Fresh))')" LaneRegistered
-expect "$(meta '(Register ((Beta beta ([Beta Operator] Structural) [beta state]) Fresh))')" LaneRegistered
-expect "$(meta '(Register ((Gamma gamma ([Gamma Operator] Structural) [gamma state]) Fresh))')" LaneRegistered
-expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha retry]) Fresh))')" LaneAlreadyRegistered:FreshConflict
-expect "$(meta '(Register ((Alpha alpha ([Alpha Operator] Structural) [alpha recovery]) Recovery))')" LaneAlreadyRegistered:RecoveryInherited
-expect "$(meta '(SetAuthority (gamma Support))')" LaneAuthoritySet
+expect "$(meta '(Register {{Alpha alpha {{[Alpha Operator]} Structural} (alpha state)} Fresh})')" LaneRegistered
+expect "$(meta '(Register {{Beta beta {{[Beta Operator]} Structural} (beta state)} Fresh})')" LaneRegistered
+expect "$(meta '(Register {{Gamma gamma {{[Gamma Operator]} Structural} (gamma state)} Fresh})')" LaneRegistered
+expect "$(meta '(Register {{Alpha alpha {{[Alpha Operator]} Structural} (alpha retry)} Fresh})')" LaneAlreadyRegistered:FreshConflict
+expect "$(meta '(Register {{Alpha alpha {{[Alpha Operator]} Structural} (alpha recovery)} Recovery})')" LaneAlreadyRegistered:RecoveryInherited
+expect "$(meta '(SetAuthority {gamma Support})')" LaneAuthoritySet
 
 # Claims: the response fields prove the nested conflict and handoff direction;
 # the last claim is deliberately retained for the restart-store witness.
@@ -131,7 +131,7 @@ expect "$(ordinary '(Query (10 [(TaskToken scenario-task)]))')" ActivityList:Sce
 # identifier is subsequently used for both durable routed and rejected triage.
 agent_reply=$(ordinary '(RegisterAgent (Alpha [explicit topic agent] Codex (Explicit [coordination]) None))')
 expect "$agent_reply" AgentRegistered
-agent_identifier=$("$nota_assert" ordinary-identifier unused "$agent_reply")
+agent_identifier=$("$dotos_assert" ordinary-identifier unused "$agent_reply")
 [[ $agent_identifier =~ ^[[:alnum:]]+$ ]]
 expect "$(ordinary '(Observe Topics)')" TopicTree
 expect "$(ordinary '(Observe (Topic coordination))')" TopicDetail
@@ -143,7 +143,7 @@ expect "$(ordinary "(SendOrchestratorMessage ($agent_identifier Orchestrator (Re
 # typed refusals instead of starting any real agent process.
 minted_reply=$(ordinary '(MintAgentIdentity (Beta [minted agent] Codex))')
 expect "$minted_reply" AgentIdentityMinted
-minted_identifier=$("$nota_assert" ordinary-identifier unused "$minted_reply")
+minted_identifier=$("$dotos_assert" ordinary-identifier unused "$minted_reply")
 expect "$(ordinary '(LaunchAgent unknown)')" AgentLaunchRefused:UnknownAgent
 expect "$(ordinary "(LaunchAgent $minted_identifier)")" AgentLaunchRefused:HarnessUnreachable
 expect "$(ordinary '(RegisterAgent (Beta [automatic topic] Codex Automatic None))')" AgentRegistrationRejected:JudgeUnavailable
@@ -162,11 +162,11 @@ ordinary_rejected "${workflow_inputs[3]}"
 
 # Repositories have no host discovery operation: refresh and observation are
 # state-only projections. RequestWorktree refuses rather than creating a tree.
-expect "$(meta '(Refresh ())')" RepositoryIndexRefreshed
+expect "$(meta '(Refresh {})')" RepositoryIndexRefreshed
 expect "$(ordinary '(Observe Repositories)')" RepositoriesObserved
 expect "$(ordinary '(RequestWorktree (orchestrate scenario alpha [state only]))')" WorktreeRequestRejected:RepositoryNotFound
 
-# Every durable observation selector is an ordinary canonical NOTA read.
+# Every durable observation selector is an ordinary canonical Dotos read.
 expect "$(ordinary '(Observe Roles)')" RoleSnapshot
 expect "$(ordinary '(Observe Sessions)')" SessionsObserved
 expect "$(ordinary '(Observe (SessionLanes Alpha))')" LanesObserved
@@ -175,23 +175,23 @@ expect "$(ordinary '(Observe Lanes)')" LanesObserved
 # Declared worktrees are caller-supplied rows. Archive and conclusion change
 # only durable status; no declared path is created or removed.
 archived_path=$temporary/declared-archive
-expect "$(meta "(RegisterWorktree (orchestrate archive $archived_path alpha Active [state only reservation] 1 Unpushed))")" WorktreeRegistered
-expect "$(meta "(ArchiveWorktree $archived_path)")" WorktreeArchived:Archived
-expect "$(meta '(RefreshWorktreeIndex ())')" WorktreeIndexRefreshed
+expect "$(meta "(RegisterWorktree {{orchestrate archive $archived_path alpha Active (state only reservation) 1 Unpushed}})")" WorktreeRegistered
+expect "$(meta "(ArchiveWorktree {$archived_path})")" WorktreeArchived:Archived
+expect "$(meta '(RefreshWorktreeIndex {})')" WorktreeIndexRefreshed
 
 rejected_path=$temporary/declared-rejected
-expect "$(meta "(RegisterWorktree (orchestrate rejected $rejected_path alpha Active [state only conclusion] 1 Unpushed))")" WorktreeRegistered
+expect "$(meta "(RegisterWorktree {{orchestrate rejected $rejected_path alpha Active (state only conclusion) 1 Unpushed}})")" WorktreeRegistered
 expect "$(ordinary '(ConcludeWorktree (alpha Rejected))')" WorktreeConcluded:Archived
 expect "$(ordinary '(ConcludeWorktree (gamma Merged))')" PartialApplied
 
 ambiguous_one=$temporary/declared-ambiguous-one
 ambiguous_two=$temporary/declared-ambiguous-two
-expect "$(meta "(RegisterWorktree (orchestrate ambiguous-one $ambiguous_one gamma Active [ambiguous conclusion] 1 Unpushed))")" WorktreeRegistered
-expect "$(meta "(RegisterWorktree (orchestrate ambiguous-two $ambiguous_two gamma Active [ambiguous conclusion] 1 Unpushed))")" WorktreeRegistered
+expect "$(meta "(RegisterWorktree {{orchestrate ambiguous-one $ambiguous_one gamma Active (ambiguous conclusion) 1 Unpushed}})")" WorktreeRegistered
+expect "$(meta "(RegisterWorktree {{orchestrate ambiguous-two $ambiguous_two gamma Active (ambiguous conclusion) 1 Unpushed}})")" WorktreeRegistered
 expect "$(ordinary '(ConcludeWorktree (gamma Merged))')" PartialApplied
 
 merged_path=$temporary/declared-merged
-expect "$(meta "(RegisterWorktree (orchestrate merged $merged_path beta Active [state only conclusion] 1 Unpushed))")" WorktreeRegistered
+expect "$(meta "(RegisterWorktree {{orchestrate merged $merged_path beta Active (state only conclusion) 1 Unpushed}})")" WorktreeRegistered
 expect "$(ordinary '(ConcludeWorktree (beta Merged))')" WorktreeConcluded:Merged
 expect "$(ordinary '(Observe Worktrees)')" WorktreesObserved
 
@@ -200,9 +200,9 @@ expect "$(ordinary '(Observe Worktrees)')" WorktreesObserved
 expect "$(ordinary '(Observe (Topic absent-topic))')" PartialApplied
 
 # Explicit terminal lifecycle remains caller-directed; it is never age-driven.
-expect "$(meta '(Unregister (Gamma gamma [terminal lane]))')" LaneUnregistered
-expect "$(meta '(Retire (Lane gamma))')" LaneRetired
-expect "$(meta '(ClearSession (Beta [clear beta session]))')" SessionCleared
+expect "$(meta '(Unregister {Gamma gamma (terminal lane)})')" LaneUnregistered
+expect "$(meta '(Retire Lane.gamma)')" LaneRetired
+expect "$(meta '(ClearSession {Beta (clear beta session)})')" SessionCleared
 
 # Restart over the same store. The fake harness uses the same framed
 # meta-harness protocol as production and emits one accepted then one

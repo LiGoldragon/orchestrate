@@ -2,8 +2,7 @@ use std::{env, process::ExitCode};
 
 use orchestrate::{
     LaneStatus, OrchestrateTables, OrchestratorAgentStatus, ScopeReference, StoreLocation,
-    StoredGuidanceMagnitude, StoredOrchestratorMessageKind, StoredTriageVerdict,
-    StoredWorkflowModelResolutionOutcome, WorktreeStatus,
+    StoredTriageVerdict, StoredWorkflowModelResolutionOutcome, WorktreeStatus,
 };
 
 fn main() -> ExitCode {
@@ -172,7 +171,9 @@ impl RestartStoreAssertion {
             record.slot == 0
                 && record.sender.as_str() == self.agent_identifier
                 && record.incoming_kind
-                    == StoredOrchestratorMessageKind::Guidance(StoredGuidanceMagnitude::Standard)
+                    == signal_orchestrator_message::OrchestratorMessageKind::Guidance(
+                        signal_orchestrator_message::GuidanceMagnitude::Standard,
+                    )
                 && matches!(
                     &record.verdict,
                     StoredTriageVerdict::Route { recipients, retyped: None }
@@ -182,7 +183,8 @@ impl RestartStoreAssertion {
         let escalated = triage.iter().any(|record| {
             record.slot == 1
                 && record.sender.as_str() == self.agent_identifier
-                && record.incoming_kind == StoredOrchestratorMessageKind::Report
+                && record.incoming_kind
+                    == signal_orchestrator_message::OrchestratorMessageKind::Report
                 && matches!(record.verdict, StoredTriageVerdict::Escalate)
         });
         if routed && escalated {
@@ -207,7 +209,7 @@ impl RestartStoreAssertion {
             matches!(
                 &resolution.outcome,
                 StoredWorkflowModelResolutionOutcome::Unavailable(model)
-                    if model.reason == signal_harness::ModelUnavailableReason::ModelNotKnown
+                    if model.reason == signal_orchestrate::ModelUnavailableReason::ModelNotKnown
             )
         });
         if resolved && unavailable {

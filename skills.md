@@ -1,7 +1,7 @@
 # orchestrate skill
 
 Work here when the change concerns typed workspace coordination: roles, claims,
-handoff tasks, lock projections, or the `orchestrate` CLI.
+handoffs, lanes, agents, worktrees, or either `orchestrate` CLI.
 
 Rules for work here:
 
@@ -10,12 +10,10 @@ Rules for work here:
 - Keep runtime message delivery in `persona-router`.
 - Keep harness lifecycle in `persona-harness`.
 - Keep the ordinary and meta policy clients separate: `orchestrate`
-  accepts `signal-orchestrate` NOTA and `meta-orchestrate` accepts
-  `meta-signal-orchestrate` NOTA. Do not add tier auto-routing back to
+  accepts `signal-orchestrate` Dotos and `meta-orchestrate` accepts
+  `meta-signal-orchestrate` Dotos. Do not add tier auto-routing back to
   either client.
 - This component owns **its own** `sema-engine` database file
   (`orchestrate.sema`). `OrchestrateService` serializes today's
-  request handling; the orchestration state actor becomes the long-lived
-  sequencer when the daemon is wired. There is no shared cross-component DB.
-- Lock files are projections for human and cross-harness visibility,
-  regenerated from the typed records on commit.
+  request handling through the daemon's one service mutex. There is no shared
+  cross-component database and no second claim-file state owner.

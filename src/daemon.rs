@@ -1,90 +1,178 @@
-//! Orchestrate's daemon hooks — the only daemon code orchestrate hand-writes.
+//! Direct typed daemon boundary for the Orchestrator.
 //!
-//! The uniform daemon skeleton (argv parsing, async task-backed multi-listener
-//! binding, the kameo `EngineActor` that owns the engine, the
-//! decode -> ask -> encode spine, and the `ExitReport` entry) is emitted into
-//! `src/schema/daemon.rs` by schema-rust's daemon emitter. Orchestrate
-//! fills only the record-1488 escape hatches through
-//! `impl ComponentDaemon for OrchestrateDaemon`: how to load its binary
-//! `Configuration`, how to open its Store/Engine (`build_runtime`), how one
-//! working `Input` becomes one `Output`, and the owner-only meta request hook.
-//!
-//! The engine is `OrchestrateService`, owned by the generated `EngineActor`.
-//! The actor mailbox serialises every request, so each handler holds `&mut
-//! Engine` and no component-internal lock is required.
+//! Each socket decodes its canonical contract Frame, executes the request on
+//! the single sema-owning service, and returns a Frame from the same contract.
 
-use std::path::PathBuf;
+use std::{
+    fmt::{Display, Formatter},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
-use thiserror::Error;
-use tokio::io::AsyncWriteExt;
+use signal_frame::{LogVariant, OperationDispatchError, Request, ShortHeader, WireRoute};
+use tokio::{io::AsyncWriteExt, sync::Mutex};
 use triad_runtime::{
-    AcceptedConnection, ConnectionContext, FrameBody as LengthPrefixedFrameBody, FrameError,
-    LengthPrefixedCodec, ListenerError,
+    AcceptedConnection, AsyncListenerSocket, AsyncMultiConnectionRuntime, AsyncMultiListenerDaemon,
+    AsyncMultiListenerDaemonError, BindingSurface, FrameBody as TransportBody, LengthPrefixedCodec,
+    MaximumFrameLength, RequestErrorLog, SocketMode,
 };
 
-use meta_signal_orchestrate::schema::lib::{
-    EngineRefusal as MetaEngineRefusal, Input as MetaInput, Output as MetaOutput,
-    SignalFrameError as MetaSignalFrameError,
-};
-use signal_orchestrate::schema::lib::{Input, Output, SignalFrameError};
-
-use crate::schema::daemon::ComponentDaemon;
 use crate::{
-    ConfigurationError, DaemonConfiguration, Error, OrchestrateLayout, OrchestrateService,
-    PublicSocketRetirement, UpgradeRequestFrame,
+    DaemonConfiguration, Error, OrchestrateLayout, OrchestrateService, PublicSocketRetirement,
+    UpgradeRequestFrame,
 };
 
-/// The type-level selector for orchestrate's emitted daemon. It carries no
-/// runtime data — it is the marker the emitted `DaemonCommand<OrchestrateDaemon>`
-/// and the generated runtime dispatch on, selecting orchestrate's
-/// `Configuration` / `Engine` / `Error` types through the `ComponentDaemon`
-/// associated types.
-#[derive(Debug)]
-pub struct OrchestrateDaemon;
+const MAXIMUM_REQUEST_FRAME_BYTES: usize = 8 * 1024 * 1024;
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
+const OWNER_ONLY_SOCKET_MODE: u32 = 0o600;
 
-/// Orchestrate's daemon error: the engine-facing variants the emitted spine
-/// needs (`From<FrameError>` / `From<SignalFrameError>` /
-/// `From<EngineRequestError>`) plus orchestrate's domain error. The emitted
-/// `DaemonError<OrchestrateDaemon>` wraps this under its `Component` arm.
-#[derive(Debug, Error)]
-pub enum OrchestrateDaemonError {
-    #[error("daemon IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("daemon frame error: {0}")]
-    Frame(#[from] FrameError),
-
-    #[error("daemon listener error: {0}")]
-    Listener(#[from] ListenerError),
-
-    #[error("daemon signal frame error: {0}")]
-    SignalFrame(#[from] SignalFrameError),
-
-    #[error("daemon meta signal frame error: {0}")]
-    MetaSignalFrame(#[from] MetaSignalFrameError),
-
-    #[error("engine actor request error: {0}")]
-    EngineRequest(#[from] triad_runtime::EngineRequestError),
-
-    #[error("orchestrate engine error: {0}")]
-    Engine(#[from] Error),
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ListenerTier {
+    Working,
+    Meta,
+    Upgrade,
 }
 
-impl ComponentDaemon for OrchestrateDaemon {
-    type Configuration = DaemonConfiguration;
-    type ConfigurationError = ConfigurationError;
-    type Engine = OrchestrateService;
-    type Error = OrchestrateDaemonError;
+impl Display for ListenerTier {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Working => formatter.write_str("working"),
+            Self::Meta => formatter.write_str("meta"),
+            Self::Upgrade => formatter.write_str("upgrade"),
+        }
+    }
+}
 
-    const PROCESS_NAME: &'static str = "orchestrate-daemon";
+#[derive(Clone)]
+struct OrchestratorRuntime {
+    service: Arc<Mutex<OrchestrateService>>,
+}
 
-    fn load_configuration(
-        _path: &std::path::Path,
-    ) -> Result<Self::Configuration, Self::ConfigurationError> {
-        Err(ConfigurationError::ConfigurationFileBoundaryRemoved)
+impl OrchestratorRuntime {
+    fn new(service: OrchestrateService) -> Self {
+        Self {
+            service: Arc::new(Mutex::new(service)),
+        }
     }
 
-    fn build_runtime(configuration: &Self::Configuration) -> Result<Self::Engine, Self::Error> {
+    async fn handle_working(
+        &self,
+        mut connection: AcceptedConnection,
+    ) -> Result<(), OrchestrateDaemonError> {
+        let body = Self::read_body(&mut connection).await?;
+        let frame = signal_orchestrate::OrchestrateFrame::decode(body.bytes())?;
+        let short_header = frame.short_header();
+        let signal_orchestrate::OrchestrateFrameBody::Request { exchange, request } =
+            frame.into_body()
+        else {
+            return Err(OrchestrateDaemonError::UnexpectedFrame { tier: "working" });
+        };
+        let route = validate_request_route(short_header, &request)?;
+        let reply = self.service.lock().await.handle_request(request).await;
+        let frame = signal_orchestrate::OrchestrateFrame::new(
+            route,
+            signal_orchestrate::OrchestrateFrameBody::Reply { exchange, reply },
+        );
+        Self::write_body(&mut connection, frame.encode()?).await
+    }
+
+    async fn handle_meta(
+        &self,
+        mut connection: AcceptedConnection,
+    ) -> Result<(), OrchestrateDaemonError> {
+        let body = Self::read_body(&mut connection).await?;
+        let frame = meta_signal_orchestrate::Frame::decode(body.bytes())?;
+        let short_header = frame.short_header();
+        let meta_signal_orchestrate::FrameBody::Request { exchange, request } = frame.into_body()
+        else {
+            return Err(OrchestrateDaemonError::UnexpectedFrame { tier: "meta" });
+        };
+        let route = validate_request_route(short_header, &request)?;
+        let reply = self.service.lock().await.handle_meta_request(request).await;
+        let frame = meta_signal_orchestrate::Frame::new(
+            route,
+            meta_signal_orchestrate::FrameBody::Reply { exchange, reply },
+        );
+        Self::write_body(&mut connection, frame.encode()?).await
+    }
+
+    async fn handle_upgrade(
+        &self,
+        mut connection: AcceptedConnection,
+    ) -> Result<(), OrchestrateDaemonError> {
+        let body = Self::read_body(&mut connection).await?;
+        let (route, exchange, request) = UpgradeRequestFrame::decode(body.bytes())?.into_parts();
+        let reply = self.service.lock().await.handle_upgrade_request(request)?;
+        let frame = UpgradeRequestFrame::encode_reply(route, exchange, reply)?;
+        Self::write_body(&mut connection, frame).await
+    }
+
+    async fn read_body(
+        connection: &mut AcceptedConnection,
+    ) -> Result<TransportBody, OrchestrateDaemonError> {
+        let codec = LengthPrefixedCodec::new(MaximumFrameLength::new(MAXIMUM_REQUEST_FRAME_BYTES));
+        tokio::time::timeout(
+            REQUEST_READ_TIMEOUT,
+            codec.read_body_async(connection.stream_mut()),
+        )
+        .await
+        .map_err(|_| OrchestrateDaemonError::RequestReadTimedOut)?
+        .map_err(OrchestrateDaemonError::from)
+    }
+
+    async fn write_body(
+        connection: &mut AcceptedConnection,
+        bytes: Vec<u8>,
+    ) -> Result<(), OrchestrateDaemonError> {
+        let codec = LengthPrefixedCodec::new(MaximumFrameLength::new(MAXIMUM_REQUEST_FRAME_BYTES));
+        codec
+            .write_body_async(connection.stream_mut(), &TransportBody::new(bytes))
+            .await?;
+        connection.stream_mut().flush().await?;
+        Ok(())
+    }
+}
+
+fn validate_request_route<Payload>(
+    short_header: ShortHeader,
+    request: &Request<Payload>,
+) -> Result<WireRoute, OrchestrateDaemonError>
+where
+    Payload: LogVariant,
+{
+    let expected = request.route()?;
+    let actual = short_header.route();
+    if expected != actual {
+        return Err(OperationDispatchError::HeaderRouteMismatch { expected, actual }.into());
+    }
+    Ok(expected)
+}
+
+impl AsyncMultiConnectionRuntime for OrchestratorRuntime {
+    type Listener = ListenerTier;
+    type Error = OrchestrateDaemonError;
+
+    async fn handle_connection(
+        &self,
+        listener: Self::Listener,
+        connection: AcceptedConnection,
+    ) -> Result<(), Self::Error> {
+        match listener {
+            ListenerTier::Working => self.handle_working(connection).await,
+            ListenerTier::Meta => self.handle_meta(connection).await,
+            ListenerTier::Upgrade => self.handle_upgrade(connection).await,
+        }
+    }
+}
+
+pub struct OrchestrateDaemon {
+    configuration: DaemonConfiguration,
+    service: OrchestrateService,
+}
+
+impl OrchestrateDaemon {
+    pub fn new(configuration: DaemonConfiguration) -> Result<Self, OrchestrateDaemonError> {
         let service = OrchestrateService::open_with_layout(
             &crate::StoreLocation::new(configuration.store_path.as_str()),
             OrchestrateLayout::new(
@@ -106,96 +194,72 @@ impl ComponentDaemon for OrchestrateDaemon {
                 .messenger_working_socket_path()
                 .map(|path| PathBuf::from(path.as_str())),
         );
-        Ok(service)
+        Ok(Self {
+            configuration,
+            service,
+        })
     }
 
-    async fn handle_working_input<'connection>(
-        engine: &'connection mut Self::Engine,
-        input: Input,
-        _connection: &'connection ConnectionContext,
-    ) -> Result<Output, Self::Error> {
-        Ok(engine.handle_signal_input(input).await?)
-    }
-
-    /// Serve one owner-only meta connection: decode a meta `Input` off the
-    /// accepted stream, drive it through the meta nexus path, and write the meta
-    /// `Output` back. Routing the whole connection through the engine actor
-    /// serialises meta policy traffic with the working state — correct for
-    /// low-volume owner-only traffic.
-    async fn handle_meta_connection(
-        engine: &mut Self::Engine,
-        mut connection: AcceptedConnection,
-    ) -> Result<(), Self::Error> {
-        let frame = LengthPrefixedCodec::default()
-            .read_body_async(connection.stream_mut())
-            .await?
-            .into_bytes();
-        let (_route, input) = MetaInput::decode_signal_frame(&frame)?;
-        // Answer every decoded meta request with a complete frame: the
-        // ordinary output, or the typed refusal when the engine failed — a
-        // closed socket with no reply is indistinguishable from daemon death
-        // on the caller side (the working tier gets the same behavior from
-        // the generated spine).
-        let output: MetaOutput = match engine.handle_signal_meta_input(input).await {
-            Ok(output) => output,
-            Err(error) => {
-                let refusal = MetaEngineRefusal::rejected(error.to_string());
-                if let Ok(refusal_frame) = refusal.encode_signal_frame() {
-                    let _ = LengthPrefixedCodec::default()
-                        .write_body_async(
-                            connection.stream_mut(),
-                            &LengthPrefixedFrameBody::new(refusal_frame),
-                        )
-                        .await;
-                    let _ = connection.stream_mut().flush().await;
-                }
-                return Err(error.into());
-            }
-        };
-        LengthPrefixedCodec::default()
-            .write_body_async(
-                connection.stream_mut(),
-                &LengthPrefixedFrameBody::new(output.encode_signal_frame()?),
+    pub async fn run_async(
+        self,
+    ) -> Result<(), AsyncMultiListenerDaemonError<OrchestrateDaemonError>> {
+        let listeners = [
+            AsyncListenerSocket::new(
+                ListenerTier::Working,
+                self.configuration.socket_path().to_path_buf(),
             )
-            .await?;
-        connection
-            .stream_mut()
-            .flush()
-            .await
-            .map_err(FrameError::from)?;
-        Ok(())
-    }
-
-    /// Serve one owner-only upgrade connection: decode a version-handover
-    /// contract `Frame` off the accepted stream, validate its short header
-    /// against the operation root, drive the handover state machine on the
-    /// `&mut` engine (which retires the public sockets when a handover
-    /// finalizes), and write the contract reply `Frame` back. The upgrade tier
-    /// speaks the version-handover *contract* wire (not a schema-emitted frame)
-    /// because the handover protocol is shared across components and is not part
-    /// of orchestrate's own signal schema.
-    async fn handle_upgrade_connection(
-        engine: &mut Self::Engine,
-        mut connection: AcceptedConnection,
-    ) -> Result<(), Self::Error> {
-        let body = LengthPrefixedCodec::default()
-            .read_body_async(connection.stream_mut())
-            .await?
-            .into_bytes();
-        let (exchange, request) = UpgradeRequestFrame::decode(&body)?.into_parts();
-        let reply = engine.handle_upgrade_request(request)?;
-        let response = UpgradeRequestFrame::encode_reply(exchange, reply)?;
-        LengthPrefixedCodec::default()
-            .write_body_async(
-                connection.stream_mut(),
-                &LengthPrefixedFrameBody::new(response),
+            .with_socket_mode(SocketMode::new(OWNER_ONLY_SOCKET_MODE)),
+            AsyncListenerSocket::new(
+                ListenerTier::Meta,
+                self.configuration
+                    .meta_socket_path()
+                    .expect("meta socket is part of the typed configuration")
+                    .to_path_buf(),
             )
-            .await?;
-        connection
-            .stream_mut()
-            .flush()
-            .await
-            .map_err(FrameError::from)?;
-        Ok(())
+            .with_socket_mode(SocketMode::new(OWNER_ONLY_SOCKET_MODE)),
+            AsyncListenerSocket::new(
+                ListenerTier::Upgrade,
+                self.configuration
+                    .upgrade_socket_path()
+                    .expect("upgrade socket is part of the typed configuration")
+                    .to_path_buf(),
+            )
+            .with_socket_mode(SocketMode::new(OWNER_ONLY_SOCKET_MODE)),
+        ];
+        AsyncMultiListenerDaemon::new(
+            listeners,
+            OrchestratorRuntime::new(self.service),
+            RequestErrorLog::new("orchestrate-daemon"),
+        )
+        .with_concurrency_limit(self.configuration.request_concurrency_limit())
+        .run()
+        .await
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OrchestrateDaemonError {
+    #[error("daemon IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("length-prefixed frame error: {0}")]
+    TransportFrame(#[from] triad_runtime::FrameError),
+
+    #[error("signal frame error: {0}")]
+    SignalFrame(#[from] signal_frame::FrameError),
+
+    #[error("signal wire route error: {0}")]
+    WireRoute(#[from] signal_frame::WireRouteError),
+
+    #[error("signal operation dispatch error: {0}")]
+    OperationDispatch(#[from] signal_frame::OperationDispatchError),
+
+    #[error("orchestration engine error: {0}")]
+    Engine(#[from] Error),
+
+    #[error("expected a request frame on the {tier} socket")]
+    UnexpectedFrame { tier: &'static str },
+
+    #[error("request frame read timed out")]
+    RequestReadTimedOut,
 }

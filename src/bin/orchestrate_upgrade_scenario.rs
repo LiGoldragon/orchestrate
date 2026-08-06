@@ -6,8 +6,7 @@ use orchestrate::{
     SessionIdentifier, StoredClaim, StoredLaneRegistration, TimestampNanos, WirePath,
 };
 use signal_frame::{
-    ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as EnvelopeReply, RequestPayload,
-    SessionEpoch, SubReply,
+    ExchangeIdentifier, ExchangeLane, LaneSequence, Reply as EnvelopeReply, SessionEpoch, SubReply,
 };
 use signal_version_handover::{
     CompletionReport, DivergencePayload, DivergenceReason, Frame, FrameBody, HandoverMarker,
@@ -82,8 +81,8 @@ impl UpgradeScenario {
             3,
             Operation::Divergence(DivergencePayload {
                 component: component.clone(),
-                source_version: initial_marker.schema_hash,
-                target_version: initial_marker.schema_hash,
+                source_version: initial_marker.contract_version,
+                target_version: initial_marker.contract_version,
                 reason: DivergenceReason::TargetUnavailable,
                 kind: RecordKind::new("State"),
                 payload: vec![1],
@@ -95,16 +94,16 @@ impl UpgradeScenario {
                 4,
                 Operation::Mirror(MirrorPayload {
                     component: component.clone(),
-                    source_version: initial_marker.schema_hash,
-                    target_version: initial_marker.schema_hash,
+                    source_version: initial_marker.contract_version,
+                    target_version: initial_marker.contract_version,
                     kind: RecordKind::new("State"),
                     payload: vec![1],
                 }),
             )?,
-            HandoverRejectionReason::SchemaMismatch,
+            HandoverRejectionReason::ContractVersionMismatch,
         )?;
 
-        let payload = mirror_payload(initial_marker.schema_hash)?;
+        let payload = mirror_payload(initial_marker.contract_version)?;
         expect_mirror_acknowledgement(self.request(5, Operation::Mirror(payload))?, &component)?;
         let restored_marker = self.marker(6, component.clone())?;
         expect_recovered(
@@ -162,7 +161,7 @@ impl UpgradeScenario {
         expect_rejection(
             self.request(
                 23,
-                Operation::Mirror(mirror_payload(accepted_marker.schema_hash)?),
+                Operation::Mirror(mirror_payload(accepted_marker.contract_version)?),
             )?,
             HandoverRejectionReason::NotReady,
         )?;
@@ -211,11 +210,10 @@ impl UpgradeScenario {
             ExchangeLane::Connector,
             LaneSequence::new(sequence),
         );
-        let request = operation.into_request();
-        let frame = Frame::with_short_header(
-            request.short_header(),
-            FrameBody::Request { exchange, request },
-        );
+        let frame = operation
+            .into_frame(exchange)
+            .map_err(|error| error.to_string())?;
+        let request_route = frame.short_header().route();
         let bytes = frame.encode().map_err(|error| error.to_string())?;
         let mut stream = UnixStream::connect(&self.socket).map_err(|error| error.to_string())?;
         let codec = LengthPrefixedCodec::default();
@@ -227,9 +225,22 @@ impl UpgradeScenario {
             .map_err(|error| error.to_string())?
             .into_bytes();
         let frame = Frame::decode(&response).map_err(|error| error.to_string())?;
-        let FrameBody::Reply { reply, .. } = frame.into_body() else {
+        let reply_route = frame.short_header().route();
+        let FrameBody::Reply {
+            exchange: reply_exchange,
+            reply,
+        } = frame.into_body()
+        else {
             return Err("upgrade server returned a request frame".to_owned());
         };
+        if reply_exchange != exchange {
+            return Err("upgrade server returned the wrong exchange identifier".to_owned());
+        }
+        if reply_route != request_route {
+            return Err(format!(
+                "upgrade server returned route {reply_route:?}, expected {request_route:?}"
+            ));
+        }
         match reply {
             EnvelopeReply::Accepted { per_operation, .. } => match per_operation.into_head() {
                 SubReply::Ok(reply) => Ok(reply),

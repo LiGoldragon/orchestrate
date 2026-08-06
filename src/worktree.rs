@@ -34,8 +34,7 @@ impl<'tables> WorktreeRegistry<'tables> {
         ))
     }
 
-    /// Kept for wire compatibility. It observes only durable rows and makes no
-    /// state or host change.
+    /// Observe the durable worktree rows without changing state or host facts.
     pub fn refresh(&self) -> Result<MetaOrchestrateReply> {
         let count = self.tables.worktree_records()?.len().min(u32::MAX as usize) as u32;
         Ok(MetaOrchestrateReply::WorktreeIndexRefreshed(

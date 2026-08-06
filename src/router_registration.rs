@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use signal_frame::{
-    ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload, SessionEpoch, SubReply,
+    ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, SessionEpoch, SubReply, WireRoute,
 };
 use signal_orchestrate::OrchestratorAgentIdentifier;
 use signal_router::{
@@ -74,7 +74,7 @@ impl RouterActorRegistration {
         reachability: &StoredAgentReachability,
     ) -> Actor {
         Actor::new(
-            ActorIdentifier::new(agent.as_str()),
+            ActorIdentifier::new(agent.as_str().to_owned()),
             u64::from(reachability.harness_pid),
             Some(EndpointTransport::new(
                 Self::endpoint_kind(reachability.endpoint_kind),
@@ -111,10 +111,9 @@ impl RouterActorRegistration {
             .and_then(|()| stream.set_write_timeout(Some(Self::EXCHANGE_TIMEOUT)))
             .map_err(|error| RouterRegistrationDegradation::Unreachable(error.to_string()))?;
         let codec = LengthPrefixedCodec::default();
-        let request = Frame::new(FrameBody::Request {
-            exchange: Self::exchange_identifier(),
-            request: input.into_request(),
-        });
+        let exchange = Self::exchange_identifier();
+        let request = input.into_frame(exchange);
+        let route = request.short_header().route();
         let request_bytes = request
             .encode()
             .map_err(|error| RouterRegistrationDegradation::Unreachable(error.to_string()))?;
@@ -129,15 +128,30 @@ impl RouterActorRegistration {
             .map_err(|error| RouterRegistrationDegradation::Unreachable(error.to_string()))?;
         let frame = Frame::decode(&body.into_bytes())
             .map_err(|error| RouterRegistrationDegradation::Unreachable(error.to_string()))?;
-        Self::output_from_reply(frame)
+        Self::output_from_reply(frame, exchange, route)
     }
 
-    fn output_from_reply(frame: Frame) -> Result<Output, RouterRegistrationDegradation> {
-        let FrameBody::Reply { reply, .. } = frame.into_body() else {
+    fn output_from_reply(
+        frame: Frame,
+        expected_exchange: ExchangeIdentifier,
+        expected_route: WireRoute,
+    ) -> Result<Output, RouterRegistrationDegradation> {
+        let actual_route = frame.short_header().route();
+        let FrameBody::Reply { exchange, reply } = frame.into_body() else {
             return Err(RouterRegistrationDegradation::Unreachable(
                 "router reply frame was not a reply body".to_string(),
             ));
         };
+        if exchange != expected_exchange {
+            return Err(RouterRegistrationDegradation::Unreachable(
+                "router reply carried a different exchange identifier".to_string(),
+            ));
+        }
+        if actual_route != expected_route {
+            return Err(RouterRegistrationDegradation::Unreachable(format!(
+                "router reply carried route {actual_route:?}, expected {expected_route:?}"
+            )));
+        }
         let Reply::Accepted { per_operation, .. } = reply else {
             return Err(RouterRegistrationDegradation::Unreachable(
                 "router rejected the RegisterActor frame".to_string(),

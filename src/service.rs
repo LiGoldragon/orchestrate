@@ -12,17 +12,16 @@ use signal_version_handover::{
 use version_projection::ComponentName;
 
 use crate::{
-    Error, MetaRequestExecution, MirrorSnapshot, MirrorVersions, OrchestrateLayout,
-    OrchestrateRequestExecution, OrchestrateTables, PublicSocketRetirement, Result, StoreLocation,
-    StoredDivergence,
+    Error, MirrorSnapshot, MirrorVersions, OrchestrateLayout, OrchestrateTables,
+    OrchestratorExecution, PublicSocketRetirement, Result, StoreLocation, StoredDivergence,
     handover::{HandoverClockReading, HandoverState},
 };
 
-/// The orchestrate engine. It is owned exclusively by the schema-emitted
-/// `EngineActor`, so the actor mailbox serialises every request and each
-/// handler holds `&mut self` — no component-internal lock is required. The
-/// write-sequence gate, observation-token counter, and handover state machine
-/// that previously needed a `Mutex` are now plain fields mutated under `&mut`.
+/// The sole orchestrate state owner.
+///
+/// The daemon serialises ordinary, meta, and handover requests around this
+/// service, and every operation executes with exclusive access to its Sema
+/// ledgers and state machines.
 pub struct OrchestrateService {
     tables: OrchestrateTables,
     layout: OrchestrateLayout,
@@ -104,8 +103,8 @@ impl OrchestrateService {
     /// Register the ordinary and meta socket paths the engine retires once a
     /// handover finalizes — the version-handover protocol's last step is to
     /// stop accepting public (working + meta) traffic on the retiring instance.
-    /// The daemon's `build_runtime` calls this with the configured paths; tests
-    /// that open the engine directly leave it empty (`none`).
+    /// Daemon construction supplies the configured paths; tests that open the
+    /// service directly leave it empty (`none`).
     pub fn with_public_socket_retirement(mut self, retirement: PublicSocketRetirement) -> Self {
         self.public_sockets = retirement;
         self
@@ -128,16 +127,30 @@ impl OrchestrateService {
         &mut self,
         request: Request<OrchestrateRequest>,
     ) -> Reply<OrchestrateReply> {
-        let (reply, _engine_error) = self.execute_request(request).await;
-        reply
+        let (reply, engine_error) = self.execute_request(request).await;
+        match engine_error {
+            Some(error) if error.is_caller_rejection() => {
+                Reply::committed(NonEmpty::single(SubReply::Ok(
+                    OrchestrateReply::PartialApplied(Self::caller_rejection(&error)),
+                )))
+            }
+            _ => reply,
+        }
     }
 
     pub async fn handle_meta_request(
         &mut self,
         request: Request<MetaOrchestrateRequest>,
     ) -> Reply<MetaOrchestrateReply> {
-        let (reply, _engine_error) = self.execute_meta_request(request).await;
-        reply
+        let (reply, engine_error) = self.execute_meta_request(request).await;
+        match engine_error {
+            Some(error) if error.is_caller_rejection() => {
+                Reply::committed(NonEmpty::single(SubReply::Ok(
+                    MetaOrchestrateReply::PartialApplied(Self::caller_rejection(&error)),
+                )))
+            }
+            _ => reply,
+        }
     }
 
     pub fn handle_upgrade_request(
@@ -180,16 +193,26 @@ impl OrchestrateService {
         &mut self,
         request: Request<OrchestrateRequest>,
     ) -> (Reply<OrchestrateReply>, Option<Error>) {
-        OrchestrateRequestExecution::new(self, request)
-            .execute()
-            .await
+        OrchestratorExecution::new(self).execute_ordinary(request)
     }
 
     async fn execute_meta_request(
         &mut self,
         request: Request<MetaOrchestrateRequest>,
     ) -> (Reply<MetaOrchestrateReply>, Option<Error>) {
-        MetaRequestExecution::new(self, request).execute().await
+        OrchestratorExecution::new(self).execute_meta(request)
+    }
+
+    fn caller_rejection(error: &Error) -> PartialApplied {
+        PartialApplied {
+            succeeded: Vec::new(),
+            failed: vec![signal_orchestrate::ApplicationFailure {
+                component: signal_orchestrate::DownstreamComponent::System,
+                reason: signal_orchestrate::ApplicationFailureReason::Unknown,
+                detail: signal_orchestrate::ScopeReason::from_text(error.to_string())
+                    .expect("error display is a non-empty scope reason"),
+            }],
+        }
     }
 
     pub fn roles(&self) -> Result<Vec<crate::StoredRole>> {
@@ -234,7 +257,7 @@ impl OrchestrateService {
         let clock = HandoverClockReading::now()?;
         Ok(HandoverMarker {
             component,
-            schema_hash: MirrorSnapshot::current_contract_version(),
+            contract_version: MirrorSnapshot::current_contract_version(),
             commit_sequence: sequence,
             write_counter: sequence,
             last_record_identifier: None,
@@ -379,7 +402,7 @@ impl OrchestrateService {
                 | Error::MirrorArchiveDecode { .. },
             ) => Ok(Self::reject_handover(
                 component,
-                HandoverRejectionReason::SchemaMismatch,
+                HandoverRejectionReason::ContractVersionMismatch,
             )),
             Err(error) => Err(error),
         }
@@ -411,14 +434,14 @@ impl OrchestrateService {
             } => match per_operation.into_head() {
                 SubReply::Ok(payload) => Ok(payload),
                 SubReply::Invalidated | SubReply::Failed { .. } | SubReply::Skipped => {
-                    Err(Error::ExecutorReplyNotCommitted)
+                    Err(Error::OrchestrationRequestNotCommitted)
                 }
             },
             Reply::Accepted { .. } => match engine_error {
                 Some(error) => Err(error),
-                None => Err(Error::ExecutorReplyNotCommitted),
+                None => Err(Error::OrchestrationRequestNotCommitted),
             },
-            Reply::Rejected { reason } => Err(Error::ExecutorReplyRejected { reason }),
+            Reply::Rejected { reason } => Err(Error::OrchestrationRequestRejected { reason }),
         }
     }
 }

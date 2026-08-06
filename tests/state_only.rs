@@ -3,7 +3,7 @@ use std::fs;
 use orchestrate::{
     ActivityFilter, ActivityQuery, LaneAssignment, LaneAuthority, LaneDetails, LaneIdentifier,
     LaneOwner, LaneStatus, Observation, OrchestrateReply, OrchestrateRequest, OrchestrateService,
-    OrchestrateTables, OrchestratorTopicPath, Role, RoleName, RoleToken, ScopeReason,
+    OrchestrateTables, OrchestratorTopicPath, Role, RoleIdentifier, RoleToken, ScopeReason,
     ScopeReference, SessionIdentifier, StoreLocation, StoredClaim, StoredLaneRegistration,
     TaskToken, TimestampNanos, WirePath,
 };
@@ -45,7 +45,7 @@ fn fixture_store(store: &StoreLocation) {
         .expect("write expired terminal fixture");
     tables
         .append_activity(
-            RoleName::from_wire_token("state-only-reader").expect("activity role"),
+            RoleIdentifier::from_wire_token("state-only-reader").expect("activity role"),
             ScopeReference::Path(
                 WirePath::from_absolute_path("/workspace/pure-read").expect("path"),
             ),
@@ -54,7 +54,7 @@ fn fixture_store(store: &StoreLocation) {
         .expect("write path activity");
     tables
         .append_activity(
-            RoleName::from_wire_token("state-only-reader").expect("activity role"),
+            RoleIdentifier::from_wire_token("state-only-reader").expect("activity role"),
             ScopeReference::Task(TaskToken::from_wire_token("primary-ahk.1").expect("task token")),
             ScopeReason::from_text("task activity").expect("activity reason"),
         )
@@ -178,15 +178,11 @@ fn production_source_has_no_repository_or_process_probe_or_configuration_file_pa
         !configuration.contains("std::fs"),
         "daemon configuration must not read or write a configuration file"
     );
-    assert!(
-        !root.join("bin/orchestrate_write_configuration.rs").exists(),
-        "the removed configuration writer must not be packaged"
-    );
     for client in ["bin/orchestrate.rs", "bin/meta_orchestrate.rs"] {
         let source = fs::read_to_string(root.join(client)).expect("read client source");
         assert!(
-            source.contains("ComponentArgument::NotaFile"),
-            "{client} must retain NotaFile request input"
+            source.contains("ComponentArgument::DotosFile"),
+            "{client} must retain DotosFile request input"
         );
         assert!(
             source.contains("ComponentArgument::SignalFile"),

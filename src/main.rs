@@ -1,7 +1,8 @@
-use orchestrate::schema::daemon::{DaemonBinder, DaemonError};
-use orchestrate::{ConfigurationError, DaemonConfiguration, OrchestrateDaemon};
+use orchestrate::{
+    ConfigurationError, DaemonConfiguration, OrchestrateDaemon, OrchestrateDaemonError,
+};
 use thiserror::Error;
-use triad_runtime::ExitReport;
+use triad_runtime::{AsyncMultiListenerDaemonError, ExitReport};
 
 fn main() -> std::process::ExitCode {
     ExitReport::new("orchestrate-daemon").from_result(run())
@@ -12,13 +13,9 @@ fn run() -> Result<(), StartupError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(DaemonError::Runtime)?;
-    runtime.block_on(async {
-        <OrchestrateDaemon as DaemonBinder>::bind(configuration)?
-            .run()
-            .await
-            .map_err(DaemonError::from)
-    })?;
+        .map_err(StartupError::Runtime)?;
+    let daemon = OrchestrateDaemon::new(configuration)?;
+    runtime.block_on(daemon.run_async())?;
     Ok(())
 }
 
@@ -27,6 +24,12 @@ enum StartupError {
     #[error("invalid typed daemon startup arguments: {0}")]
     Configuration(#[from] ConfigurationError),
 
-    #[error("daemon startup failed: {0}")]
-    Daemon(#[from] DaemonError<OrchestrateDaemon>),
+    #[error("runtime initialization failed: {0}")]
+    Runtime(std::io::Error),
+
+    #[error("orchestrate engine startup failed: {0}")]
+    Engine(#[from] OrchestrateDaemonError),
+
+    #[error("daemon failed: {0}")]
+    Daemon(#[from] AsyncMultiListenerDaemonError<OrchestrateDaemonError>),
 }

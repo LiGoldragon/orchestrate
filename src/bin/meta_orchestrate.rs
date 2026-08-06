@@ -1,13 +1,12 @@
 //! The meta-orchestrate CLI — the daemon's meta-policy client.
 //!
-//! It accepts one NOTA argument for the schema-emitted
-//! `meta_signal_orchestrate::schema::lib::Input`, exchanges it on
-//! `PERSONA_ORCHESTRATE_META_SOCKET`, and prints the meta `Output` as NOTA.
+//! It accepts one Dotos argument for the canonical privileged contract,
+//! exchanges it on `PERSONA_ORCHESTRATE_META_SOCKET`, and prints the reply.
 
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
-use meta_signal_orchestrate::schema::lib::Input;
-use nota::{NotaDecodeError, NotaSource};
+use dotos::{DotosDecodeError, DotosEncode, DotosSource};
+use meta_signal_orchestrate::MetaOrchestrateRequest;
 use orchestrate::{MetaSignalTransport, TransportError};
 use thiserror::Error;
 use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
@@ -37,9 +36,8 @@ impl MetaOrchestrateCli {
 
     fn run(&self) -> Result<(), MetaOrchestrateCliError> {
         let input = MetaRequestText::new(self.argument_text()?).parse()?;
-        let (_route, output) =
-            MetaSignalTransport::connect(self.socket_path()?)?.exchange(&input)?;
-        println!("{output}");
+        let output = MetaSignalTransport::connect(self.socket_path()?)?.exchange(&input)?;
+        println!("{}", output.to_dotos());
         Ok(())
     }
 
@@ -60,20 +58,20 @@ impl MetaOrchestrateCli {
     }
 
     fn argument_text(&self) -> Result<String, MetaOrchestrateCliError> {
-        match self.command.nota_argument()? {
-            ComponentArgument::InlineNota(argument) => Ok(argument.into_string()),
-            ComponentArgument::NotaFile(file) => Self::read_nota_file(file.into_path()),
-            ComponentArgument::SignalFile(file) => Self::read_nota_file(file.into_path()),
+        match self.command.dotos_argument()? {
+            ComponentArgument::InlineDotos(argument) => Ok(argument.into_string()),
+            ComponentArgument::DotosFile(file) => Self::read_dotos_file(file.into_path()),
+            ComponentArgument::SignalFile(file) => Self::read_dotos_file(file.into_path()),
         }
     }
 
-    fn read_nota_file(path: PathBuf) -> Result<String, MetaOrchestrateCliError> {
+    fn read_dotos_file(path: PathBuf) -> Result<String, MetaOrchestrateCliError> {
         fs::read_to_string(&path)
-            .map_err(|source| MetaOrchestrateCliError::ReadNotaFile { path, source })
+            .map_err(|source| MetaOrchestrateCliError::ReadDotosFile { path, source })
     }
 }
 
-/// The unparsed CLI NOTA argument awaiting meta-contract decoding.
+/// The unparsed CLI Dotos argument awaiting meta-contract decoding.
 struct MetaRequestText {
     text: String,
 }
@@ -83,10 +81,10 @@ impl MetaRequestText {
         Self { text }
     }
 
-    fn parse(self) -> Result<Input, MetaOrchestrateCliError> {
-        NotaSource::new(&self.text)
-            .parse::<Input>()
-            .map_err(MetaOrchestrateCliError::NotaDecode)
+    fn parse(self) -> Result<MetaOrchestrateRequest, MetaOrchestrateCliError> {
+        DotosSource::new(&self.text)
+            .parse::<MetaOrchestrateRequest>()
+            .map_err(MetaOrchestrateCliError::DotosDecode)
     }
 }
 
@@ -95,15 +93,15 @@ enum MetaOrchestrateCliError {
     #[error("component argument error: {0}")]
     Argument(#[from] ArgumentError),
 
-    #[error("failed to read NOTA file {}: {source}", path.display())]
-    ReadNotaFile {
+    #[error("failed to read Dotos file {}: {source}", path.display())]
+    ReadDotosFile {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
 
-    #[error("invalid meta orchestrate request NOTA: {0}")]
-    NotaDecode(NotaDecodeError),
+    #[error("invalid meta orchestrate request Dotos: {0}")]
+    DotosDecode(DotosDecodeError),
 
     #[error("HOME environment variable is unavailable: {source}")]
     HomeDirectory {

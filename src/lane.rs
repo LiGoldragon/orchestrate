@@ -6,8 +6,8 @@ use meta_signal_orchestrate::{
     LaneUnregistrationRequest, MetaOrchestrateReply, SessionClearRequest, SessionCleared,
 };
 use signal_orchestrate::{
-    LaneAuthority, LaneIdentifier, LaneProjection, LanesObserved, OrchestrateReply, Role, RoleName,
-    SessionProjection, SessionsObserved,
+    LaneAuthority, LaneIdentifier, LaneProjection, LanesObserved, OrchestrateReply, Role,
+    RoleIdentifier, SessionProjection, SessionsObserved,
 };
 
 use crate::{Error, OrchestrateTables, Result, StoredClaim, StoredLaneRegistration};
@@ -291,14 +291,14 @@ impl<'tables> LaneRegistry<'tables> {
         })
     }
 
-    pub(crate) fn role_name_for(role: &Role) -> Result<RoleName> {
+    pub(crate) fn role_identifier_for(role: &Role) -> Result<RoleIdentifier> {
         let rendered = role
             .tokens()
             .iter()
             .map(|token| Self::pascal_to_kebab(token.as_str()))
             .collect::<Vec<_>>()
             .join("-");
-        Ok(RoleName::from_wire_token(rendered)?)
+        Ok(RoleIdentifier::from_wire_token(rendered)?)
     }
 
     fn pascal_to_kebab(value: &str) -> String {

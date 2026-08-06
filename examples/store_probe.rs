@@ -2,7 +2,7 @@
 //!
 //! Usage: `store_probe <store-path>`. Prints either the open error (the
 //! reproduction path) or the surviving record counts plus every lane
-//! assignment (the migration proof). Read-only: it opens, reads, and drops.
+//! assignment (the layout-identity proof). Read-only: it opens, reads, and drops.
 
 use orchestrate::{OrchestrateTables, StoreLocation};
 

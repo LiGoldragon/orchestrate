@@ -2,9 +2,8 @@
 //!
 //! The daemon receives its configuration directly from its service manager as
 //! argv.  There is deliberately no materialized configuration file: the only
-//! files the daemon owns are its Sema store and any pre-migration preserve
-//! beside that store.  The service manager owns the parent directories for the
-//! store and Unix sockets.
+//! file the daemon owns is its Sema store. The service manager owns the parent
+//! directories for the store and Unix sockets.
 
 use std::{
     env,
@@ -391,11 +390,6 @@ pub enum ConfigurationError {
 
     #[error("invalid orchestrate path: {0}")]
     Path(#[from] Error),
-
-    #[error(
-        "the configuration-file startup boundary has been removed; pass typed daemon arguments"
-    )]
-    ConfigurationFileBoundaryRemoved,
 }
 
 #[cfg(test)]
@@ -437,19 +431,22 @@ mod tests {
     }
 
     #[test]
-    fn rejects_file_writer_shape_and_non_absolute_paths() {
-        let file_shape = DaemonConfiguration::from_arguments([
-            "/state/orchestrate/daemon.signal",
+    fn rejects_unlabeled_downstream_socket_and_non_absolute_paths() {
+        let unlabeled_downstream = DaemonConfiguration::from_arguments([
             "/state/orchestrate/orchestrate.sema",
             "/run/user/1000/orchestrate/orchestrate.sock",
             "/run/user/1000/orchestrate/orchestrate-owner.sock",
             "/run/user/1000/orchestrate/orchestrate-upgrade.sock",
             "/home/li/primary",
             "/git/github.com/LiGoldragon",
+            "/run/user/1000/message/message.sock",
         ]);
         assert!(
-            file_shape.is_err(),
-            "the removed signal-file argument is not accepted"
+            matches!(
+                unlabeled_downstream,
+                Err(super::ConfigurationError::UnlabeledDownstreamSocket { .. })
+            ),
+            "a downstream socket must name its role"
         );
 
         let relative = DaemonConfiguration::from_arguments([

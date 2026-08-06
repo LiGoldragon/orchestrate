@@ -7,11 +7,14 @@ pub enum Error {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("nota: {0}")]
-    Nota(#[from] nota::NotaDecodeError),
+    #[error("dotos: {0}")]
+    Dotos(#[from] dotos::DotosDecodeError),
 
     #[error("signal frame: {0}")]
     SignalFrame(#[from] signal_frame::FrameError),
+
+    #[error("signal wire route: {0}")]
+    WireRoute(#[from] signal_frame::WireRouteError),
 
     #[error("harness transport frame: {0}")]
     HarnessTransportFrame(triad_runtime::FrameError),
@@ -26,6 +29,18 @@ pub enum Error {
 
     #[error("unexpected harness frame: {got}")]
     UnexpectedHarnessFrame { got: String },
+
+    #[error("harness reply exchange mismatch: expected {expected:?}, got {actual:?}")]
+    HarnessReplyExchangeMismatch {
+        expected: signal_frame::ExchangeIdentifier,
+        actual: signal_frame::ExchangeIdentifier,
+    },
+
+    #[error("harness reply route mismatch: expected {expected:?}, got {actual:?}")]
+    HarnessReplyRouteMismatch {
+        expected: signal_frame::WireRoute,
+        actual: signal_frame::WireRoute,
+    },
 
     #[error("unexpected harness reply: {got}")]
     UnexpectedHarnessReply { got: String },
@@ -78,39 +93,14 @@ pub enum Error {
     #[error("sema engine: {0}")]
     SemaEngine(#[from] sema_engine::Error),
 
-    #[error("store migration: {message}")]
-    StoreMigration { message: String },
-
-    #[error("pre-migration preserve failed for {store}: {message}")]
-    PreMigrationPreserve { store: String, message: String },
-
-    #[error("orchestrate service sequence lock was poisoned")]
-    ServiceSequencePoisoned,
-
     #[error("path is not valid UTF-8")]
     PathIsNotUtf8,
 
     #[error("socket path exists and is not a socket: {0}")]
     SocketPathIsNotSocket(String),
 
-    #[error("invalid legacy lock line in {path}:{line_number}: {line}")]
-    InvalidLegacyLockLine {
-        path: String,
-        line_number: usize,
-        line: String,
-    },
-
     #[error("daemon socket handler expected a request frame")]
     SocketExpectedRequestFrame,
-
-    #[error("daemon listener: {0}")]
-    DaemonListener(#[from] triad_runtime::ListenerError),
-
-    #[error("daemon socket thread panicked")]
-    DaemonThreadPanicked,
-
-    #[error("signal frame is too large: {length} bytes")]
-    FrameTooLarge { length: usize },
 
     #[error("lane role vector must contain at least one token")]
     EmptyLaneRole,
@@ -134,30 +124,16 @@ pub enum Error {
     )]
     UnsupportedAtomicBatch { operation_count: usize },
 
-    #[error(
-        "operation plan has {command_count} commands; orchestrate supports one command per operation today"
-    )]
-    UnsupportedAtomicOperationPlan { command_count: usize },
-
-    #[error("executor rejected the request before execution: {reason}")]
-    ExecutorReplyRejected {
+    #[error("orchestration request was rejected: {reason}")]
+    OrchestrationRequestRejected {
         reason: signal_frame::RequestRejectionReason,
     },
 
-    #[error("executor did not commit the single operation")]
-    ExecutorReplyNotCommitted,
+    #[error("orchestration request did not commit its single operation")]
+    OrchestrationRequestNotCommitted,
 
-    #[error("schema bridge: {message}")]
-    SchemaBridge { message: String },
-
-    #[error("nexus replied on the {actual} tier while {expected} was expected")]
-    NexusReplyTierMismatch {
-        expected: &'static str,
-        actual: &'static str,
-    },
-
-    #[error("nexus did not produce a signal reply; action route: {route}")]
-    NexusDidNotReply { route: String },
+    #[error("orchestrator topic is not registered: {path}")]
+    OrchestratorTopicNotFound { path: String },
 
     #[error("worktree not found for archive transition: {path}")]
     WorktreeNotFound { path: String },
@@ -181,13 +157,12 @@ impl Error {
     /// Whether this error is the engine's rejection of a well-formed request the
     /// caller can act on — an invalid domain value (e.g. a session identifier
     /// that is not CamelCase alphanumeric) or a claim against an unregistered
-    /// lane — as opposed to an infrastructure failure or malformed-frame garbage
-    /// that decoded leniently into a request shape.
+    /// lane — as opposed to an infrastructure failure.
     ///
     /// The signal wire boundary routes caller rejections through the typed reply
-    /// channel so the reason is diagnosable at the call site, while
-    /// infrastructure and malformed-frame failures fail closed by dropping the
-    /// connection — misrouted or corrupt protocol traffic earns no reply.
+    /// channel so the reason is diagnosable at the call site. Other execution
+    /// errors abort the request batch; malformed or wrong-tier frames fail before
+    /// service execution.
     pub fn is_caller_rejection(&self) -> bool {
         matches!(
             self,

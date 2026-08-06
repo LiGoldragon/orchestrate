@@ -10,12 +10,8 @@
 //! non-fatal degradation the caller records as a divergence; the mint or
 //! registration itself still succeeds.
 //!
-//! Wire note: the push speaks the published `signal-message` contract. The
-//! messenger daemon's ingress decodes its own generated mirror of the same
-//! vocabulary; the two schemas emit identical frame headers by construction
-//! (same operation order and record shapes). The messenger-promotion packets
-//! make that convergence structural by moving the daemon ingress onto the
-//! contract crate. A daemon-local reply outside the contract's vocabulary
+//! Wire note: the push speaks the published `signal-message` contract directly.
+//! A daemon-local reply outside the contract's vocabulary
 //! (e.g. its `Error` report) decodes here as an unknown header and degrades
 //! as `Unreachable` with the decode detail.
 
@@ -24,11 +20,12 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use signal_frame::{
+    ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, SessionEpoch, SubReply, WireRoute,
+};
 use signal_message::{
-    AgentEndpoint, AgentEndpointBinding, AgentEndpointKind, AgentIdentifier,
-    AgentIdentityAssignment, EndpointPath, HarnessPid, HarnessStartTime, Input, MessageBody,
-    MessageKind, MessageRecipient, MessageSubmission, Output, ProcessPinSelection, ResumeSelection,
-    ThreadSelection,
+    Frame, FrameBody, Input, Output, z2VMBf, z2VNPW, z2VNcG, z2VPEW, z2VQY5, z2VRqE, z2VTiK,
+    z2VUs6, z2VVAD, z2VXMQ, z2VY2v, z2VYrY, z2Vari, z2Vcfd, z2VdsV, z2VevD,
 };
 use signal_orchestrate::OrchestratorAgentIdentifier;
 use triad_runtime::{FrameBody as LengthPrefixedFrameBody, LengthPrefixedCodec};
@@ -59,12 +56,12 @@ impl MessengerRegistryPush {
         &self,
         agent: &OrchestratorAgentIdentifier,
     ) -> Result<(), MessengerRegistrationDegradation> {
-        let assignment = AgentIdentityAssignment {
-            agent_identifier: AgentIdentifier::new(agent.as_str().to_string()),
-            process_pin_selection: ProcessPinSelection::None,
-            resume_selection: ResumeSelection::None,
+        let assignment = z2VevD {
+            field_0: z2VNPW::new(agent.as_str().to_string()),
+            field_1: z2Vcfd::z2VRLv,
+            field_2: z2VXMQ::z2VNZi,
         };
-        match self.exchange(Input::assign_agent_identity(assignment))? {
+        match self.exchange(Input::AssignAgentIdentity(assignment))? {
             Output::AgentIdentityAssigned(_) => Ok(()),
             Output::AgentRegistryRejected(rejection) => Err(
                 MessengerRegistrationDegradation::Rejected(format!("{rejection:?}")),
@@ -82,16 +79,16 @@ impl MessengerRegistryPush {
         agent: &OrchestratorAgentIdentifier,
         reachability: &StoredAgentReachability,
     ) -> Result<(), MessengerRegistrationDegradation> {
-        let binding = AgentEndpointBinding {
-            agent_identifier: AgentIdentifier::new(agent.as_str().to_string()),
-            agent_endpoint: AgentEndpoint {
-                agent_endpoint_kind: Self::endpoint_kind(reachability.endpoint_kind),
-                endpoint_path: EndpointPath::new(reachability.target.clone().into()),
+        let binding = z2VVAD {
+            field_0: z2VNPW::new(agent.as_str().to_string()),
+            field_1: z2VMBf {
+                field_0: Self::endpoint_kind(reachability.endpoint_kind),
+                field_1: z2VRqE::new(z2VQY5::new(reachability.target.clone())),
             },
-            harness_pid: HarnessPid::new(u64::from(reachability.harness_pid)),
-            harness_start_time: HarnessStartTime::new(reachability.harness_start_time),
+            field_2: z2VPEW::new(u64::from(reachability.harness_pid)),
+            field_3: z2VYrY::new(reachability.harness_start_time),
         };
-        match self.exchange(Input::bind_agent_endpoint(binding))? {
+        match self.exchange(Input::BindAgentEndpoint(binding))? {
             Output::AgentEndpointBound(_) => Ok(()),
             Output::AgentRegistryRejected(rejection) => Err(
                 MessengerRegistrationDegradation::Rejected(format!("{rejection:?}")),
@@ -106,19 +103,19 @@ impl MessengerRegistryPush {
     /// ledger for delivery to `recipient`'s bound endpoint (or inbox
     /// parking). The messenger stamps its own transport-level provenance at
     /// ingress; the semantic sender rides inside `body`, which the caller
-    /// composes as the NOTA delivery note.
+    /// composes as the Dotos delivery note.
     pub fn submit_message(
         &self,
         recipient: &OrchestratorAgentIdentifier,
         body: String,
     ) -> Result<(), MessengerRegistrationDegradation> {
-        let submission = MessageSubmission {
-            message_recipient: MessageRecipient::new(recipient.as_str().to_string()),
-            message_kind: MessageKind::Send,
-            message_body: MessageBody::new(body),
-            thread_selection: ThreadSelection::None,
+        let submission = z2VY2v {
+            field_0: z2Vari::new(recipient.as_str().to_string()),
+            field_1: z2VdsV::z2VXeo,
+            field_2: z2VNcG::new(body),
+            field_3: z2VTiK::z2VR2m,
         };
-        match self.exchange(Input::submit(submission))? {
+        match self.exchange(Input::Submit(submission))? {
             Output::SubmissionAccepted(_) => Ok(()),
             Output::SubmissionRejected(rejection) => Err(
                 MessengerRegistrationDegradation::Rejected(format!("{rejection:?}")),
@@ -132,10 +129,10 @@ impl MessengerRegistryPush {
     /// Map orchestrate's discovered endpoint kind onto the messenger's endpoint
     /// vocabulary. A terminal-cell reachability is the terminal/PTY transport
     /// plane; a harness-process reachability is the harness signal socket.
-    fn endpoint_kind(kind: StoredAgentEndpointKind) -> AgentEndpointKind {
+    fn endpoint_kind(kind: StoredAgentEndpointKind) -> z2VUs6 {
         match kind {
-            StoredAgentEndpointKind::TerminalCell => AgentEndpointKind::PtySocket,
-            StoredAgentEndpointKind::HarnessProcess => AgentEndpointKind::HarnessSocket,
+            StoredAgentEndpointKind::TerminalCell => z2VUs6::z2VZk6,
+            StoredAgentEndpointKind::HarnessProcess => z2VUs6::z2VTin,
         }
     }
 
@@ -152,8 +149,11 @@ impl MessengerRegistryPush {
             .and_then(|()| stream.set_write_timeout(Some(Self::EXCHANGE_TIMEOUT)))
             .map_err(|error| MessengerRegistrationDegradation::Unreachable(error.to_string()))?;
         let codec = LengthPrefixedCodec::default();
-        let request_bytes = input
-            .encode_signal_frame()
+        let exchange = Self::exchange_identifier();
+        let request = input.into_frame(exchange);
+        let route = request.short_header().route();
+        let request_bytes = request
+            .encode()
             .map_err(|error| MessengerRegistrationDegradation::Unreachable(error.to_string()))?;
         codec
             .write_body(&mut stream, &LengthPrefixedFrameBody::new(request_bytes))
@@ -164,9 +164,51 @@ impl MessengerRegistryPush {
         let body = codec
             .read_body(&mut stream)
             .map_err(|error| MessengerRegistrationDegradation::Unreachable(error.to_string()))?;
-        let (_route, output) = Output::decode_signal_frame(&body.into_bytes())
+        let frame = Frame::decode(&body.into_bytes())
             .map_err(|error| MessengerRegistrationDegradation::Unreachable(error.to_string()))?;
-        Ok(output)
+        Self::output_from_reply(frame, exchange, route)
+    }
+
+    fn output_from_reply(
+        frame: Frame,
+        expected_exchange: ExchangeIdentifier,
+        expected_route: WireRoute,
+    ) -> Result<Output, MessengerRegistrationDegradation> {
+        let actual_route = frame.short_header().route();
+        let FrameBody::Reply { exchange, reply } = frame.into_body() else {
+            return Err(MessengerRegistrationDegradation::Unreachable(
+                "messenger reply frame was not a reply body".to_string(),
+            ));
+        };
+        if exchange != expected_exchange {
+            return Err(MessengerRegistrationDegradation::Unreachable(
+                "messenger reply carried a different exchange identifier".to_string(),
+            ));
+        }
+        if actual_route != expected_route {
+            return Err(MessengerRegistrationDegradation::Unreachable(format!(
+                "messenger reply carried route {actual_route:?}, expected {expected_route:?}"
+            )));
+        }
+        let Reply::Accepted { per_operation, .. } = reply else {
+            return Err(MessengerRegistrationDegradation::Unreachable(
+                "messenger rejected the request frame".to_string(),
+            ));
+        };
+        match per_operation.into_head() {
+            SubReply::Ok(output) => Ok(output),
+            other => Err(MessengerRegistrationDegradation::Unreachable(format!(
+                "messenger sub-reply was not Ok: {other:?}"
+            ))),
+        }
+    }
+
+    fn exchange_identifier() -> ExchangeIdentifier {
+        ExchangeIdentifier::new(
+            SessionEpoch::new(0),
+            ExchangeLane::Connector,
+            LaneSequence::first(),
+        )
     }
 }
 

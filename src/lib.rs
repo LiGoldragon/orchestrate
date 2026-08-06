@@ -15,12 +15,9 @@ pub mod orchestrator_presentation;
 pub mod repository;
 pub mod role;
 pub mod router_registration;
-#[allow(clippy::large_enum_variant)]
-pub mod schema;
 pub mod service;
 pub mod signal_transport;
 pub mod socket_retirement;
-pub mod store_preserve;
 pub mod tables;
 pub mod upgrade_frame;
 pub mod workflow;
@@ -32,10 +29,7 @@ pub use configuration::{ConfigurationError, DaemonConfiguration};
 pub use daemon::{OrchestrateDaemon, OrchestrateDaemonError};
 pub use divergence::DivergenceLedger;
 pub use error::{Error, Result};
-pub use execution::{
-    MetaRequestExecution, OrchestrateNexusEngine, OrchestrateRequestExecution,
-    OrchestrateSemaEngine,
-};
+pub use execution::OrchestratorExecution;
 pub use handover::{MirrorSnapshot, MirrorVersions};
 pub use lane::LaneRegistry;
 pub use layout::OrchestrateLayout;
@@ -70,29 +64,26 @@ pub use signal_orchestrate::{
     OrchestratorAgentStatus, OrchestratorTopicPath, PartialApplied, PurposeText, PushedState,
     RepositoriesObserved, Repository, RepositoryHost, RepositoryIdentity, RepositoryIdentityGap,
     RepositoryIdentityState, RepositoryMainContended, RepositoryName, RepositoryOwner,
-    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleName,
-    RoleObservation, RoleRelease, RoleToken, ScopeReason, ScopeReference, SessionIdentifier,
-    SessionName, SessionsObserved, TaskToken, TeardownRefusal, TimestampNanos,
-    TopicAssignmentSource, TopicName, TopicSelection, WirePath, WorkflowReceiptProduced,
-    WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced, WorkflowRunDigest,
-    WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported, WorkflowRunObservation,
-    WorkflowRunObservationClosed, WorkflowRunObservationOpened, WorkflowRunObservationToken,
-    WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot, Worktree, WorktreeConcluded,
-    WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest, WorktreeRequestRejected,
-    WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus, WorktreeTeardownRefused,
-    WorktreesObserved,
+    ResolvedWorkflowRunRequest, Role, RoleClaim, RoleHandoff, RoleIdentifier, RoleRelease,
+    RoleToken, ScopeReason, ScopeReference, SessionIdentifier, SessionsObserved, TaskToken,
+    TeardownRefusal, TimestampNanos, TopicAssignmentSource, TopicName, TopicSelection, WirePath,
+    WorkflowReceiptProduced, WorkflowResolutionUnavailable, WorkflowResolvedReceiptProduced,
+    WorkflowRunDigest, WorkflowRunHandle, WorkflowRunLog, WorkflowRunLogReported,
+    WorkflowRunObservation, WorkflowRunObservationClosed, WorkflowRunObservationOpened,
+    WorkflowRunObservationToken, WorkflowRunRequest, WorkflowRunResolution, WorkflowRunSnapshot,
+    Worktree, WorktreeConcluded, WorktreeConclusion, WorktreeConclusionRequest, WorktreeRequest,
+    WorktreeRequestRejected, WorktreeRequestRejection, WorktreeScaffolded, WorktreeStatus,
+    WorktreeTeardownRefused, WorktreesObserved,
 };
 pub use signal_transport::{MetaSignalTransport, OrdinarySignalTransport, TransportError};
 pub use signal_version_handover::MirrorPayload;
 pub use socket_retirement::PublicSocketRetirement;
-pub use store_preserve::PreMigrationPreserve;
 pub use tables::{
     CURRENT_ACTIVITY_LIMIT, CURRENT_DIVERGENCE_LIMIT, CURRENT_ORCHESTRATOR_TRIAGE_LIMIT,
     OrchestrateTables, StoredActivity, StoredAgentEndpointKind, StoredAgentReachability,
-    StoredClaim, StoredDivergence, StoredGuidanceMagnitude, StoredLaneRegistration,
-    StoredOrchestratorAgent, StoredOrchestratorMessageKind, StoredOrchestratorTopic,
-    StoredOrchestratorTopicMembership, StoredOrchestratorTriageRecord, StoredRepository,
-    StoredRole, StoredTriageRejectionReason, StoredTriageVerdict,
+    StoredClaim, StoredDivergence, StoredLaneRegistration, StoredOrchestratorAgent,
+    StoredOrchestratorTopic, StoredOrchestratorTopicMembership, StoredOrchestratorTriageRecord,
+    StoredRepository, StoredRole, StoredTriageRejectionReason, StoredTriageVerdict,
     StoredWorkflowModelResolutionOutcome, StoredWorkflowRunResolution, StoredWorktree,
 };
 pub use upgrade_frame::UpgradeRequestFrame;

@@ -5,18 +5,18 @@ use crate::{
 use signal_orchestrate::{
     Activity, ClaimAcceptance, ClaimEntry, ClaimRejection, HandoffAcceptance, HandoffRejection,
     HandoffRejectionReason, LaneIdentifier, OrchestrateReply, ReleaseAcknowledgment, RoleClaim,
-    RoleHandoff, RoleName, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict, ScopeReference,
-    Worktree,
+    RoleHandoff, RoleIdentifier, RoleRelease, RoleSnapshot, RoleStatus, ScopeConflict,
+    ScopeReference, Worktree,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimState {
-    role: RoleName,
+    role: RoleIdentifier,
     scopes: Vec<ScopeReference>,
 }
 
 impl ClaimState {
-    pub fn new(role: RoleName) -> Self {
+    pub fn new(role: RoleIdentifier) -> Self {
         Self {
             role,
             scopes: Vec::new(),
@@ -33,7 +33,7 @@ impl ClaimState {
         self.scopes.iter().any(|current| current == scope)
     }
 
-    pub fn role(&self) -> RoleName {
+    pub fn role(&self) -> RoleIdentifier {
         self.role.clone()
     }
 }
@@ -50,7 +50,7 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_claim(&self, claim: RoleClaim) -> Result<OrchestrateReply> {
-        let claimant = ClaimLane::from_role_name(&claim.role)?.registered(self.tables)?;
+        let claimant = ClaimLane::from_role_identifier(&claim.role)?.registered(self.tables)?;
         self.tables.touch_lane(claimant.lane())?;
         let entries = self.tables.claim_records()?;
         let conflicts = Self::conflicts_for(&entries, &claim, claimant.lane())?;
@@ -98,7 +98,8 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_release(&self, release: RoleRelease) -> Result<OrchestrateReply> {
-        let released_lane = ClaimLane::from_role_name(&release.role)?.registered(self.tables)?;
+        let released_lane =
+            ClaimLane::from_role_identifier(&release.role)?.registered(self.tables)?;
         self.tables.touch_lane(released_lane.lane())?;
         let entries = self.tables.claim_records()?;
         let released_scopes = entries
@@ -139,8 +140,8 @@ impl<'tables> ClaimLedger<'tables> {
     }
 
     pub fn apply_handoff(&self, handoff: RoleHandoff) -> Result<OrchestrateReply> {
-        let from_lane = ClaimLane::from_role_name(&handoff.from)?.registered(self.tables)?;
-        let to_lane = ClaimLane::from_role_name(&handoff.to)?.registered(self.tables)?;
+        let from_lane = ClaimLane::from_role_identifier(&handoff.from)?.registered(self.tables)?;
+        let to_lane = ClaimLane::from_role_identifier(&handoff.to)?.registered(self.tables)?;
         self.tables.touch_lane(from_lane.lane())?;
         self.tables.touch_lane(to_lane.lane())?;
         let entries = self.tables.claim_records()?;
@@ -230,7 +231,7 @@ impl<'tables> ClaimLedger<'tables> {
             }) {
                 conflicts.push(ScopeConflict {
                     scope: scope.clone(),
-                    held_by: ClaimLane::new(entry.lane.clone()).as_role_name()?,
+                    held_by: ClaimLane::new(entry.lane.clone()).as_role_identifier()?,
                     held_reason: entry.reason.clone(),
                 });
             }
@@ -284,7 +285,7 @@ impl<'tables> ClaimLedger<'tables> {
             }) {
                 conflicts.push(ScopeConflict {
                     scope: scope.clone(),
-                    held_by: ClaimLane::new(entry.lane.clone()).as_role_name()?,
+                    held_by: ClaimLane::new(entry.lane.clone()).as_role_identifier()?,
                     held_reason: entry.reason.clone(),
                 });
             }
@@ -308,14 +309,14 @@ impl<'tables> ClaimLedger<'tables> {
     fn claims_for_role(
         entries: &[StoredClaim],
         lanes: &[StoredLaneRegistration],
-        role: &RoleName,
+        role: &RoleIdentifier,
         observed_at: signal_orchestrate::TimestampNanos,
     ) -> Vec<ClaimEntry> {
         let role_lanes = lanes
             .iter()
             .filter(|lane| lane.status == signal_orchestrate::LaneStatus::Active)
             .filter_map(|lane| {
-                LaneRegistry::role_name_for(&lane.assignment.owner.role)
+                LaneRegistry::role_identifier_for(&lane.assignment.owner.role)
                     .ok()
                     .filter(|owner| owner == role)
                     .map(|_| lane.assignment.lane.clone())
@@ -354,7 +355,7 @@ impl ClaimLane {
         Self { lane }
     }
 
-    fn from_role_name(role: &RoleName) -> Result<Self> {
+    fn from_role_identifier(role: &RoleIdentifier) -> Result<Self> {
         Ok(Self::new(LaneIdentifier::from_wire_token(
             role.as_wire_token().to_string(),
         )?))
@@ -369,8 +370,8 @@ impl ClaimLane {
         Ok(RegisteredClaimLane { lane: self.lane })
     }
 
-    fn as_role_name(&self) -> Result<RoleName> {
-        Ok(RoleName::from_wire_token(
+    fn as_role_identifier(&self) -> Result<RoleIdentifier> {
+        Ok(RoleIdentifier::from_wire_token(
             self.lane.as_wire_token().to_string(),
         )?)
     }

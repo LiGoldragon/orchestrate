@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use signal_orchestrate::{RoleName, WirePath};
+use signal_orchestrate::{RoleIdentifier, WirePath};
 
 use crate::{Error, Result};
 
@@ -25,17 +25,17 @@ impl OrchestrateLayout {
         }
     }
 
-    pub fn report_lane_path(&self, role: &RoleName) -> PathBuf {
+    pub fn report_lane_path(&self, role: &RoleIdentifier) -> PathBuf {
         self.workspace_root
             .join("reports")
             .join(role.as_wire_token())
     }
 
-    pub fn report_repository_name(&self, role: &RoleName) -> String {
+    pub fn report_repository_name(&self, role: &RoleIdentifier) -> String {
         format!("persona-role-{}-reports", role.as_wire_token())
     }
 
-    pub fn report_repository_path(&self, role: &RoleName) -> PathBuf {
+    pub fn report_repository_path(&self, role: &RoleIdentifier) -> PathBuf {
         self.git_index_root.join(self.report_repository_name(role))
     }
 }

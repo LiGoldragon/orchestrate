@@ -18,20 +18,20 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use nota_human::{Block, Delimiter, NotaBlock, NotaDecode, NotaDecodeError, NotaEncode};
+use dotos::{Block, Delimiter, DotosBlock, DotosDecode, DotosDecodeError, DotosEncode};
 use relative_age_display::{HumanReadableTime, RelativeAge};
-use signal_orchestrate::schema::lib::{
-    Activity, ActivityList, ClaimEntry, DurationNanos, HarnessKind, Input, LaneProjection,
-    LaneStatus, LanesObserved, MainIntegration, Output, PushedState, RoleSnapshot, RoleStatus,
-    ScopeReference, TeardownRefusal, TimestampNanos, Worktree, WorktreeConcluded, WorktreeStatus,
-    WorktreeTeardownRefused, WorktreesObserved,
+use signal_orchestrate::{
+    Activity, ActivityList, ClaimEntry, DurationNanos, HarnessKind, LaneProjection, LaneStatus,
+    LanesObserved, MainIntegration, OrchestrateReply, OrchestrateRequest, PushedState,
+    RoleSnapshot, RoleStatus, ScopeReference, TeardownRefusal, TimestampNanos, Worktree,
+    WorktreeConcluded, WorktreeStatus, WorktreeTeardownRefused, WorktreesObserved,
 };
 
 /// The requested ordinary-CLI response presentation.
 ///
-/// This is an invocation concern only. The daemon receives the same `Input`
-/// frame regardless of choice and continues to return its canonical `Output`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, nota::NotaDecode, nota::NotaEncode)]
+/// This is an invocation concern only. The daemon receives the same request
+/// frame regardless of choice and continues to return its canonical reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, dotos::DotosDecode, dotos::DotosEncode)]
 pub enum OrchestratorPresentation {
     Human,
     Canonical,
@@ -39,22 +39,22 @@ pub enum OrchestratorPresentation {
 
 /// The explicit one-argument CLI invocation form.
 ///
-/// Its legacy NOTA form is `(Explicit (Human (Observe Lanes)))` or `(Explicit
-/// (Canonical (Observe Lanes)))`. Existing ordinary contract input is the
-/// shorthand form and lowers to `Human` through [`ResolvedOrchestratorInvocation`].
-#[derive(Debug, Clone, PartialEq, Eq, nota::NotaDecode, nota::NotaEncode)]
+/// Its Dotos form is `Explicit.{Human (Observe Lanes)}` or
+/// `Explicit.{Canonical (Observe Lanes)}`. An unadorned ordinary contract request selects
+/// `Human` through [`ResolvedOrchestratorInvocation`].
+#[derive(Debug, Clone, PartialEq, Eq, dotos::DotosDecode, dotos::DotosEncode)]
 pub enum ExplicitOrchestratorInvocation {
-    Explicit(OrchestratorPresentation, Input),
+    Explicit(OrchestratorPresentation, OrchestrateRequest),
 }
 
 impl ExplicitOrchestratorInvocation {
     /// Make an explicit human presentation request.
-    pub fn human(input: Input) -> Self {
+    pub fn human(input: OrchestrateRequest) -> Self {
         Self::Explicit(OrchestratorPresentation::Human, input)
     }
 
     /// Make an explicit canonical presentation request.
-    pub fn canonical(input: Input) -> Self {
+    pub fn canonical(input: OrchestrateRequest) -> Self {
         Self::Explicit(OrchestratorPresentation::Canonical, input)
     }
 
@@ -72,12 +72,12 @@ impl ExplicitOrchestratorInvocation {
 /// One normalized CLI request after shorthand or explicit parsing.
 pub struct ResolvedOrchestratorInvocation {
     presentation: OrchestratorPresentation,
-    input: Input,
+    input: OrchestrateRequest,
 }
 
 impl ResolvedOrchestratorInvocation {
     /// Lower an ordinary contract input shorthand to human presentation.
-    pub fn human_shorthand(input: Input) -> Self {
+    pub fn human_shorthand(input: OrchestrateRequest) -> Self {
         Self {
             presentation: OrchestratorPresentation::Human,
             input,
@@ -85,7 +85,7 @@ impl ResolvedOrchestratorInvocation {
     }
 
     /// The unchanged daemon request carried by this invocation.
-    pub fn input(&self) -> &Input {
+    pub fn input(&self) -> &OrchestrateRequest {
         &self.input
     }
 
@@ -99,7 +99,7 @@ impl OrchestratorPresentation {
     /// Select a CLI-side rendering for one unchanged daemon reply.
     pub fn present<'output>(
         self,
-        output: &'output Output,
+        output: &'output OrchestrateReply,
     ) -> OrchestratorPresentationOutput<'output> {
         match self {
             Self::Canonical => OrchestratorPresentationOutput::Canonical(output),
@@ -141,7 +141,7 @@ impl ObservationClock {
     /// The age of one wire instant, saturating to zero when the stamp is ahead
     /// of this clock.
     fn age_of(self, timestamp: &TimestampNanos) -> HumanReadableTime {
-        self.idle_since_nanoseconds(*timestamp.payload())
+        self.idle_since_nanoseconds(timestamp.value())
     }
 
     /// The span between a raw epoch-nanosecond stamp and this clock, saturating
@@ -163,25 +163,25 @@ trait PresentedAge {
 
 impl PresentedAge for DurationNanos {
     fn presented_age(&self) -> HumanReadableTime {
-        RelativeAge::from_nanoseconds(*self.payload()).into_human_readable_time()
+        RelativeAge::from_nanoseconds(self.value()).into_human_readable_time()
     }
 }
 
 /// The rendered result of the single presentation pipeline.
 ///
-/// Human output uses the current typed NOTA codec. Canonical output retains the
+/// Human output uses the current typed Dotos codec. Canonical output retains the
 /// daemon contract's existing codec byte-for-byte for programmatic callers.
 pub enum OrchestratorPresentationOutput<'output> {
     Human(HumanOutput),
-    Canonical(&'output Output),
+    Canonical(&'output OrchestrateReply),
 }
 
 impl OrchestratorPresentationOutput<'_> {
     /// Encode the selected presentation for stdout.
-    pub fn to_stdout_nota(&self) -> String {
+    pub fn to_stdout_dotos(&self) -> String {
         match self {
-            Self::Human(output) => output.to_nota(),
-            Self::Canonical(output) => <Output as nota::NotaEncode>::to_nota(output),
+            Self::Human(output) => output.to_dotos(),
+            Self::Canonical(output) => <OrchestrateReply as dotos::DotosEncode>::to_dotos(output),
         }
     }
 }
@@ -201,68 +201,70 @@ pub enum HumanOutput {
 impl HumanOutput {
     /// Project the reply variants that carry a temporal field. The rest have no
     /// time to render and stay canonical.
-    pub fn from_output(output: &Output, clock: ObservationClock) -> Option<Self> {
+    pub fn from_output(output: &OrchestrateReply, clock: ObservationClock) -> Option<Self> {
         match output {
-            Output::LanesObserved(lanes) => Some(Self::LanesObserved(
+            OrchestrateReply::LanesObserved(lanes) => Some(Self::LanesObserved(
                 HumanLaneAgeReport::from_observation(lanes),
             )),
-            Output::RoleSnapshot(snapshot) => Some(Self::RoleSnapshot(
+            OrchestrateReply::RoleSnapshot(snapshot) => Some(Self::RoleSnapshot(
                 HumanRoleReport::from_snapshot(snapshot, clock),
             )),
-            Output::WorktreesObserved(worktrees) => Some(Self::WorktreesObserved(
+            OrchestrateReply::WorktreesObserved(worktrees) => Some(Self::WorktreesObserved(
                 HumanWorktreeReport::from_observation(worktrees, clock),
             )),
-            Output::ActivityList(activities) => Some(Self::ActivityList(
+            OrchestrateReply::ActivityList(activities) => Some(Self::ActivityList(
                 HumanActivityReport::from_list(activities, clock),
             )),
-            Output::WorktreeScaffolded(scaffolded) => Some(Self::WorktreeScaffolded(
-                HumanWorktree::from_wire(scaffolded.payload(), clock),
+            OrchestrateReply::WorktreeScaffolded(scaffolded) => Some(Self::WorktreeScaffolded(
+                HumanWorktree::from_wire(&scaffolded.worktree, clock),
             )),
-            Output::WorktreeConcluded(concluded) => Some(Self::WorktreeConcluded(
+            OrchestrateReply::WorktreeConcluded(concluded) => Some(Self::WorktreeConcluded(
                 HumanWorktreeConclusion::from_wire(concluded, clock),
             )),
-            Output::WorktreeTeardownRefused(refused) => Some(Self::WorktreeTeardownRefused(
-                HumanWorktreeTeardownRefusal::from_wire(refused, clock),
-            )),
+            OrchestrateReply::WorktreeTeardownRefused(refused) => {
+                Some(Self::WorktreeTeardownRefused(
+                    HumanWorktreeTeardownRefusal::from_wire(refused, clock),
+                ))
+            }
             _ => None,
         }
     }
 
-    /// Decode the closed human projection from its current NOTA form.
-    fn from_variant_payload(block: &Block) -> Result<Self, NotaDecodeError> {
+    /// Decode the closed human projection from its current Dotos form.
+    fn from_variant_payload(block: &Block) -> Result<Self, DotosDecodeError> {
         let (head, payload) = block
             .as_application()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanOutput",
             })?;
         let variant = head
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanOutput",
             })?;
         match variant {
-            "LanesObserved" => Ok(Self::LanesObserved(HumanLaneAgeReport::from_nota_block(
+            "LanesObserved" => Ok(Self::LanesObserved(HumanLaneAgeReport::from_dotos_block(
                 payload,
             )?)),
-            "RoleSnapshot" => Ok(Self::RoleSnapshot(HumanRoleReport::from_nota_block(
+            "RoleSnapshot" => Ok(Self::RoleSnapshot(HumanRoleReport::from_dotos_block(
                 payload,
             )?)),
             "WorktreesObserved" => Ok(Self::WorktreesObserved(
-                HumanWorktreeReport::from_nota_block(payload)?,
+                HumanWorktreeReport::from_dotos_block(payload)?,
             )),
-            "ActivityList" => Ok(Self::ActivityList(HumanActivityReport::from_nota_block(
+            "ActivityList" => Ok(Self::ActivityList(HumanActivityReport::from_dotos_block(
                 payload,
             )?)),
-            "WorktreeScaffolded" => Ok(Self::WorktreeScaffolded(HumanWorktree::from_nota_block(
+            "WorktreeScaffolded" => Ok(Self::WorktreeScaffolded(HumanWorktree::from_dotos_block(
                 payload,
             )?)),
             "WorktreeConcluded" => Ok(Self::WorktreeConcluded(
-                HumanWorktreeConclusion::from_nota_block(payload)?,
+                HumanWorktreeConclusion::from_dotos_block(payload)?,
             )),
             "WorktreeTeardownRefused" => Ok(Self::WorktreeTeardownRefused(
-                HumanWorktreeTeardownRefusal::from_nota_block(payload)?,
+                HumanWorktreeTeardownRefusal::from_dotos_block(payload)?,
             )),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanOutput",
                 variant: other.to_owned(),
             }),
@@ -270,28 +272,28 @@ impl HumanOutput {
     }
 }
 
-impl NotaEncode for HumanOutput {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanOutput {
+    fn to_dotos(&self) -> String {
         match self {
-            Self::LanesObserved(report) => format!("LanesObserved.{}", report.to_nota()),
-            Self::RoleSnapshot(report) => format!("RoleSnapshot.{}", report.to_nota()),
-            Self::WorktreesObserved(report) => format!("WorktreesObserved.{}", report.to_nota()),
-            Self::ActivityList(report) => format!("ActivityList.{}", report.to_nota()),
+            Self::LanesObserved(report) => format!("LanesObserved.{}", report.to_dotos()),
+            Self::RoleSnapshot(report) => format!("RoleSnapshot.{}", report.to_dotos()),
+            Self::WorktreesObserved(report) => format!("WorktreesObserved.{}", report.to_dotos()),
+            Self::ActivityList(report) => format!("ActivityList.{}", report.to_dotos()),
             Self::WorktreeScaffolded(worktree) => {
-                format!("WorktreeScaffolded.{}", worktree.to_nota())
+                format!("WorktreeScaffolded.{}", worktree.to_dotos())
             }
             Self::WorktreeConcluded(conclusion) => {
-                format!("WorktreeConcluded.{}", conclusion.to_nota())
+                format!("WorktreeConcluded.{}", conclusion.to_dotos())
             }
             Self::WorktreeTeardownRefused(refusal) => {
-                format!("WorktreeTeardownRefused.{}", refusal.to_nota())
+                format!("WorktreeTeardownRefused.{}", refusal.to_dotos())
             }
         }
     }
 }
 
-impl NotaDecode for HumanOutput {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanOutput {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         Self::from_variant_payload(block)
     }
 }
@@ -309,8 +311,7 @@ impl HumanLaneAgeReport {
     pub fn from_observation(lanes: &LanesObserved) -> Self {
         Self {
             lanes: lanes
-                .payload()
-                .payload()
+                .lanes
                 .iter()
                 .map(HumanLaneAge::from_projection)
                 .collect(),
@@ -323,19 +324,19 @@ impl HumanLaneAgeReport {
     }
 }
 
-impl NotaEncode for HumanLaneAgeReport {
-    fn to_nota(&self) -> String {
-        Delimiter::SquareBracket.wrap(self.lanes.iter().map(NotaEncode::to_nota))
+impl DotosEncode for HumanLaneAgeReport {
+    fn to_dotos(&self) -> String {
+        Delimiter::SquareBracket.wrap(self.lanes.iter().map(DotosEncode::to_dotos))
     }
 }
 
-impl NotaDecode for HumanLaneAgeReport {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanLaneAgeReport {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         Ok(Self {
-            lanes: NotaBlock::new(block)
+            lanes: DotosBlock::new(block)
                 .expect_delimited(Delimiter::SquareBracket, "HumanLaneAgeReport")?
                 .iter()
-                .map(HumanLaneAge::from_nota_block)
+                .map(HumanLaneAge::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -358,12 +359,12 @@ pub struct HumanLaneAge {
 impl HumanLaneAge {
     /// Project a wire lane observation into typed human elapsed values.
     pub fn from_projection(projection: &LaneProjection) -> Self {
-        let assignment = &projection.lane_registration.lane_assignment;
+        let assignment = &projection.registration.assignment;
         Self {
-            session: assignment.session_identifier.payload().clone(),
-            lane: assignment.lane_identifier.payload().clone(),
-            status: HumanLaneStatus::from(&projection.lane_registration.lane_status),
-            elapsed: projection.duration_nanos.presented_age(),
+            session: assignment.session.as_str().to_owned(),
+            lane: assignment.lane.as_str().to_owned(),
+            status: HumanLaneStatus::from(&projection.registration.status),
+            elapsed: projection.age.presented_age(),
             resource_claims: HumanResourceClaimAges::from_projection(projection),
         }
     }
@@ -379,27 +380,27 @@ impl HumanLaneAge {
     }
 }
 
-impl NotaEncode for HumanLaneAge {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanLaneAge {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.session.to_nota(),
-            self.lane.to_nota(),
-            self.status.to_nota(),
-            self.elapsed.to_nota(),
-            self.resource_claims.to_nota(),
+            self.session.to_dotos(),
+            self.lane.to_dotos(),
+            self.status.to_dotos(),
+            self.elapsed.to_dotos(),
+            self.resource_claims.to_dotos(),
         ])
     }
 }
 
-impl NotaDecode for HumanLaneAge {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanLaneAge", 5)?;
+impl DotosDecode for HumanLaneAge {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields = DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanLaneAge", 5)?;
         Ok(Self {
-            session: String::from_nota_block(&fields[0])?,
-            lane: String::from_nota_block(&fields[1])?,
-            status: HumanLaneStatus::from_nota_block(&fields[2])?,
-            elapsed: HumanReadableTime::from_nota_block(&fields[3])?,
-            resource_claims: HumanResourceClaimAges::from_nota_block(&fields[4])?,
+            session: String::from_dotos_block(&fields[0])?,
+            lane: String::from_dotos_block(&fields[1])?,
+            status: HumanLaneStatus::from_dotos_block(&fields[2])?,
+            elapsed: HumanReadableTime::from_dotos_block(&fields[3])?,
+            resource_claims: HumanResourceClaimAges::from_dotos_block(&fields[4])?,
         })
     }
 }
@@ -415,8 +416,7 @@ impl HumanResourceClaimAges {
     pub fn from_projection(projection: &LaneProjection) -> Self {
         Self {
             claims: projection
-                .lane_resource_claims
-                .payload()
+                .resource_claims
                 .iter()
                 .map(HumanResourceClaimAge::from_projection)
                 .collect(),
@@ -424,19 +424,19 @@ impl HumanResourceClaimAges {
     }
 }
 
-impl NotaEncode for HumanResourceClaimAges {
-    fn to_nota(&self) -> String {
-        Delimiter::SquareBracket.wrap(self.claims.iter().map(NotaEncode::to_nota))
+impl DotosEncode for HumanResourceClaimAges {
+    fn to_dotos(&self) -> String {
+        Delimiter::SquareBracket.wrap(self.claims.iter().map(DotosEncode::to_dotos))
     }
 }
 
-impl NotaDecode for HumanResourceClaimAges {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanResourceClaimAges {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         Ok(Self {
-            claims: NotaBlock::new(block)
+            claims: DotosBlock::new(block)
                 .expect_delimited(Delimiter::SquareBracket, "HumanResourceClaimAges")?
                 .iter()
-                .map(HumanResourceClaimAge::from_nota_block)
+                .map(HumanResourceClaimAge::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -452,35 +452,33 @@ pub struct HumanResourceClaimAge {
 
 impl HumanResourceClaimAge {
     /// Convert one contract resource-claim age without flattening it to text.
-    pub fn from_projection(
-        projection: &signal_orchestrate::schema::lib::LaneResourceClaim,
-    ) -> Self {
+    pub fn from_projection(projection: &signal_orchestrate::LaneResourceClaim) -> Self {
         Self {
-            scope: HumanScopeReference::from(&projection.scope_reference),
-            reason: projection.scope_reason.payload().clone(),
-            elapsed: projection.duration_nanos.presented_age(),
+            scope: HumanScopeReference::from(&projection.scope),
+            reason: projection.reason.as_str().to_owned(),
+            elapsed: projection.age.presented_age(),
         }
     }
 }
 
-impl NotaEncode for HumanResourceClaimAge {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanResourceClaimAge {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.scope.to_nota(),
-            self.reason.to_nota(),
-            self.elapsed.to_nota(),
+            self.scope.to_dotos(),
+            self.reason.to_dotos(),
+            self.elapsed.to_dotos(),
         ])
     }
 }
 
-impl NotaDecode for HumanResourceClaimAge {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanResourceClaimAge {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanResourceClaimAge", 3)?;
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanResourceClaimAge", 3)?;
         Ok(Self {
-            scope: HumanScopeReference::from_nota_block(&fields[0])?,
-            reason: String::from_nota_block(&fields[1])?,
-            elapsed: HumanReadableTime::from_nota_block(&fields[2])?,
+            scope: HumanScopeReference::from_dotos_block(&fields[0])?,
+            reason: String::from_dotos_block(&fields[1])?,
+            elapsed: HumanReadableTime::from_dotos_block(&fields[2])?,
         })
     }
 }
@@ -499,14 +497,12 @@ impl HumanRoleReport {
     pub fn from_snapshot(snapshot: &RoleSnapshot, clock: ObservationClock) -> Self {
         Self {
             roles: snapshot
-                .role_statuses
-                .payload()
+                .roles
                 .iter()
                 .map(HumanRoleStatus::from_wire)
                 .collect(),
             recent_activity: snapshot
-                .activities
-                .payload()
+                .recent_activity
                 .iter()
                 .map(|activity| HumanActivity::from_wire(activity, clock))
                 .collect(),
@@ -519,29 +515,29 @@ impl HumanRoleReport {
     }
 }
 
-impl NotaEncode for HumanRoleReport {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanRoleReport {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            Delimiter::SquareBracket.wrap(self.roles.iter().map(NotaEncode::to_nota)),
-            Delimiter::SquareBracket.wrap(self.recent_activity.iter().map(NotaEncode::to_nota)),
+            Delimiter::SquareBracket.wrap(self.roles.iter().map(DotosEncode::to_dotos)),
+            Delimiter::SquareBracket.wrap(self.recent_activity.iter().map(DotosEncode::to_dotos)),
         ])
     }
 }
 
-impl NotaDecode for HumanRoleReport {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanRoleReport {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleReport", 2)?;
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleReport", 2)?;
         Ok(Self {
-            roles: NotaBlock::new(&fields[0])
+            roles: DotosBlock::new(&fields[0])
                 .expect_delimited(Delimiter::SquareBracket, "HumanRoleReport")?
                 .iter()
-                .map(HumanRoleStatus::from_nota_block)
+                .map(HumanRoleStatus::from_dotos_block)
                 .collect::<Result<_, _>>()?,
-            recent_activity: NotaBlock::new(&fields[1])
+            recent_activity: DotosBlock::new(&fields[1])
                 .expect_delimited(Delimiter::SquareBracket, "HumanRoleReport")?
                 .iter()
-                .map(HumanActivity::from_nota_block)
+                .map(HumanActivity::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -559,11 +555,10 @@ impl HumanRoleStatus {
     /// Project one wire role status into presented claim ages.
     pub fn from_wire(status: &RoleStatus) -> Self {
         Self {
-            role: status.role_name.payload().payload().clone(),
-            harness: HumanHarnessKind::from(&status.harness_kind),
+            role: status.role.as_str().to_owned(),
+            harness: HumanHarnessKind::from(&status.harness),
             claims: status
-                .claim_entries
-                .payload()
+                .claims
                 .iter()
                 .map(HumanClaimEntry::from_wire)
                 .collect(),
@@ -576,27 +571,27 @@ impl HumanRoleStatus {
     }
 }
 
-impl NotaEncode for HumanRoleStatus {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanRoleStatus {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.role.to_nota(),
-            self.harness.to_nota(),
-            Delimiter::SquareBracket.wrap(self.claims.iter().map(NotaEncode::to_nota)),
+            self.role.to_dotos(),
+            self.harness.to_dotos(),
+            Delimiter::SquareBracket.wrap(self.claims.iter().map(DotosEncode::to_dotos)),
         ])
     }
 }
 
-impl NotaDecode for HumanRoleStatus {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanRoleStatus {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleStatus", 3)?;
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanRoleStatus", 3)?;
         Ok(Self {
-            role: String::from_nota_block(&fields[0])?,
-            harness: HumanHarnessKind::from_nota_block(&fields[1])?,
-            claims: NotaBlock::new(&fields[2])
+            role: String::from_dotos_block(&fields[0])?,
+            harness: HumanHarnessKind::from_dotos_block(&fields[1])?,
+            claims: DotosBlock::new(&fields[2])
                 .expect_delimited(Delimiter::SquareBracket, "HumanRoleStatus")?
                 .iter()
-                .map(HumanClaimEntry::from_nota_block)
+                .map(HumanClaimEntry::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -617,31 +612,31 @@ impl HumanClaimEntry {
     /// Project one wire claim entry into its presented age.
     pub fn from_wire(entry: &ClaimEntry) -> Self {
         Self {
-            scope: HumanScopeReference::from(&entry.scope_reference),
-            reason: entry.scope_reason.payload().clone(),
-            elapsed: entry.duration_nanos.presented_age(),
+            scope: HumanScopeReference::from(&entry.scope),
+            reason: entry.reason.as_str().to_owned(),
+            elapsed: entry.age.presented_age(),
         }
     }
 }
 
-impl NotaEncode for HumanClaimEntry {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanClaimEntry {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.scope.to_nota(),
-            self.reason.to_nota(),
-            self.elapsed.to_nota(),
+            self.scope.to_dotos(),
+            self.reason.to_dotos(),
+            self.elapsed.to_dotos(),
         ])
     }
 }
 
-impl NotaDecode for HumanClaimEntry {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanClaimEntry {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let fields =
-            NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanClaimEntry", 3)?;
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanClaimEntry", 3)?;
         Ok(Self {
-            scope: HumanScopeReference::from_nota_block(&fields[0])?,
-            reason: String::from_nota_block(&fields[1])?,
-            elapsed: HumanReadableTime::from_nota_block(&fields[2])?,
+            scope: HumanScopeReference::from_dotos_block(&fields[0])?,
+            reason: String::from_dotos_block(&fields[1])?,
+            elapsed: HumanReadableTime::from_dotos_block(&fields[2])?,
         })
     }
 }
@@ -659,8 +654,7 @@ impl HumanActivityReport {
     pub fn from_list(activities: &ActivityList, clock: ObservationClock) -> Self {
         Self {
             records: activities
-                .payload()
-                .payload()
+                .records
                 .iter()
                 .map(|activity| HumanActivity::from_wire(activity, clock))
                 .collect(),
@@ -673,19 +667,19 @@ impl HumanActivityReport {
     }
 }
 
-impl NotaEncode for HumanActivityReport {
-    fn to_nota(&self) -> String {
-        Delimiter::SquareBracket.wrap(self.records.iter().map(NotaEncode::to_nota))
+impl DotosEncode for HumanActivityReport {
+    fn to_dotos(&self) -> String {
+        Delimiter::SquareBracket.wrap(self.records.iter().map(DotosEncode::to_dotos))
     }
 }
 
-impl NotaDecode for HumanActivityReport {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanActivityReport {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         Ok(Self {
-            records: NotaBlock::new(block)
+            records: DotosBlock::new(block)
                 .expect_delimited(Delimiter::SquareBracket, "HumanActivityReport")?
                 .iter()
-                .map(HumanActivity::from_nota_block)
+                .map(HumanActivity::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -704,33 +698,34 @@ impl HumanActivity {
     /// Project one wire activity, converting its stamp into an age.
     pub fn from_wire(activity: &Activity, clock: ObservationClock) -> Self {
         Self {
-            role: activity.role_name.payload().payload().clone(),
-            scope: HumanScopeReference::from(&activity.scope_reference),
-            reason: activity.scope_reason.payload().clone(),
-            elapsed: clock.age_of(&activity.timestamp_nanos),
+            role: activity.role.as_str().to_owned(),
+            scope: HumanScopeReference::from(&activity.scope),
+            reason: activity.reason.as_str().to_owned(),
+            elapsed: clock.age_of(&activity.stamped_at),
         }
     }
 }
 
-impl NotaEncode for HumanActivity {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanActivity {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.role.to_nota(),
-            self.scope.to_nota(),
-            self.reason.to_nota(),
-            self.elapsed.to_nota(),
+            self.role.to_dotos(),
+            self.scope.to_dotos(),
+            self.reason.to_dotos(),
+            self.elapsed.to_dotos(),
         ])
     }
 }
 
-impl NotaDecode for HumanActivity {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanActivity", 4)?;
+impl DotosDecode for HumanActivity {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields =
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanActivity", 4)?;
         Ok(Self {
-            role: String::from_nota_block(&fields[0])?,
-            scope: HumanScopeReference::from_nota_block(&fields[1])?,
-            reason: String::from_nota_block(&fields[2])?,
-            elapsed: HumanReadableTime::from_nota_block(&fields[3])?,
+            role: String::from_dotos_block(&fields[0])?,
+            scope: HumanScopeReference::from_dotos_block(&fields[1])?,
+            reason: String::from_dotos_block(&fields[2])?,
+            elapsed: HumanReadableTime::from_dotos_block(&fields[3])?,
         })
     }
 }
@@ -748,8 +743,7 @@ impl HumanWorktreeReport {
     pub fn from_observation(worktrees: &WorktreesObserved, clock: ObservationClock) -> Self {
         Self {
             worktrees: worktrees
-                .payload()
-                .payload()
+                .worktrees
                 .iter()
                 .map(|worktree| HumanWorktree::from_wire(worktree, clock))
                 .collect(),
@@ -762,19 +756,19 @@ impl HumanWorktreeReport {
     }
 }
 
-impl NotaEncode for HumanWorktreeReport {
-    fn to_nota(&self) -> String {
-        Delimiter::SquareBracket.wrap(self.worktrees.iter().map(NotaEncode::to_nota))
+impl DotosEncode for HumanWorktreeReport {
+    fn to_dotos(&self) -> String {
+        Delimiter::SquareBracket.wrap(self.worktrees.iter().map(DotosEncode::to_dotos))
     }
 }
 
-impl NotaDecode for HumanWorktreeReport {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanWorktreeReport {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         Ok(Self {
-            worktrees: NotaBlock::new(block)
+            worktrees: DotosBlock::new(block)
                 .expect_delimited(Delimiter::SquareBracket, "HumanWorktreeReport")?
                 .iter()
-                .map(HumanWorktree::from_nota_block)
+                .map(HumanWorktree::from_dotos_block)
                 .collect::<Result<_, _>>()?,
         })
     }
@@ -798,13 +792,13 @@ impl HumanWorktree {
     /// idle age a reader actually wants.
     pub fn from_wire(worktree: &Worktree, clock: ObservationClock) -> Self {
         Self {
-            repository: worktree.repository_name.payload().clone(),
-            branch: worktree.branch_name.payload().clone(),
-            path: worktree.wire_path.payload().clone(),
-            lane: worktree.lane_name.payload().clone(),
-            status: HumanWorktreeStatus::from(&worktree.worktree_status),
-            purpose: worktree.purpose_text.payload().clone(),
-            idle: clock.age_of(&worktree.timestamp_nanos),
+            repository: worktree.repository.as_str().to_owned(),
+            branch: worktree.branch.as_str().to_owned(),
+            path: worktree.path.as_str().to_owned(),
+            lane: worktree.owning_lane.as_str().to_owned(),
+            status: HumanWorktreeStatus::from(&worktree.status),
+            purpose: worktree.purpose.as_str().to_owned(),
+            idle: clock.age_of(&worktree.last_activity),
             pushed_state: HumanPushedState::from(&worktree.pushed_state),
         }
     }
@@ -820,33 +814,34 @@ impl HumanWorktree {
     }
 }
 
-impl NotaEncode for HumanWorktree {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanWorktree {
+    fn to_dotos(&self) -> String {
         Delimiter::Brace.wrap([
-            self.repository.to_nota(),
-            self.branch.to_nota(),
-            self.path.to_nota(),
-            self.lane.to_nota(),
-            self.status.to_nota(),
-            self.purpose.to_nota(),
-            self.idle.to_nota(),
-            self.pushed_state.to_nota(),
+            self.repository.to_dotos(),
+            self.branch.to_dotos(),
+            self.path.to_dotos(),
+            self.lane.to_dotos(),
+            self.status.to_dotos(),
+            self.purpose.to_dotos(),
+            self.idle.to_dotos(),
+            self.pushed_state.to_dotos(),
         ])
     }
 }
 
-impl NotaDecode for HumanWorktree {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(Delimiter::Brace, "HumanWorktree", 8)?;
+impl DotosDecode for HumanWorktree {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields =
+            DotosBlock::new(block).expect_children(Delimiter::Brace, "HumanWorktree", 8)?;
         Ok(Self {
-            repository: String::from_nota_block(&fields[0])?,
-            branch: String::from_nota_block(&fields[1])?,
-            path: String::from_nota_block(&fields[2])?,
-            lane: String::from_nota_block(&fields[3])?,
-            status: HumanWorktreeStatus::from_nota_block(&fields[4])?,
-            purpose: String::from_nota_block(&fields[5])?,
-            idle: HumanReadableTime::from_nota_block(&fields[6])?,
-            pushed_state: HumanPushedState::from_nota_block(&fields[7])?,
+            repository: String::from_dotos_block(&fields[0])?,
+            branch: String::from_dotos_block(&fields[1])?,
+            path: String::from_dotos_block(&fields[2])?,
+            lane: String::from_dotos_block(&fields[3])?,
+            status: HumanWorktreeStatus::from_dotos_block(&fields[4])?,
+            purpose: String::from_dotos_block(&fields[5])?,
+            idle: HumanReadableTime::from_dotos_block(&fields[6])?,
+            pushed_state: HumanPushedState::from_dotos_block(&fields[7])?,
         })
     }
 }
@@ -863,27 +858,27 @@ impl HumanWorktreeConclusion {
     pub fn from_wire(concluded: &WorktreeConcluded, clock: ObservationClock) -> Self {
         Self {
             worktree: HumanWorktree::from_wire(&concluded.worktree, clock),
-            main_integration: HumanMainIntegration::from(&concluded.main_integration),
+            main_integration: HumanMainIntegration::from(&concluded.integration),
         }
     }
 }
 
-impl NotaEncode for HumanWorktreeConclusion {
-    fn to_nota(&self) -> String {
-        Delimiter::Brace.wrap([self.worktree.to_nota(), self.main_integration.to_nota()])
+impl DotosEncode for HumanWorktreeConclusion {
+    fn to_dotos(&self) -> String {
+        Delimiter::Brace.wrap([self.worktree.to_dotos(), self.main_integration.to_dotos()])
     }
 }
 
-impl NotaDecode for HumanWorktreeConclusion {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(
+impl DotosDecode for HumanWorktreeConclusion {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields = DotosBlock::new(block).expect_children(
             Delimiter::Brace,
             "HumanWorktreeConclusion",
             2,
         )?;
         Ok(Self {
-            worktree: HumanWorktree::from_nota_block(&fields[0])?,
-            main_integration: HumanMainIntegration::from_nota_block(&fields[1])?,
+            worktree: HumanWorktree::from_dotos_block(&fields[0])?,
+            main_integration: HumanMainIntegration::from_dotos_block(&fields[1])?,
         })
     }
 }
@@ -900,27 +895,27 @@ impl HumanWorktreeTeardownRefusal {
     pub fn from_wire(refused: &WorktreeTeardownRefused, clock: ObservationClock) -> Self {
         Self {
             worktree: HumanWorktree::from_wire(&refused.worktree, clock),
-            reason: HumanTeardownRefusal::from(&refused.teardown_refusal),
+            reason: HumanTeardownRefusal::from(&refused.reason),
         }
     }
 }
 
-impl NotaEncode for HumanWorktreeTeardownRefusal {
-    fn to_nota(&self) -> String {
-        Delimiter::Brace.wrap([self.worktree.to_nota(), self.reason.to_nota()])
+impl DotosEncode for HumanWorktreeTeardownRefusal {
+    fn to_dotos(&self) -> String {
+        Delimiter::Brace.wrap([self.worktree.to_dotos(), self.reason.to_dotos()])
     }
 }
 
-impl NotaDecode for HumanWorktreeTeardownRefusal {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(
+impl DotosDecode for HumanWorktreeTeardownRefusal {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields = DotosBlock::new(block).expect_children(
             Delimiter::Brace,
             "HumanWorktreeTeardownRefusal",
             2,
         )?;
         Ok(Self {
-            worktree: HumanWorktree::from_nota_block(&fields[0])?,
-            reason: HumanTeardownRefusal::from_nota_block(&fields[1])?,
+            worktree: HumanWorktree::from_dotos_block(&fields[0])?,
+            reason: HumanTeardownRefusal::from_dotos_block(&fields[1])?,
         })
     }
 }
@@ -937,37 +932,37 @@ pub enum HumanScopeReference {
 impl From<&ScopeReference> for HumanScopeReference {
     fn from(scope: &ScopeReference) -> Self {
         match scope {
-            ScopeReference::Path(path) => Self::Path(path.payload().clone()),
-            ScopeReference::Task(task) => Self::Task(task.payload().clone()),
+            ScopeReference::Path(path) => Self::Path(path.as_str().to_owned()),
+            ScopeReference::Task(task) => Self::Task(task.as_str().to_owned()),
         }
     }
 }
 
-impl NotaEncode for HumanScopeReference {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanScopeReference {
+    fn to_dotos(&self) -> String {
         match self {
-            Self::Path(path) => Delimiter::Parenthesis.wrap(["Path".to_owned(), path.to_nota()]),
-            Self::Task(task) => Delimiter::Parenthesis.wrap(["Task".to_owned(), task.to_nota()]),
+            Self::Path(path) => Delimiter::Parenthesis.wrap(["Path".to_owned(), path.to_dotos()]),
+            Self::Task(task) => Delimiter::Parenthesis.wrap(["Task".to_owned(), task.to_dotos()]),
         }
     }
 }
 
-impl NotaDecode for HumanScopeReference {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
-        let fields = NotaBlock::new(block).expect_children(
+impl DotosDecode for HumanScopeReference {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
+        let fields = DotosBlock::new(block).expect_children(
             Delimiter::Parenthesis,
             "HumanScopeReference",
             2,
         )?;
         let variant = fields[0]
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanScopeReference",
             })?;
         match variant {
-            "Path" => Ok(Self::Path(String::from_nota_block(&fields[1])?)),
-            "Task" => Ok(Self::Task(String::from_nota_block(&fields[1])?)),
-            other => Err(NotaDecodeError::UnknownVariant {
+            "Path" => Ok(Self::Path(String::from_dotos_block(&fields[1])?)),
+            "Task" => Ok(Self::Task(String::from_dotos_block(&fields[1])?)),
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanScopeReference",
                 variant: other.to_owned(),
             }),
@@ -995,8 +990,8 @@ impl From<&LaneStatus> for HumanLaneStatus {
     }
 }
 
-impl NotaEncode for HumanLaneStatus {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanLaneStatus {
+    fn to_dotos(&self) -> String {
         match self {
             Self::Active => "Active".to_owned(),
             Self::Released => "Released".to_owned(),
@@ -1006,11 +1001,11 @@ impl NotaEncode for HumanLaneStatus {
     }
 }
 
-impl NotaDecode for HumanLaneStatus {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanLaneStatus {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let status = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanLaneStatus",
             })?;
         match status {
@@ -1018,7 +1013,7 @@ impl NotaDecode for HumanLaneStatus {
             "Released" => Ok(Self::Released),
             "HandoverEnded" => Ok(Self::HandoverEnded),
             "Suspect" => Ok(Self::Suspect),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanLaneStatus",
                 variant: other.to_owned(),
             }),
@@ -1048,20 +1043,8 @@ impl From<&WorktreeStatus> for HumanWorktreeStatus {
     }
 }
 
-impl From<&signal_orchestrate::WorktreeStatus> for HumanWorktreeStatus {
-    fn from(status: &signal_orchestrate::WorktreeStatus) -> Self {
-        match status {
-            signal_orchestrate::WorktreeStatus::Active => Self::Active,
-            signal_orchestrate::WorktreeStatus::Merged => Self::Merged,
-            signal_orchestrate::WorktreeStatus::Archived => Self::Archived,
-            signal_orchestrate::WorktreeStatus::Recycled => Self::Recycled,
-            signal_orchestrate::WorktreeStatus::Abandoned => Self::Abandoned,
-        }
-    }
-}
-
-impl NotaEncode for HumanWorktreeStatus {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanWorktreeStatus {
+    fn to_dotos(&self) -> String {
         match self {
             Self::Active => "Active".to_owned(),
             Self::Merged => "Merged".to_owned(),
@@ -1072,11 +1055,11 @@ impl NotaEncode for HumanWorktreeStatus {
     }
 }
 
-impl NotaDecode for HumanWorktreeStatus {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanWorktreeStatus {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let status = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanWorktreeStatus",
             })?;
         match status {
@@ -1085,7 +1068,7 @@ impl NotaDecode for HumanWorktreeStatus {
             "Archived" => Ok(Self::Archived),
             "Recycled" => Ok(Self::Recycled),
             "Abandoned" => Ok(Self::Abandoned),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanWorktreeStatus",
                 variant: other.to_owned(),
             }),
@@ -1111,18 +1094,8 @@ impl From<&PushedState> for HumanPushedState {
     }
 }
 
-impl From<&signal_orchestrate::PushedState> for HumanPushedState {
-    fn from(state: &signal_orchestrate::PushedState) -> Self {
-        match state {
-            signal_orchestrate::PushedState::Unpushed => Self::Unpushed,
-            signal_orchestrate::PushedState::Pushed => Self::Pushed,
-            signal_orchestrate::PushedState::AncestorOfMain => Self::AncestorOfMain,
-        }
-    }
-}
-
-impl NotaEncode for HumanPushedState {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanPushedState {
+    fn to_dotos(&self) -> String {
         match self {
             Self::Unpushed => "Unpushed".to_owned(),
             Self::Pushed => "Pushed".to_owned(),
@@ -1131,18 +1104,18 @@ impl NotaEncode for HumanPushedState {
     }
 }
 
-impl NotaDecode for HumanPushedState {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanPushedState {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let state = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanPushedState",
             })?;
         match state {
             "Unpushed" => Ok(Self::Unpushed),
             "Pushed" => Ok(Self::Pushed),
             "AncestorOfMain" => Ok(Self::AncestorOfMain),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanPushedState",
                 variant: other.to_owned(),
             }),
@@ -1166,8 +1139,8 @@ impl From<&HarnessKind> for HumanHarnessKind {
     }
 }
 
-impl NotaEncode for HumanHarnessKind {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanHarnessKind {
+    fn to_dotos(&self) -> String {
         match self {
             Self::Codex => "Codex".to_owned(),
             Self::Claude => "Claude".to_owned(),
@@ -1175,17 +1148,17 @@ impl NotaEncode for HumanHarnessKind {
     }
 }
 
-impl NotaDecode for HumanHarnessKind {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanHarnessKind {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let kind = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanHarnessKind",
             })?;
         match kind {
             "Codex" => Ok(Self::Codex),
             "Claude" => Ok(Self::Claude),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanHarnessKind",
                 variant: other.to_owned(),
             }),
@@ -1211,8 +1184,8 @@ impl From<&TeardownRefusal> for HumanTeardownRefusal {
     }
 }
 
-impl NotaEncode for HumanTeardownRefusal {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanTeardownRefusal {
+    fn to_dotos(&self) -> String {
         match self {
             Self::UnmergedWorkPresent => "UnmergedWorkPresent".to_owned(),
             Self::AutoRebaseConflicted => "AutoRebaseConflicted".to_owned(),
@@ -1221,18 +1194,18 @@ impl NotaEncode for HumanTeardownRefusal {
     }
 }
 
-impl NotaDecode for HumanTeardownRefusal {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanTeardownRefusal {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let refusal = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanTeardownRefusal",
             })?;
         match refusal {
             "UnmergedWorkPresent" => Ok(Self::UnmergedWorkPresent),
             "AutoRebaseConflicted" => Ok(Self::AutoRebaseConflicted),
             "MainPushRejected" => Ok(Self::MainPushRejected),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanTeardownRefusal",
                 variant: other.to_owned(),
             }),
@@ -1260,8 +1233,8 @@ impl From<&MainIntegration> for HumanMainIntegration {
     }
 }
 
-impl NotaEncode for HumanMainIntegration {
-    fn to_nota(&self) -> String {
+impl DotosEncode for HumanMainIntegration {
+    fn to_dotos(&self) -> String {
         match self {
             Self::AlreadyAncestor => "AlreadyAncestor".to_owned(),
             Self::FastForwarded => "FastForwarded".to_owned(),
@@ -1271,11 +1244,11 @@ impl NotaEncode for HumanMainIntegration {
     }
 }
 
-impl NotaDecode for HumanMainIntegration {
-    fn from_nota_block(block: &Block) -> Result<Self, NotaDecodeError> {
+impl DotosDecode for HumanMainIntegration {
+    fn from_dotos_block(block: &Block) -> Result<Self, DotosDecodeError> {
         let integration = block
             .demote_to_string()
-            .ok_or(NotaDecodeError::ExpectedAtom {
+            .ok_or(DotosDecodeError::ExpectedAtom {
                 type_name: "HumanMainIntegration",
             })?;
         match integration {
@@ -1283,7 +1256,7 @@ impl NotaDecode for HumanMainIntegration {
             "FastForwarded" => Ok(Self::FastForwarded),
             "Rebased" => Ok(Self::Rebased),
             "Discarded" => Ok(Self::Discarded),
-            other => Err(NotaDecodeError::UnknownVariant {
+            other => Err(DotosDecodeError::UnknownVariant {
                 enum_name: "HumanMainIntegration",
                 variant: other.to_owned(),
             }),
@@ -1305,9 +1278,9 @@ mod tests {
     }
 
     fn round_trips(output: &HumanOutput) {
-        let encoded = output.to_nota();
+        let encoded = output.to_dotos();
         assert_eq!(
-            &nota_human::NotaSource::new(&encoded)
+            &dotos::DotosSource::new(&encoded)
                 .parse::<HumanOutput>()
                 .expect("human output decodes"),
             output
@@ -1333,7 +1306,7 @@ mod tests {
         });
 
         assert_eq!(
-            output.to_nota(),
+            output.to_dotos(),
             "LanesObserved.[{TypedTime typed-time Active Minutes.10 \
              [{(Path /tmp/typed) (typed time) Days.(3.2)}]}]"
         );
@@ -1361,7 +1334,7 @@ mod tests {
         });
 
         assert_eq!(
-            output.to_nota(),
+            output.to_dotos(),
             "RoleSnapshot.{[{general-code-implementer Codex \
              [{(Path /tmp/claim) (held work) Minutes.10}]}] \
              [{operator (Task Deploy) (stamped work) Days.(3.2)}]}"
@@ -1385,7 +1358,7 @@ mod tests {
         });
 
         assert_eq!(
-            output.to_nota(),
+            output.to_dotos(),
             "WorktreesObserved.[{orchestrate RenderedTime \
              /home/li/wt/orchestrate/RenderedTime rendered-time Active \
              (render elapsed time) Days.(3.2) AncestorOfMain}]"
@@ -1419,24 +1392,24 @@ mod tests {
     }
 
     #[test]
-    fn explicit_invocation_round_trips_through_legacy_cli_notation() {
-        let input = Input::Observe(signal_orchestrate::schema::lib::Observation::Lanes);
+    fn explicit_invocation_round_trips_through_cli_dotostion() {
+        let input = OrchestrateRequest::Observe(signal_orchestrate::Observation::Lanes);
         let canonical = ExplicitOrchestratorInvocation::canonical(input.clone());
         let human = ExplicitOrchestratorInvocation::human(input);
-        let canonical_nota =
-            <ExplicitOrchestratorInvocation as nota::NotaEncode>::to_nota(&canonical);
-        let human_nota = <ExplicitOrchestratorInvocation as nota::NotaEncode>::to_nota(&human);
+        let canonical_dotos =
+            <ExplicitOrchestratorInvocation as dotos::DotosEncode>::to_dotos(&canonical);
+        let human_dotos = <ExplicitOrchestratorInvocation as dotos::DotosEncode>::to_dotos(&human);
 
-        assert_eq!(canonical_nota, "(Explicit (Canonical (Observe Lanes)))");
-        assert_eq!(human_nota, "(Explicit (Human (Observe Lanes)))");
+        assert_eq!(canonical_dotos, "Explicit.{Canonical (Observe Lanes)}");
+        assert_eq!(human_dotos, "Explicit.{Human (Observe Lanes)}");
         assert_eq!(
-            nota::NotaSource::new(&canonical_nota)
+            dotos::DotosSource::new(&canonical_dotos)
                 .parse::<ExplicitOrchestratorInvocation>()
                 .expect("canonical explicit invocation decodes"),
             canonical
         );
         assert_eq!(
-            nota::NotaSource::new(&human_nota)
+            dotos::DotosSource::new(&human_dotos)
                 .parse::<ExplicitOrchestratorInvocation>()
                 .expect("human explicit invocation decodes"),
             human

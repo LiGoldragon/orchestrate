@@ -5,12 +5,12 @@ use std::{
 };
 
 use meta_signal_harness::{
-    CodexContinuationIdentifier, ContinuationHandle, MetaHarnessFrame, MetaHarnessFrameBody,
-    MetaHarnessReply, MetaHarnessRequest, ModelResolved, ModelUnavailable, ModelUnavailableReason,
-    NamedModel,
+    CodexContinuationIdentifier, ContinuationHandle, HarnessKind, MetaHarnessFrame,
+    MetaHarnessFrameBody, MetaHarnessReply, MetaHarnessRequest, ModelResolved, ModelUnavailable,
+    ModelUnavailableReason, NamedModel,
 };
-use signal_frame::{NonEmpty, Reply, SubReply};
-use signal_harness::{HarnessKind, HarnessName};
+use signal_frame::{NonEmpty, OperationDispatchError, Reply, SubReply};
+use signal_orchestrate::HarnessName;
 use triad_runtime::{FrameBody as RuntimeFrameBody, LengthPrefixedCodec};
 
 fn main() -> ExitCode {
@@ -51,16 +51,28 @@ impl WorkflowHarness {
             .read_body(&mut stream)
             .map_err(|error| error.to_string())?;
         let frame = MetaHarnessFrame::decode(body.bytes()).map_err(|error| error.to_string())?;
+        let actual_route = frame.short_header().route();
         let MetaHarnessFrameBody::Request { exchange, request } = frame.into_body() else {
             return Err("expected a meta-harness request frame".to_owned());
         };
+        let expected_route = request.route().map_err(|error| error.to_string())?;
+        if actual_route != expected_route {
+            return Err(OperationDispatchError::HeaderRouteMismatch {
+                expected: expected_route,
+                actual: actual_route,
+            }
+            .to_string());
+        }
         let MetaHarnessRequest::ResolveModel(request) = request.payloads().head().clone() else {
             return Err("expected a ResolveModel meta-harness request".to_owned());
         };
-        let reply = MetaHarnessFrame::new(MetaHarnessFrameBody::Reply {
-            exchange,
-            reply: Reply::committed(NonEmpty::single(SubReply::Ok(disposition.reply(request)))),
-        });
+        let reply = MetaHarnessFrame::new(
+            expected_route,
+            MetaHarnessFrameBody::Reply {
+                exchange,
+                reply: Reply::committed(NonEmpty::single(SubReply::Ok(disposition.reply(request)))),
+            },
+        );
         self.write_reply(&mut stream, reply)
     }
 

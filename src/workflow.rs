@@ -5,11 +5,10 @@ use meta_signal_harness::{
     MetaHarnessFrame, MetaHarnessFrameBody, MetaHarnessReply, MetaHarnessRequest,
     ModelResolutionRequest, SessionLaunchRequest,
 };
-use signal_criome::{
-    EvaluationDecision, ObjectDigest, OperationDigest, WorkflowProvenanceDigest, WorkflowReceipt,
-};
+use signal_criome::schema::lib::{z2VSX9, z2VSrv, z2VY7s, z2VZZu, z2VbxF};
 use signal_frame::{
     AcceptedOutcome, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, SessionEpoch, SubReply,
+    WireRoute,
 };
 use signal_orchestrate::{
     HostName, ModelAttestation, ModelName, OrchestrateReply, ProviderName,
@@ -66,9 +65,9 @@ struct WorkflowRunIdentity {
 impl WorkflowRunIdentity {
     fn workflow(request: &WorkflowRunRequest) -> Self {
         Self {
-            workflow_digest: request.workflow.object_digest().as_str().to_string(),
-            operation_digest: request.operation.object_digest.as_str().to_string(),
-            contract_digest: request.contract.object_digest().as_str().to_string(),
+            workflow_digest: request.workflow.payload().payload().to_string(),
+            operation_digest: request.operation.field_1.payload().to_string(),
+            contract_digest: request.contract.payload().payload().to_string(),
             model_resolution_digest: None,
         }
     }
@@ -80,9 +79,7 @@ impl WorkflowRunIdentity {
                     message: error.to_string(),
                 })?
                 .to_vec();
-        let model_resolution_digest = ObjectDigest::from_bytes(&model_resolution_bytes)
-            .as_str()
-            .to_string();
+        let model_resolution_digest = blake3::hash(&model_resolution_bytes).to_hex().to_string();
         Ok(Self {
             model_resolution_digest: Some(model_resolution_digest),
             ..Self::workflow(&request.workflow_run)
@@ -238,18 +235,16 @@ where
         WorkflowRunIdentity::resolved(request)?.handle()
     }
 
-    fn receipt_for(
-        &self,
-        request: &WorkflowRunRequest,
-        handle: &WorkflowRunHandle,
-    ) -> WorkflowReceipt {
-        WorkflowReceipt {
-            workflow_digest: request.workflow.clone(),
-            operation_digest: OperationDigest::new(request.operation.object_digest.clone()),
-            evaluation_decision: EvaluationDecision::Authorized,
-            workflow_provenance_digest: WorkflowProvenanceDigest::from_bytes(
-                handle.run.as_str().as_bytes(),
-            ),
+    fn receipt_for(&self, request: &WorkflowRunRequest, handle: &WorkflowRunHandle) -> z2VSX9 {
+        z2VSX9 {
+            field_0: request.workflow.clone(),
+            field_1: z2VSrv::new(request.operation.field_1.clone()),
+            field_2: z2VZZu::z2VPcz,
+            field_3: z2VY7s::new(z2VbxF::new(
+                blake3::hash(handle.run.as_str().as_bytes())
+                    .to_hex()
+                    .to_string(),
+            )),
         }
     }
 
@@ -262,9 +257,9 @@ where
                     provider: self.provider.clone(),
                     model: self.model.clone(),
                     host: self.host.clone(),
-                    call: OperationDigest::new(request.operation.object_digest.clone()),
+                    call: z2VSrv::new(request.operation.field_1.clone()),
                 },
-                outcome: StepOutcome::Produced(EvaluationDecision::Authorized),
+                outcome: StepOutcome::Produced(z2VZZu::z2VPcz),
             }],
         }
     }
@@ -331,9 +326,29 @@ impl MetaHarnessResolver {
         )
     }
 
-    fn reply_from_frame(&self, frame: MetaHarnessFrame) -> Result<MetaHarnessReply> {
+    fn reply_from_frame(
+        &self,
+        frame: MetaHarnessFrame,
+        expected_exchange: ExchangeIdentifier,
+        expected_route: WireRoute,
+    ) -> Result<MetaHarnessReply> {
+        let actual_route = frame.short_header().route();
         match frame.into_body() {
-            MetaHarnessFrameBody::Reply { reply, .. } => self.reply_output(reply),
+            MetaHarnessFrameBody::Reply { exchange, reply } => {
+                if exchange != expected_exchange {
+                    return Err(Error::HarnessReplyExchangeMismatch {
+                        expected: expected_exchange,
+                        actual: exchange,
+                    });
+                }
+                if actual_route != expected_route {
+                    return Err(Error::HarnessReplyRouteMismatch {
+                        expected: expected_route,
+                        actual: actual_route,
+                    });
+                }
+                self.reply_output(reply)
+            }
             other => Err(Error::UnexpectedHarnessFrame {
                 got: format!("{other:?}"),
             }),
@@ -361,10 +376,9 @@ impl MetaHarnessResolver {
 
 impl MetaHarnessResolver {
     fn submit(&self, request: MetaHarnessRequest) -> Result<MetaHarnessReply> {
-        let frame = MetaHarnessFrame::new(MetaHarnessFrameBody::Request {
-            exchange: self.exchange(),
-            request: signal_frame::Request::from_payload(request),
-        });
+        let exchange = self.exchange();
+        let frame = request.into_frame(exchange)?;
+        let route = frame.short_header().route();
         let mut stream = UnixStream::connect(&self.socket_path)?;
         self.codec
             .write_body(&mut stream, &RuntimeFrameBody::new(frame.encode()?))
@@ -373,7 +387,7 @@ impl MetaHarnessResolver {
             .codec
             .read_body(&mut stream)
             .map_err(Error::HarnessTransportFrame)?;
-        self.reply_from_frame(MetaHarnessFrame::decode(body.bytes())?)
+        self.reply_from_frame(MetaHarnessFrame::decode(body.bytes())?, exchange, route)
     }
 }
 
