@@ -5,18 +5,22 @@ use thiserror::Error;
 use triad_runtime::{AsyncMultiListenerDaemonError, ExitReport};
 
 fn main() -> std::process::ExitCode {
-    ExitReport::new("orchestrate-daemon").from_result(run())
+    ExitReport::new("orchestrate-daemon").from_result(DaemonStartup::run())
 }
 
-fn run() -> Result<(), StartupError> {
-    let configuration = DaemonConfiguration::from_process_arguments()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(StartupError::Runtime)?;
-    let daemon = OrchestrateDaemon::new(configuration)?;
-    runtime.block_on(daemon.run_async())?;
-    Ok(())
+struct DaemonStartup;
+
+impl DaemonStartup {
+    fn run() -> Result<(), StartupError> {
+        let configuration = DaemonConfiguration::from_process_arguments()?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(StartupError::Runtime)?;
+        let daemon = OrchestrateDaemon::new(configuration)?;
+        runtime.block_on(daemon.run_async())?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]

@@ -1,5 +1,5 @@
 {
-  description = "orchestrate — Persona orchestration machinery daemon and client.";
+  description = "orchestrate — durable native Datom path-lock registration.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -10,15 +10,8 @@
     };
   };
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-      rust-build,
-    }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
+  outputs = { self, nixpkgs, flake-utils, rust-build }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
         rust = rust-build.lib.${system}.fromToolchainFile pkgs {
@@ -26,78 +19,37 @@
           sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
         };
         inherit (rust) craneLib toolchain;
-        src = rust.cleanSource {
-          root = ./.;
-        };
-        commonArgs = {
-          inherit src;
-          strictDeps = true;
-        };
-        packageArgs = commonArgs // {
-          cargoExtraArgs = "--features dotos-text";
-        };
-        cargoArtifacts = craneLib.buildDepsOnly packageArgs;
-      in
-      {
-        packages.default = craneLib.buildPackage (
-          packageArgs
-          // {
-            inherit cargoArtifacts;
-            meta.mainProgram = "orchestrate";
-          }
-        );
+        src = rust.cleanSource { root = ./.; };
+        commonArgs = { inherit src; strictDeps = true; };
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      in {
+        packages.default = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          meta.mainProgram = "orchestrate";
+        });
         checks = {
-          build = craneLib.cargoBuild (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoExtraArgs = "--features dotos-text --all-targets";
-            }
-          );
+          build = craneLib.cargoBuild (commonArgs // {
+            inherit cargoArtifacts;
+            cargoExtraArgs = "--all-targets";
+          });
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
-          test-state-only = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test state_only";
-            }
-          );
-          stateful-nix-scenario = pkgs.runCommand "orchestrate-stateful-nix-scenario" {
-            nativeBuildInputs = [ pkgs.bash ];
+          test-path-lock-registry = craneLib.cargoTest (commonArgs // {
+            inherit cargoArtifacts;
+            cargoTestExtraArgs = "--test path_lock_registry";
+          });
+          stateful-path-lock-scenario = pkgs.runCommand "orchestrate-path-lock-scenario" {
+            nativeBuildInputs = [ pkgs.bash pkgs.inotify-tools ];
           } ''
-            ${pkgs.bash}/bin/bash ${./checks/stateful-nix-scenario.sh} \
+            ${pkgs.bash}/bin/bash ${./checks/path-lock-scenario.sh} \
               ${self.packages.${system}.default}/bin/orchestrate-daemon \
-              ${self.packages.${system}.default}/bin/orchestrate \
-              ${self.packages.${system}.default}/bin/meta-orchestrate \
-              ${self.packages.${system}.default}/bin/orchestrate-dotos-assert \
-              ${self.packages.${system}.default}/bin/orchestrate-upgrade-scenario \
-              ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures \
-              ${self.packages.${system}.default}/bin/orchestrate-workflow-harness \
-              ${self.packages.${system}.default}/bin/orchestrate-store-assert
+              ${self.packages.${system}.default}/bin/orchestrate
             touch $out
           '';
-          test-doc = craneLib.cargoTest (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoTestExtraArgs = "--doc";
-            }
-          );
-          doc = craneLib.cargoDoc (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              RUSTDOCFLAGS = "-D warnings";
-            }
-          );
           fmt = craneLib.cargoFmt { inherit src; };
-          clippy = craneLib.cargoClippy (
-            commonArgs
-            // {
-              inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--features dotos-text --all-targets -- -D warnings";
-            }
-          );
+          clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets -- -D warnings";
+          });
         };
         apps.default = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
@@ -107,17 +59,9 @@
           drv = self.packages.${system}.default;
           name = "orchestrate-daemon";
         };
-        apps.meta = flake-utils.lib.mkApp {
-          drv = self.packages.${system}.default;
-          name = "meta-orchestrate";
-        };
         devShells.default = pkgs.mkShell {
           name = "orchestrate";
-          packages = [
-            pkgs.pkg-config
-            toolchain
-          ];
+          packages = [ pkgs.pkg-config toolchain ];
         };
-      }
-    );
+      });
 }

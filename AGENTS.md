@@ -2,25 +2,20 @@
 
 ## Purpose
 
-`orchestrate` is the typed successor to the current primary workspace
-orchestration helper. It models roles, scopes, claims, and handoff tasks without
-deepening the transitional BEADS dependency.
+`orchestrate` is a durable, metadata-only registry of named native Datom path
+locks. It neither locks nor mutates filesystem paths.
 
 ## Local Rules
 
 - Use Jujutsu for version control.
 - Keep repositories public unless the human gives a specific reason otherwise.
 - Use Nix for build and test entry points.
-- BEADS is shared coordination state and is never claimed or exclusively locked.
-- No polling. Orchestration status is pushed through explicit writes and future
-  Persona messages.
-- Durable orchestration state uses `sema-engine` over the redb + rkyv substrate.
-- Naming: the component is being renamed Orchestrate → Orchestrator. The rename
-  proceeds incrementally as code is touched — new and edited surfaces adopt
-  `Orchestrator`; there is no separate big-bang rename sweep.
+- BEADS is shared coordination state; do not treat it as exclusive ownership.
+- No polling in tests; wait for the event under test.
+- Durable registry metadata uses `sema-engine` over the redb + rkyv substrate.
+- The ordinary text boundary is native Datom. The daemon speaks binary Signal.
 
 ## Protos estate status
 
 Stack: correct-new destination
-Status: active component, current checkout legacy-wired
-This checkout is not proof of correct-new adoption.
+Status: active component
