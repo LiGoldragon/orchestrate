@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.20.0"
+version      = "0.22.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -19,62 +19,21 @@ path = "src/main.rs"
 [[bin]]
 name = "orchestrate"
 path = "src/bin/orchestrate.rs"
-required-features = ["dotos-text"]
 
 [[bin]]
 name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
-required-features = ["dotos-text"]
-
-[[bin]]
-name = "orchestrate-dotos-assert"
-path = "src/bin/orchestrate_dotos_assert.rs"
-required-features = ["dotos-text"]
-
-[[bin]]
-name = "orchestrate-upgrade-scenario"
-path = "src/bin/orchestrate_upgrade_scenario.rs"
-
-[[bin]]
-name = "orchestrate-workflow-fixtures"
-path = "src/bin/orchestrate_workflow_fixtures.rs"
-required-features = ["dotos-text"]
-
-[[bin]]
-name = "orchestrate-workflow-harness"
-path = "src/bin/orchestrate_workflow_harness.rs"
-
-[[bin]]
-name = "orchestrate-store-assert"
-path = "src/bin/orchestrate_store_assert.rs"
-
-[features]
-default   = []
-dotos-text = [
-    "signal-orchestrate/dotos-text",
-    "meta-signal-orchestrate/dotos-text",
-]
 
 [dependencies]
-sema-engine                 = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "936d73fcaa073b55661866a896b84388a7da101e", default-features = false }
-signal-orchestrator-message = { git = "https://github.com/LiGoldragon/signal-orchestrator-message.git", rev = "f2480bbe5486d1e1c168da684a99dec47887fa97", default-features = false, features = ["dotos-text"] }
-signal-message = { git = "https://github.com/LiGoldragon/signal-message.git", rev = "e74f78c8cae8c6dd82e373bbac84b62bfd020ee7", default-features = false }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "9d4a7d3947969437834e98cdb491cea4a39585d4", default-features = false }
-meta-signal-harness = { git = "https://github.com/LiGoldragon/meta-signal-harness.git", rev = "ef47ea3830860a2812d873b1fafbdd827a418646", default-features = false }
-signal-criome = { git = "https://github.com/LiGoldragon/signal-criome.git", rev = "39d110c1fcd8d405823e7e565d23014177e10f17", default-features = false }
-signal-router = { git = "https://github.com/LiGoldragon/signal-router.git", rev = "7770db11697a55d3e3ef11b237bdb58f50db1d35", default-features = false }
-signal-frame                = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "8aa0bcaeb29fe9e461a11706a469638d2fd109ac", default-features = false }
-signal-version-handover     = { git = "https://github.com/LiGoldragon/signal-version-handover.git", rev = "a33053de8ea94f345e8fafa8cc0dcebb378962db", default-features = false }
-triad-runtime               = { git = "https://github.com/LiGoldragon/triad-runtime.git", rev = "7d10bb9d9a08ce363a0be8cff2716103f0a326fe", default-features = false }
-dotos                       = { git = "https://github.com/LiGoldragon/dotos.git", rev = "80c7b17f7ad3cf547d2624c6a243e5de5f85c9f3" }
-blake3                      = "1"
-relative-age-display        = { git = "https://github.com/LiGoldragon/relative-age-display.git", rev = "490587c668fc24617bc1bf2972f245865365f4c1" }
-version-projection          = { git = "https://github.com/LiGoldragon/version-projection.git", rev = "bbe022583807e19ae52bddbbf3a75b19531c50b5" }
-getrandom                   = "0.4"
-rkyv                        = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
-thiserror                   = "2"
-tokio                       = { version = "1", features = ["rt-multi-thread", "io-util", "sync", "time"] }
+base64 = "0.22"
+dotos = { git = "https://github.com/LiGoldragon/dotos.git", rev = "80c7b17f7ad3cf547d2624c6a243e5de5f85c9f3" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "ebefb65c7076", default-features = false }
+rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
+sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
+signal-frame = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "8aa0bcaeb29fe9e461a11706a469638d2fd109ac", default-features = false, features = ["dotos-text"] }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "d23fb6430eda", default-features = false }
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
 tempfile = "3"

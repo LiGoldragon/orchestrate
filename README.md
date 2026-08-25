@@ -1,71 +1,61 @@
 # orchestrate
 
-Typed workspace orchestration state for Persona agents.
+`orchestrate` is a durable PathLock Nexus. Its daemon owns a Sema store and
+serves two separate Unix-domain Signal sockets:
 
-The daemon's authority stops at its own durable Sema state, Unix sockets, and
-configured component exchanges. It does not scan or mutate repositories,
-worktrees, role directories, claim files, terminals, or process state.
-Worktree registration records the complete
-caller-supplied row; a worktree scaffold request is typed-refused because it
-does not carry a row to record. Observations and activity queries are read-only.
+- `orchestrate` sends ordinary PathLock registration and release requests.
+- `meta-orchestrate` sends owner-only live configuration requests.
 
-This crate models role ownership, claimed scopes, handoffs, and activity
-directly in typed durable state; claim files are not part of the runtime.
+The daemon is the sole durable state owner. The clients neither open the store
+nor implement a second wire protocol: they parse and render generated Dotos
+values and exchange the generated framed Signal values directly.
 
-The runtime surface is a triad: `orchestrate-daemon` owns the
-`orchestrate.sema` store, `orchestrate` is the one-argument ordinary
-`signal-orchestrate` CLI, and `meta-orchestrate` is the one-argument
-`meta-signal-orchestrate` policy CLI.
+## Operations
 
-## Daemon startup contract
-
-`orchestrate-daemon` receives its configuration as typed positional startup
-arguments, not through a configuration file or environment variables:
+The ordinary client accepts exactly one positional Datom value, with no flags:
 
 ```text
-orchestrate-daemon \
-  <sema-store> <ordinary-socket> <meta-socket> <upgrade-socket> \
-  <workspace-root> <git-index-root> \
-  [router=<socket>] [messenger=<socket>]
+orchestrate 'PathLock.{my-lock [/absolute/path] (short purpose)}'
+orchestrate 'PathLockRelease.{my-lock}'
 ```
 
-All six required paths and either optional socket value must be absolute and
-must not contain a parent-directory component. The daemon opens only the
-configured Sema store and binds the three configured Unix sockets. Its service
-manager must create their parent directories. A handover retires the two public
-sockets only after the replacement generation proves it is ready; the private
-upgrade socket remains available to complete that exchange.
+It prints the corresponding concrete generated reply carrier, such as
+`PathLockRegistered.{...}`, `PathLockRegistrationRejected.{...}`, or
+`PathLockReleased.{...}`. Set `ORCHESTRATE_SOCKET` to select the ordinary
+socket.
 
-The service manager starts the daemon directly with this contract. Its service
-declaration supplies `StateDirectory`, `RuntimeDirectory`, the Sema store path,
-all three Unix socket paths, and any downstream messenger or router socket. The
-daemon needs no VCS programs in `PATH`: this source boundary neither executes
-them nor scans host repositories.
-
-## Ordinary CLI presentation
-
-Ordinary contract input is shorthand for a typed human presentation:
+The meta client also accepts exactly one positional Datom value:
 
 ```text
-orchestrate '(Observe Lanes)'
+meta-orchestrate 'Configure.{/absolute/store.sema /absolute/orchestrate.sock /absolute/meta-orchestrate.sock}'
 ```
 
-Lane elapsed ages encode as closed `HumanReadableTime` values, not text. For
-example, a whole minute value is `Minutes.10`; a fractional day value is
-`Days.(3.2)`. Exact nanosecond values remain available in canonical output.
+It prints `Configured.{...}` or `ConfigurationRejected.{...}`. Set
+`ORCHESTRATE_META_SOCKET` to select the meta socket.
 
-Use the explicit form when a program needs the unchanged daemon contract
-output:
+Active PathLock names are unique. Each locked path must be absolute and
+normalized; an overlapping active path or a duplicate active name is a typed
+rejection. Releasing removes the active lock, so the name and paths can be
+registered again.
 
-```text
-orchestrate '(Explicit (Canonical (Observe Lanes)))'
-```
+## Daemon startup
 
-Both forms lower to the same ordinary Signal request. `Canonical` emits the
-`signal-orchestrate` Dotos reply exactly; only the CLI-side `Human`
-presentation converts elapsed `DurationNanos` values. An explicit human form,
-`(Explicit (Human (Observe Lanes)))`, is equivalent to shorthand.
+`orchestrate-daemon` takes exactly one argument: URL-safe, unpadded base64 of
+one generated framed meta `Configure` request. This is an argv-safe envelope
+for the typed Signal frame, not a socket protocol. The daemon rejects malformed
+frames and any startup operation other than `Configure`.
 
-It is not Persona's central mind database. Work graph state, thoughts,
-relations, and policy truth belong in `mind`; this crate owns collaborative
-orchestration machinery in `orchestrate.sema`.
+The configured store and socket paths are therefore in the typed startup
+configuration. A later meta `Configure` must name that same configuration;
+an attempted store change receives `StorePathImmutable`, while another
+configuration change receives `InvalidConfiguration`.
+
+## Development proof
+
+`cargo test` runs the durable-store tests and starts a real daemon process for
+the live Nexus test. That test uses the actual two client binaries to prove
+registration, duplicate-name rejection, path-overlap rejection, release,
+re-registration, and a meta Configure round trip.
+
+`nix build .#checks.x86_64-linux.live-nexus` exposes the same live-process
+proof as a Nix check.

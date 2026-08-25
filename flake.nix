@@ -1,5 +1,5 @@
 {
-  description = "orchestrate — Persona orchestration machinery daemon and client.";
+  description = "orchestrate — durable PathLock Nexus.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -33,9 +33,7 @@
           inherit src;
           strictDeps = true;
         };
-        packageArgs = commonArgs // {
-          cargoExtraArgs = "--features dotos-text";
-        };
+        packageArgs = commonArgs;
         cargoArtifacts = craneLib.buildDepsOnly packageArgs;
       in
       {
@@ -51,31 +49,17 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--features dotos-text --all-targets";
+              cargoExtraArgs = "--all-targets";
             }
           );
           test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
-          test-state-only = craneLib.cargoTest (
+          live-nexus = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test state_only";
+              cargoTestExtraArgs = "--test live_nexus";
             }
           );
-          stateful-nix-scenario = pkgs.runCommand "orchestrate-stateful-nix-scenario" {
-            nativeBuildInputs = [ pkgs.bash ];
-          } ''
-            ${pkgs.bash}/bin/bash ${./checks/stateful-nix-scenario.sh} \
-              ${self.packages.${system}.default}/bin/orchestrate-daemon \
-              ${self.packages.${system}.default}/bin/orchestrate \
-              ${self.packages.${system}.default}/bin/meta-orchestrate \
-              ${self.packages.${system}.default}/bin/orchestrate-dotos-assert \
-              ${self.packages.${system}.default}/bin/orchestrate-upgrade-scenario \
-              ${self.packages.${system}.default}/bin/orchestrate-workflow-fixtures \
-              ${self.packages.${system}.default}/bin/orchestrate-workflow-harness \
-              ${self.packages.${system}.default}/bin/orchestrate-store-assert
-            touch $out
-          '';
           test-doc = craneLib.cargoTest (
             commonArgs
             // {
@@ -95,7 +79,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--features dotos-text --all-targets -- -D warnings";
+              cargoClippyExtraArgs = "--all-targets -- -D warnings";
             }
           );
         };

@@ -1,27 +1,19 @@
-//! The orchestrate CLI — the daemon's first client.
-//!
-//! It speaks the canonical `signal-orchestrate` contract Frame. One Dotos argument
-//! lowers through a single request/presentation interpretation pipeline:
-//! ordinary contract input is shorthand for human presentation, while
-//! `(Explicit (Canonical (Observe Lanes)))` preserves the daemon's canonical
-//! reply.
-//! Meta-policy requests belong to the sibling `meta-orchestrate` CLI.
-
-use std::{env, fs, path::PathBuf, process::ExitCode};
-
-use dotos::{DotosDecodeError, DotosSource};
-use orchestrate::{
-    ExplicitOrchestratorInvocation, OrdinarySignalTransport, ResolvedOrchestratorInvocation,
-    TransportError,
+use std::{
+    env,
+    io::{Read, Write},
+    os::unix::net::UnixStream,
+    process::ExitCode,
 };
-use signal_orchestrate::OrchestrateRequest;
-use thiserror::Error;
-use triad_runtime::{ArgumentError, ComponentArgument, ComponentCommand};
 
-const ORDINARY_SOCKET_VARIABLE: &str = "PERSONA_ORCHESTRATE_SOCKET";
+use dotos::{DotosEncode, DotosSource};
+use signal_frame::{
+    ClientFrame, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload,
+    SessionEpoch, SubReply,
+};
+use signal_orchestrate::{Frame, OrchestrateReply, OrchestrateRequest, PathLock, PathLockRelease};
 
 fn main() -> ExitCode {
-    match OrchestratorCli::from_environment().run() {
+    match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("orchestrate: {error}");
@@ -30,101 +22,85 @@ fn main() -> ExitCode {
     }
 }
 
-struct OrchestratorCli {
-    command: ComponentCommand,
+fn run() -> Result<(), String> {
+    let text = single_argument()?;
+    let request = DotosSource::new(&text)
+        .parse::<PathLock>()
+        .map(OrchestrateRequest::Register)
+        .or_else(|_| {
+            DotosSource::new(&text)
+                .parse::<PathLockRelease>()
+                .map(OrchestrateRequest::Release)
+        })
+        .map_err(|error| error.to_string())?;
+    let reply = exchange(request)?;
+    println!(
+        "{}",
+        match reply {
+            OrchestrateReply::PathLockRegistered(value) => value.to_dotos(),
+            OrchestrateReply::PathLockRegistrationRejected(value) => value.to_dotos(),
+            OrchestrateReply::PathLockReleased(value) => value.to_dotos(),
+            OrchestrateReply::PathLockReleaseRejected(value) => value.to_dotos(),
+        }
+    );
+    Ok(())
 }
 
-impl OrchestratorCli {
-    fn from_environment() -> Self {
-        Self {
-            command: ComponentCommand::from_environment(),
-        }
-    }
-
-    fn run(&self) -> Result<(), OrchestratorCliError> {
-        let invocation = RequestText::new(self.argument_text()?).parse()?;
-        let output =
-            OrdinarySignalTransport::connect(self.socket_path()?)?.exchange(invocation.input())?;
-        println!(
-            "{}",
-            invocation.presentation().present(&output).to_stdout_dotos()
-        );
-        Ok(())
-    }
-
-    fn socket_path(&self) -> Result<String, OrchestratorCliError> {
-        match env::var(ORDINARY_SOCKET_VARIABLE) {
-            Ok(socket) => Ok(socket),
-            Err(_) => Ok(Self::primary_workspace_socket()?.display().to_string()),
-        }
-    }
-
-    fn primary_workspace_socket() -> Result<PathBuf, OrchestratorCliError> {
-        let home =
-            env::var("HOME").map_err(|source| OrchestratorCliError::HomeDirectory { source })?;
-        Ok(PathBuf::from(home)
-            .join("primary")
-            .join("orchestrate")
-            .join("orchestrate.sock"))
-    }
-
-    fn argument_text(&self) -> Result<String, OrchestratorCliError> {
-        match self.command.dotos_argument()? {
-            ComponentArgument::InlineDotos(argument) => Ok(argument.into_string()),
-            ComponentArgument::DotosFile(file) => Self::read_dotos_file(file.into_path()),
-            ComponentArgument::SignalFile(file) => Self::read_dotos_file(file.into_path()),
-        }
-    }
-
-    fn read_dotos_file(path: PathBuf) -> Result<String, OrchestratorCliError> {
-        fs::read_to_string(&path)
-            .map_err(|source| OrchestratorCliError::ReadDotosFile { path, source })
-    }
+fn exchange(request: OrchestrateRequest) -> Result<OrchestrateReply, String> {
+    let exchange = exchange_identifier();
+    let frame = Frame::request_frame(exchange, request.into_request())
+        .map_err(|error| error.to_string())?;
+    let mut stream = UnixStream::connect(
+        env::var("ORCHESTRATE_SOCKET").map_err(|_| "ORCHESTRATE_SOCKET is required".to_owned())?,
+    )
+    .map_err(|error| error.to_string())?;
+    stream
+        .write_all(
+            &frame
+                .encode_client_frame()
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    stream
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    let reply = Frame::decode_client_frame(&bytes)
+        .map_err(|error| error.to_string())?
+        .reply_from_frame(exchange)
+        .map_err(|error| error.to_string())?;
+    take_payload(reply)
 }
 
-/// The unparsed CLI Dotos argument awaiting shorthand/explicit lowering.
-struct RequestText {
-    text: String,
-}
-
-impl RequestText {
-    fn new(text: String) -> Self {
-        Self { text }
-    }
-
-    fn parse(self) -> Result<ResolvedOrchestratorInvocation, OrchestratorCliError> {
-        let source = DotosSource::new(&self.text);
-        match source.parse::<ExplicitOrchestratorInvocation>() {
-            Ok(explicit) => Ok(explicit.into_resolved()),
-            Err(_) => source
-                .parse::<OrchestrateRequest>()
-                .map(ResolvedOrchestratorInvocation::human_shorthand)
-                .map_err(OrchestratorCliError::DotosDecode),
-        }
+fn take_payload(reply: Reply<OrchestrateReply>) -> Result<OrchestrateReply, String> {
+    match reply {
+        Reply::Accepted { per_operation, .. } => match per_operation.into_head() {
+            SubReply::Ok(value)
+            | SubReply::Failed {
+                detail: Some(value),
+                ..
+            } => Ok(value),
+            other => Err(format!("unexpected daemon reply: {other:?}")),
+        },
+        Reply::Rejected { reason } => Err(reason.to_string()),
     }
 }
 
-#[derive(Debug, Error)]
-enum OrchestratorCliError {
-    #[error("component argument error: {0}")]
-    Argument(#[from] ArgumentError),
+fn exchange_identifier() -> ExchangeIdentifier {
+    ExchangeIdentifier::new(
+        SessionEpoch::new(1),
+        ExchangeLane::Connector,
+        LaneSequence::first(),
+    )
+}
 
-    #[error("failed to read Dotos file {}: {source}", path.display())]
-    ReadDotosFile {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("invalid ordinary orchestrate invocation Dotos: {0}")]
-    DotosDecode(DotosDecodeError),
-
-    #[error("HOME environment variable is unavailable: {source}")]
-    HomeDirectory {
-        #[source]
-        source: env::VarError,
-    },
-
-    #[error("transport error: {0}")]
-    Transport(#[from] TransportError),
+fn single_argument() -> Result<String, String> {
+    let values: Vec<_> = env::args().skip(1).collect();
+    match values.as_slice() {
+        [value] if !value.starts_with('-') => Ok(value.clone()),
+        _ => Err("accepts exactly one Datom object and no flags".to_owned()),
+    }
 }
