@@ -1,5 +1,38 @@
 # Upgrades
 
+## 0.25.0 — ordinary Lock contract
+
+This is a breaking ordinary-socket upgrade from `PathLock` registration to
+`Lock`, `Release(LockId)`, and `Observe.Locks`. Stop the old Nexus
+and release every active old PathLock before installing 0.25.0. A nonempty old
+active-row store is refused; 0.25.0 never guesses Flow attribution for an old
+row. With the old lock set quiescent, the new Nexus retains its durable
+configuration and initializes its Lock rows and ID allocator cleanly.
+
+Before activation, run the zero-argument preflight against the same XDG state
+root that the Nexus uses:
+
+```text
+orchestrate-upgrade-preflight
+```
+
+It opens only the legacy `active_path_locks` family under its exact 0.24
+identity and prints its row count. It does not open or mutate configuration,
+new Lock rows, or the ID allocator; it does not convert old rows. Proceed only
+when it reports `active legacy PathLock rows: 0`. A nonzero count means start
+the old Nexus, release those Locks with the old client, stop it, and rerun this
+preflight. The new runtime checks the same condition again at startup.
+
+Deploy the matching `signal-orchestrate` 1/5 producer and its generated Datom
+projection with the Nexus. Replace every old ordinary client invocation and
+wire frame; `Register`, `PathLock`, `PathLockRelease`, their reply names, and
+the Dotos fallback are not accepted. The meta contract remains unchanged.
+
+After starting the new Nexus, verify one atomic Lock over more than one path,
+a typed duplicate-name refusal, `Observe.Locks`, and Release by
+the returned Lock ID. Do not force-release or automatically release Locks:
+those operations are outside this revision.
+
 ## 0.24.0 — zero-argument default Nexus
 
 This breaking replacement removes the startup `Configure` Signal argv. Start

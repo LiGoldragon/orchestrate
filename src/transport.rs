@@ -21,6 +21,12 @@ use signal_frame::{
     ExchangeFrameBody, ExchangeIdentifier, NonEmpty, OperationDispatchError, Reply, Request,
     SubReply,
 };
+use signal_frame_ordinary::{
+    ExchangeFrameBody as OrdinaryExchangeFrameBody,
+    ExchangeIdentifier as OrdinaryExchangeIdentifier, NonEmpty as OrdinaryNonEmpty,
+    OperationDispatchError as OrdinaryOperationDispatchError, Reply as OrdinaryReply,
+    Request as OrdinaryRequest, SubReply as OrdinarySubReply,
+};
 use signal_orchestrate::{
     Frame as OrdinaryFrame, FrameBody as OrdinaryFrameBody, OrchestrateReply, OrchestrateRequest,
 };
@@ -149,18 +155,18 @@ impl OrdinarySignalTransport {
     /// Sends a typed ordinary request and returns its typed frame reply.
     pub async fn request(
         &self,
-        exchange: ExchangeIdentifier,
-        request: Request<OrchestrateRequest>,
-    ) -> Result<Reply<OrchestrateReply>, TransportError> {
+        exchange: OrdinaryExchangeIdentifier,
+        request: OrdinaryRequest<OrchestrateRequest>,
+    ) -> Result<OrdinaryReply<OrchestrateReply>, TransportError> {
         let route = request.route()?;
         let frame = OrdinaryFrame::new(route, OrdinaryFrameBody::Request { exchange, request });
         let reply = self.exchange(frame).await?;
         match reply.into_body() {
-            ExchangeFrameBody::Reply {
+            OrdinaryExchangeFrameBody::Reply {
                 exchange: actual,
                 reply,
             } if actual == exchange => Ok(reply),
-            ExchangeFrameBody::Reply { .. } => Err(TransportError::ExchangeMismatch),
+            OrdinaryExchangeFrameBody::Reply { .. } => Err(TransportError::ExchangeMismatch),
             _ => Err(TransportError::UnexpectedReplyFrame),
         }
     }
@@ -233,10 +239,10 @@ impl OrdinarySocket {
         let frame = self.read_frame().await?;
         let route = frame.short_header().route();
         let OrdinaryFrameBody::Request { exchange, request } = frame.into_body() else {
-            return Err(OperationDispatchError::UnexpectedFrameBody.into());
+            return Err(OrdinaryOperationDispatchError::UnexpectedFrameBody.into());
         };
         if request.route()? != route {
-            return Err(OperationDispatchError::HeaderRouteMismatch {
+            return Err(OrdinaryOperationDispatchError::HeaderRouteMismatch {
                 expected: request.route()?,
                 actual: route,
             }
@@ -352,15 +358,17 @@ impl LengthPrefixedSignal {
 
 fn replies_from_ordinary_request(
     store: &mut OrchestrateStore,
-    request: Request<OrchestrateRequest>,
-) -> Result<Reply<OrchestrateReply>, TransportError> {
+    request: OrdinaryRequest<OrchestrateRequest>,
+) -> Result<OrdinaryReply<OrchestrateReply>, TransportError> {
     let (head, tail) = request.payloads.into_head_and_tail();
-    let head = SubReply::Ok(store.ordinary(head)?);
+    let head = OrdinarySubReply::Ok(store.ordinary(head)?);
     let tail = tail
         .into_iter()
-        .map(|request| store.ordinary(request).map(SubReply::Ok))
+        .map(|request| store.ordinary(request).map(OrdinarySubReply::Ok))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Reply::committed(NonEmpty::from_head_and_tail(head, tail)))
+    Ok(OrdinaryReply::committed(
+        OrdinaryNonEmpty::from_head_and_tail(head, tail),
+    ))
 }
 
 fn replies_from_meta_request(
@@ -387,11 +395,20 @@ pub enum TransportError {
     #[error("generated Signal frame validation failed: {0}")]
     Frame(#[from] signal_frame::FrameError),
 
+    #[error("generated ordinary Signal frame validation failed: {0}")]
+    OrdinaryFrame(#[from] signal_frame_ordinary::FrameError),
+
     #[error("generated Signal request route failed: {0}")]
     Route(#[from] signal_frame::WireRouteError),
 
+    #[error("generated ordinary Signal request route failed: {0}")]
+    OrdinaryRoute(#[from] signal_frame_ordinary::WireRouteError),
+
     #[error("generated Signal dispatch failed: {0}")]
     Dispatch(#[from] signal_frame::OperationDispatchError),
+
+    #[error("generated ordinary Signal dispatch failed: {0}")]
+    OrdinaryDispatch(#[from] signal_frame_ordinary::OperationDispatchError),
 
     #[error("store failed: {0}")]
     Store(#[from] StoreError),

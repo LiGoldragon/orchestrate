@@ -93,7 +93,7 @@ fn reply(output: Output, binary: &str, request: &str) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout)
-        .expect("client reply is UTF-8 Datom")
+        .expect("client reply is UTF-8")
         .trim()
         .to_owned()
 }
@@ -132,39 +132,6 @@ fn zero_argument_startup_initializes_the_default_store_and_rejects_extras() {
             roots.ordinary_socket().display(),
             roots.meta_socket().display(),
         )
-    );
-    let first_path = temporary.path().join("first");
-    let first_request = format!(
-        "PathLock.{{alpha [{}] (first reservation)}}",
-        first_path.display()
-    );
-    assert_eq!(
-        reply(
-            invoke(
-                &roots,
-                env!("CARGO_BIN_EXE_orchestrate"),
-                "ORCHESTRATE_SOCKET",
-                &roots.ordinary_socket(),
-                &first_request,
-            ),
-            "orchestrate",
-            &first_request,
-        ),
-        first_request.replacen("PathLock.", "PathLockRegistered.", 1)
-    );
-    assert_eq!(
-        reply(
-            invoke(
-                &roots,
-                env!("CARGO_BIN_EXE_orchestrate"),
-                "ORCHESTRATE_SOCKET",
-                &roots.ordinary_socket(),
-                "PathLockRelease.{alpha}",
-            ),
-            "orchestrate",
-            "PathLockRelease.{alpha}",
-        ),
-        "PathLockReleased.{alpha}"
     );
     stop(&mut nexus);
 
@@ -232,4 +199,73 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
         )
     );
     stop(&mut resumed);
+}
+
+#[test]
+fn ordinary_cli_uses_the_generated_datom_roots_against_a_live_nexus() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let nexus_binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
+    let mut nexus = start(nexus_binary, &roots);
+    wait_until_ready(&mut nexus);
+
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                "Observe.Locks",
+            ),
+            "orchestrate",
+            "Observe.Locks",
+        ),
+        "Observed(Locks(LockSnapshot { locks: Locks([]) }))"
+    );
+
+    let lock_path = temporary.path().join("cli-owned");
+    let lock_request = format!(
+        "Lock.{{cli-lock 01a03eda [{}] cli-reason}}",
+        lock_path.display()
+    );
+    let locked = reply(
+        invoke(
+            &roots,
+            ordinary_binary,
+            "ORCHESTRATE_SOCKET",
+            &roots.ordinary_socket(),
+            &lock_request,
+        ),
+        "orchestrate",
+        &lock_request,
+    );
+    assert!(locked.starts_with("Locked(Lock { lock_id: LockId(1),"));
+
+    let released = reply(
+        invoke(
+            &roots,
+            ordinary_binary,
+            "ORCHESTRATE_SOCKET",
+            &roots.ordinary_socket(),
+            "Release.{1}",
+        ),
+        "orchestrate",
+        "Release.{1}",
+    );
+    assert!(released.starts_with("Released(Lock { lock_id: LockId(1),"));
+
+    let obsolete = invoke(
+        &roots,
+        ordinary_binary,
+        "ORCHESTRATE_SOCKET",
+        &roots.ordinary_socket(),
+        "Observe.{Locks.{Current}}",
+    );
+    assert!(
+        !obsolete.status.success(),
+        "the old nested Observe request must not be accepted"
+    );
+    stop(&mut nexus);
 }

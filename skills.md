@@ -1,12 +1,12 @@
 # orchestrate skill
 
-Work here when the change concerns Orchestrate Nexus PathLock registration,
-release, configuration, or either client.
+Work here when the change concerns Orchestrate Nexus Lock acquisition,
+Release-by-ID, `Observe.Locks` observation, configuration, or either client.
 
 Rules for work here:
 
 - Keep the ordinary and meta policy clients separate: `orchestrate`
-  accepts `signal-orchestrate` Datom and `meta-orchestrate` accepts
+  accepts the generated `signal-orchestrate` Operation Datom and `meta-orchestrate` accepts
   `meta-signal-orchestrate` Datom. Do not add tier auto-routing back to
   either client.
 - This component owns **its own** `sema-engine` database file

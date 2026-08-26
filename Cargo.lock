@@ -101,6 +101,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "datom"
+version = "0.5.0"
+source = "git+https://github.com/LiGoldragon/datom.git?rev=4e13442be314ebfdf7bbd32d095c88a084bde42e#4e13442be314ebfdf7bbd32d095c88a084bde42e"
+dependencies = [
+ "protos 0.8.0",
+]
+
+[[package]]
 name = "dotos"
 version = "0.10.0"
 source = "git+https://github.com/LiGoldragon/dotos.git?rev=80c7b17f7ad3cf547d2624c6a243e5de5f85c9f3#80c7b17f7ad3cf547d2624c6a243e5de5f85c9f3"
@@ -137,20 +145,20 @@ dependencies = [
 
 [[package]]
 name = "ethos-monolith"
-version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/ethos-monolith.git?rev=cc3ee3221401bf4edec0e6c9b1c1b2ce35e28ff6#cc3ee3221401bf4edec0e6c9b1c1b2ce35e28ff6"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/ethos-monolith.git?rev=b273030ee68f71184e3c9ae2e24f474d954555ce#b273030ee68f71184e3c9ae2e24f474d954555ce"
 dependencies = [
- "protos",
+ "protos 0.6.0",
  "syn 3.0.3",
  "thiserror",
 ]
 
 [[package]]
 name = "ethos-monolith"
-version = "0.4.0"
-source = "git+https://github.com/LiGoldragon/ethos-monolith.git?rev=b273030ee68f71184e3c9ae2e24f474d954555ce#b273030ee68f71184e3c9ae2e24f474d954555ce"
+version = "0.5.3"
+source = "git+https://github.com/LiGoldragon/ethos-monolith.git?rev=5fd6aa4c5cf24aff65e5b99406aa773b9cdc2640#5fd6aa4c5cf24aff65e5b99406aa773b9cdc2640"
 dependencies = [
- "protos",
+ "protos 0.8.0",
  "syn 3.0.3",
  "thiserror",
 ]
@@ -249,7 +257,7 @@ dependencies = [
  "dotos",
  "ethos-monolith 0.4.0",
  "rkyv",
- "signal-frame",
+ "signal-frame 0.3.1",
 ]
 
 [[package]]
@@ -291,13 +299,16 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.24.0"
+version = "0.25.0"
 dependencies = [
+ "datom",
  "dotos",
  "meta-signal-orchestrate",
+ "protos 0.8.0",
  "rkyv",
  "sema-engine",
- "signal-frame",
+ "signal-frame 0.3.1",
+ "signal-frame 0.4.0",
  "signal-orchestrate",
  "tempfile",
  "thiserror",
@@ -329,6 +340,11 @@ dependencies = [
 name = "protos"
 version = "0.6.0"
 source = "git+https://github.com/LiGoldragon/protos?rev=bfea114c96eb548ceae17ab05da9c231a6412ba1#bfea114c96eb548ceae17ab05da9c231a6412ba1"
+
+[[package]]
+name = "protos"
+version = "0.8.0"
+source = "git+https://github.com/LiGoldragon/protos.git?rev=3b190f9fc2c2a074ceeb6ababfea89e3dd504996#3b190f9fc2c2a074ceeb6ababfea89e3dd504996"
 
 [[package]]
 name = "ptr_meta"
@@ -459,7 +475,7 @@ dependencies = [
  "blake3",
  "rkyv",
  "sema",
- "signal-frame",
+ "signal-frame 0.3.1",
  "signal-sema",
  "thiserror",
 ]
@@ -478,8 +494,29 @@ dependencies = [
  "dotos",
  "paste",
  "rkyv",
- "signal-frame-macros",
+ "signal-frame-macros 0.1.2 (git+https://github.com/LiGoldragon/signal-frame.git?rev=8aa0bcaeb29fe9e461a11706a469638d2fd109ac)",
  "thiserror",
+]
+
+[[package]]
+name = "signal-frame"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?rev=000d86684d91ab6b38dd0bce7a5d8bae6db7b147#000d86684d91ab6b38dd0bce7a5d8bae6db7b147"
+dependencies = [
+ "paste",
+ "rkyv",
+ "signal-frame-macros 0.1.2 (git+https://github.com/LiGoldragon/signal-frame.git?rev=000d86684d91ab6b38dd0bce7a5d8bae6db7b147)",
+ "thiserror",
+]
+
+[[package]]
+name = "signal-frame-macros"
+version = "0.1.2"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?rev=000d86684d91ab6b38dd0bce7a5d8bae6db7b147#000d86684d91ab6b38dd0bce7a5d8bae6db7b147"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -494,13 +531,14 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.16.1"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=d23fb6430eda#d23fb6430eda87e16a6f08899f02f013ece0803b"
+version = "0.17.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=6fc8c5b7f1880b73461a4ffa863a3f8952245c0a#6fc8c5b7f1880b73461a4ffa863a3f8952245c0a"
 dependencies = [
- "dotos",
- "ethos-monolith 0.3.0",
+ "datom",
+ "ethos-monolith 0.5.3",
+ "protos 0.8.0",
  "rkyv",
- "signal-frame",
+ "signal-frame 0.4.0",
 ]
 
 [[package]]

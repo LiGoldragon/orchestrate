@@ -5,12 +5,13 @@ use std::{
     process::ExitCode,
 };
 
-use dotos::{DotosEncode, DotosSource};
-use signal_frame::{
-    ClientFrame, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload,
+use datom::DatomText;
+use protos::{Realize, SourceText};
+use signal_frame_ordinary::{
+    ExchangeFrameBody, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload,
     SessionEpoch, SubReply,
 };
-use signal_orchestrate::{Frame, OrchestrateReply, OrchestrateRequest, PathLock, PathLockRelease};
+use signal_orchestrate::{Frame, OrchestrateReply, OrchestrateRequest};
 
 fn main() -> ExitCode {
     match run() {
@@ -24,32 +25,19 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let text = single_argument()?;
-    let request = DotosSource::new(&text)
-        .parse::<PathLock>()
-        .map(OrchestrateRequest::Register)
-        .or_else(|_| {
-            DotosSource::new(&text)
-                .parse::<PathLockRelease>()
-                .map(OrchestrateRequest::Release)
-        })
-        .map_err(|error| error.to_string())?;
+    let request = DatomText::<OrchestrateRequest>::from(SourceText(text))
+        .realize()
+        .map_err(|error| format!("{error:?}"))?;
     let reply = exchange(request)?;
-    println!(
-        "{}",
-        match reply {
-            OrchestrateReply::PathLockRegistered(value) => value.to_dotos(),
-            OrchestrateReply::PathLockRegistrationRejected(value) => value.to_dotos(),
-            OrchestrateReply::PathLockReleased(value) => value.to_dotos(),
-            OrchestrateReply::PathLockReleaseRejected(value) => value.to_dotos(),
-        }
-    );
+    println!("{reply:?}");
     Ok(())
 }
 
 fn exchange(request: OrchestrateRequest) -> Result<OrchestrateReply, String> {
     let exchange = exchange_identifier();
-    let frame = Frame::request_frame(exchange, request.into_request())
-        .map_err(|error| error.to_string())?;
+    let request = request.into_request();
+    let route = request.route().map_err(|error| error.to_string())?;
+    let frame = Frame::new(route, ExchangeFrameBody::Request { exchange, request });
     let mut stream = UnixStream::connect(
         env::var("ORCHESTRATE_SOCKET").map_err(|_| "ORCHESTRATE_SOCKET is required".to_owned())?,
     )
@@ -57,7 +45,7 @@ fn exchange(request: OrchestrateRequest) -> Result<OrchestrateReply, String> {
     stream
         .write_all(
             &frame
-                .encode_client_frame()
+                .encode_length_prefixed()
                 .map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
@@ -68,11 +56,15 @@ fn exchange(request: OrchestrateRequest) -> Result<OrchestrateReply, String> {
     stream
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
-    let reply = Frame::decode_client_frame(&bytes)
-        .map_err(|error| error.to_string())?
-        .reply_from_frame(exchange)
-        .map_err(|error| error.to_string())?;
-    take_payload(reply)
+    let reply = Frame::decode_length_prefixed(&bytes).map_err(|error| error.to_string())?;
+    match reply.into_body() {
+        ExchangeFrameBody::Reply {
+            exchange: actual,
+            reply,
+        } if actual == exchange => take_payload(reply),
+        ExchangeFrameBody::Reply { .. } => Err("reply exchange does not match request".to_owned()),
+        _ => Err("expected an Orchestrate Nexus reply frame".to_owned()),
+    }
 }
 
 fn take_payload(reply: Reply<OrchestrateReply>) -> Result<OrchestrateReply, String> {

@@ -1,9 +1,9 @@
 # Orchestrate Nexus
 
-Orchestrate Nexus is the durable PathLock state owner. It owns a Sema store and
+Orchestrate Nexus is the durable Lock state owner. It owns a Sema store and
 serves two separate Unix-domain Signal sockets:
 
-- `orchestrate` sends ordinary PathLock registration and release requests.
+- `orchestrate` sends ordinary Lock, Release, and Observe requests.
 - `meta-orchestrate` sends owner-only configuration requests.
 
 The Nexus is the sole durable state owner. The clients neither open the store
@@ -12,17 +12,12 @@ values and exchange the generated framed Signal values directly.
 
 ## Operations
 
-The ordinary client accepts exactly one positional Datom value, with no flags:
-
-```text
-orchestrate 'PathLock.{my-lock [/absolute/path] (short purpose)}'
-orchestrate 'PathLockRelease.{my-lock}'
-```
-
-It prints the corresponding concrete generated reply carrier, such as
-`PathLockRegistered.{...}`, `PathLockRegistrationRejected.{...}`, or
-`PathLockReleased.{...}`. Set `ORCHESTRATE_SOCKET` to select the ordinary
-socket.
+The ordinary client accepts exactly one positional, type-directed Datom value,
+with no flags. Its generated `Operation` root selects `Lock`, `Release`, or
+`Observe`; it prints the corresponding typed reply's structural debug
+representation rather than defining a second textual contract. Set
+`ORCHESTRATE_SOCKET` to select the ordinary socket. The CLI is only a Datom to
+Signal boundary: it has no old Dotos parser or compatibility grammar.
 
 The meta client also accepts exactly one positional Datom value:
 
@@ -33,10 +28,21 @@ meta-orchestrate 'Configure.{/run/user/1000/orchestrate-nexus/orchestrate.sock /
 It prints `Configured.{...}` or `ConfigurationRejected.{...}`. Set
 `ORCHESTRATE_META_SOCKET` to select the meta socket.
 
-Active PathLock names are unique. Each locked path must be absolute and
-normalized; an overlapping active path or a duplicate active name is a typed
-rejection. Releasing removes the active lock, so the name and paths can be
-registered again.
+Active Lock names are unique. Each Lock holds a Flow attribution, absolute
+normalized paths, and a reason. A duplicate name or overlapping path is a
+typed rejection. The Nexus assigns a durable non-reused integer Lock ID;
+releasing that ID returns the complete released Lock. `Observe.Locks` returns
+the complete current snapshot in canonical name-then-ID
+order. Flow attribution does not authorize an operation, and this version has
+neither force release nor automatic release.
+
+For example, with `ORCHESTRATE_SOCKET` set, the live generated Datom roots are:
+
+```text
+orchestrate 'Lock.{cli-lock 01a03eda [/absolute/path] cli-reason}'
+orchestrate 'Observe.Locks'
+orchestrate 'Release.{1}'
+```
 
 ## Nexus startup and defaults
 
@@ -55,12 +61,19 @@ resume the configuration from that store. A meta `Configure` changes the
 durable socket configuration and takes effect on the next Nexus start; it does
 not rebind sockets under a running Nexus.
 
+Before upgrading an existing 0.24 store, run `orchestrate-upgrade-preflight`
+with the same XDG roots. It is a zero-argument, read-only check that reports
+the number of active legacy rows; its exact deployment procedure is in
+[`UPGRADES.md`](UPGRADES.md).
+
 ## Development proof
 
 `cargo test` runs the durable-store tests and starts real zero-argument
-Orchestrate Nexus processes under isolated XDG roots. The live proof covers
+Orchestrate Nexus processes under isolated XDG roots. The proof covers
 first-store default persistence, argument rejection, meta configuration
-persistence, restart-resume, PathLock registration and release.
+persistence, restart-resume, atomic Lock behavior, typed conflict replies,
+durable ID release, canonical current observation, and clean old-store
+transition.
 
 `nix build .#checks.x86_64-linux.live-nexus` exposes the same live-process
 proof as a Nix check.

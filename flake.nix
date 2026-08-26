@@ -1,5 +1,5 @@
 {
-  description = "Orchestrate Nexus — durable PathLock state.";
+  description = "Orchestrate Nexus — durable Lock state.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -58,6 +58,13 @@
             // {
               inherit cargoArtifacts;
               cargoTestExtraArgs = "--test live_nexus";
+            }
+          );
+          ordinary-lock-contract = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--test ordinary_lock_contract";
             }
           );
           test-doc = craneLib.cargoTest (

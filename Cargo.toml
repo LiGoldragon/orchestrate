@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.24.0"
+version      = "0.25.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -24,15 +24,22 @@ path = "src/bin/orchestrate.rs"
 name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
 
+[[bin]]
+name = "orchestrate-upgrade-preflight"
+path = "src/bin/orchestrate_upgrade_preflight.rs"
+
 [dependencies]
+datom = { git = "https://github.com/LiGoldragon/datom.git", rev = "4e13442be314ebfdf7bbd32d095c88a084bde42e" }
 dotos = { git = "https://github.com/LiGoldragon/dotos.git", rev = "80c7b17f7ad3cf547d2624c6a243e5de5f85c9f3" }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "d4dd208cd6e1", default-features = false }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
 signal-frame = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "8aa0bcaeb29fe9e461a11706a469638d2fd109ac", default-features = false, features = ["dotos-text"] }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "d23fb6430eda", default-features = false }
+signal-frame-ordinary = { package = "signal-frame", git = "https://github.com/LiGoldragon/signal-frame.git", rev = "000d86684d91ab6b38dd0bce7a5d8bae6db7b147", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "6fc8c5b7f1880b73461a4ffa863a3f8952245c0a", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "3b190f9fc2c2a074ceeb6ababfea89e3dd504996" }
 
 [dev-dependencies]
 tempfile = "3"
