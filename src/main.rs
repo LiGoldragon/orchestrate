@@ -9,7 +9,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("orchestrate-daemon: {error}");
+            eprintln!("orchestrate-nexus: {error}");
             ExitCode::FAILURE
         }
     }

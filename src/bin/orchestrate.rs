@@ -83,7 +83,7 @@ fn take_payload(reply: Reply<OrchestrateReply>) -> Result<OrchestrateReply, Stri
                 detail: Some(value),
                 ..
             } => Ok(value),
-            other => Err(format!("unexpected daemon reply: {other:?}")),
+            other => Err(format!("unexpected Orchestrate Nexus reply: {other:?}")),
         },
         Reply::Rejected { reason } => Err(reason.to_string()),
     }

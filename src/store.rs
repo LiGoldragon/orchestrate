@@ -1,4 +1,4 @@
-//! Daemon-owned durable path-lock state.
+//! Orchestrate Nexus-owned durable path-lock state.
 
 use std::{
     collections::BTreeSet,
@@ -68,7 +68,7 @@ impl EngineRecord for StoredPathLock {
     }
 }
 
-/// The transport serializes all calls to this sole durable state owner.
+/// The transport serializes all calls to this sole Orchestrate Nexus state owner.
 pub struct OrchestrateStore {
     engine: Engine,
     configuration: Configure,

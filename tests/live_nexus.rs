@@ -62,25 +62,25 @@ fn invoke(binary: &str, socket_variable: &str, socket: &std::path::Path, request
 }
 
 #[test]
-fn live_daemon_reserves_releases_and_configures_over_separate_signal_sockets() {
+fn orchestrate_nexus_reserves_releases_and_configures_over_separate_signal_sockets() {
     let temporary = tempfile::tempdir().expect("temporary Nexus directory");
     let store = temporary.path().join("orchestrate.sema");
     let ordinary_socket = temporary.path().join("ordinary.sock");
     let meta_socket = temporary.path().join("meta.sock");
     let configuration = configure(&store, &ordinary_socket, &meta_socket);
 
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_orchestrate-daemon"))
+    let mut nexus = Command::new(env!("CARGO_BIN_EXE_orchestrate-nexus"))
         .arg(startup_argument(configuration.clone()))
         .stdout(Stdio::piped())
         .spawn()
-        .expect("start configured daemon");
-    let stdout = daemon.stdout.take().expect("daemon stdout");
+        .expect("start configured Orchestrate Nexus");
+    let stdout = nexus.stdout.take().expect("Orchestrate Nexus stdout");
     let mut stdout = BufReader::new(stdout);
     let mut ready = String::new();
     stdout
         .read_line(&mut ready)
-        .expect("wait for daemon ready event");
-    assert_eq!(ready, "orchestrate-daemon ready\n");
+        .expect("wait for Orchestrate Nexus ready event");
+    assert_eq!(ready, "orchestrate-nexus ready\n");
 
     let first_path = temporary.path().join("first");
     let overlap_path = first_path.join("nested");
@@ -167,6 +167,6 @@ fn live_daemon_reserves_releases_and_configures_over_separate_signal_sockets() {
         )
     );
 
-    daemon.kill().expect("stop daemon");
-    daemon.wait().expect("reap daemon");
+    nexus.kill().expect("stop Orchestrate Nexus");
+    nexus.wait().expect("reap Orchestrate Nexus");
 }

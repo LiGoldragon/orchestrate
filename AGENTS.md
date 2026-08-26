@@ -2,28 +2,25 @@
 
 ## Purpose
 
-`orchestrate` is the typed successor to the current primary workspace
-orchestration helper. It models roles, scopes, claims, and handoff tasks without
-deepening the transitional BEADS dependency.
+Orchestrate Nexus is the durable owner of PathLock registration, release, and
+configuration. The `orchestrate` and `meta-orchestrate` clients are its ordinary
+and privileged Datom boundaries.
 
 ## Local Rules
 
 - Use Jujutsu for version control.
 - Keep repositories public unless the human gives a specific reason otherwise.
 - Use Nix for build and test entry points.
-- BEADS is shared coordination state and is never claimed or exclusively locked.
-- No polling. Orchestration status is pushed through explicit writes and future
-  Persona messages.
 - Durable orchestration state uses `sema-engine` over the redb + rkyv substrate.
-- Naming: the component is being renamed Orchestrate → Orchestrator. The rename
-  proceeds incrementally as code is touched — new and edited surfaces adopt
-  `Orchestrator`; there is no separate big-bang rename sweep.
+- Preserve the small PathLock surface: no lanes, claims, worktrees, roles, or
+  compatibility layer belong here.
+- The long-running executable is `orchestrate-nexus`; do not reintroduce
+  `orchestrate-daemon`.
 
 ## Protos estate status
 
-Stack: correct-new destination
-Status: active component, current checkout legacy-wired
-This checkout is not proof of correct-new adoption.
+Stack: active PathLock Nexus
+Status: current deployment surface
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker

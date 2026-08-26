@@ -1,5 +1,5 @@
 {
-  description = "orchestrate — durable PathLock Nexus.";
+  description = "Orchestrate Nexus — durable PathLock state.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -87,9 +87,9 @@
           drv = self.packages.${system}.default;
           name = "orchestrate";
         };
-        apps.daemon = flake-utils.lib.mkApp {
+        apps.nexus = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
-          name = "orchestrate-daemon";
+          name = "orchestrate-nexus";
         };
         apps.meta = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;

@@ -1,13 +1,13 @@
-# orchestrate
+# Orchestrate Nexus
 
-`orchestrate` is a durable PathLock Nexus. Its daemon owns a Sema store and
+Orchestrate Nexus is the durable PathLock state owner. It owns a Sema store and
 serves two separate Unix-domain Signal sockets:
 
 - `orchestrate` sends ordinary PathLock registration and release requests.
 - `meta-orchestrate` sends owner-only live configuration requests.
 
-The daemon is the sole durable state owner. The clients neither open the store
-nor implement a second wire protocol: they parse and render generated Dotos
+The Nexus is the sole durable state owner. The clients neither open the store
+nor implement a second wire protocol: they parse and render generated Datom
 values and exchange the generated framed Signal values directly.
 
 ## Operations
@@ -38,11 +38,11 @@ normalized; an overlapping active path or a duplicate active name is a typed
 rejection. Releasing removes the active lock, so the name and paths can be
 registered again.
 
-## Daemon startup
+## Nexus startup
 
-`orchestrate-daemon` takes exactly one argument: URL-safe, unpadded base64 of
+`orchestrate-nexus` takes exactly one argument: URL-safe, unpadded base64 of
 one generated framed meta `Configure` request. This is an argv-safe envelope
-for the typed Signal frame, not a socket protocol. The daemon rejects malformed
+for the typed Signal frame, not a socket protocol. The Nexus rejects malformed
 frames and any startup operation other than `Configure`.
 
 The configured store and socket paths are therefore in the typed startup
@@ -52,7 +52,7 @@ configuration change receives `InvalidConfiguration`.
 
 ## Development proof
 
-`cargo test` runs the durable-store tests and starts a real daemon process for
+`cargo test` runs the durable-store tests and starts a real Orchestrate Nexus process for
 the live Nexus test. That test uses the actual two client binaries to prove
 registration, duplicate-name rejection, path-overlap rejection, release,
 re-registration, and a meta Configure round trip.

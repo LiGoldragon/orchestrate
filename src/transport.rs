@@ -2,7 +2,7 @@
 //!
 //! The socket carries exactly one length-prefixed, generated Signal frame for
 //! each connection.  Contract and archive validation happen before a request
-//! reaches the daemon-owned store; the transport only preserves the frame
+//! reaches the Nexus-owned store; the transport only preserves the frame
 //! exchange, route, and exchange identifier.
 
 use std::{path::PathBuf, sync::Arc};
@@ -35,7 +35,7 @@ const MAXIMUM_FRAME_BYTES: usize = 8 * 1024 * 1024;
 /// textual line is a process readiness event, never part of the Signal wire.
 pub async fn run(configure: Configure, store: OrchestrateStore) -> Result<(), TransportError> {
     let runtime = TransportRuntime::bind(configure, store)?;
-    println!("orchestrate-daemon ready");
+    println!("orchestrate-nexus ready");
     let (shutdown_sender, shutdown) = oneshot::channel();
     let _shutdown_sender = shutdown_sender;
     runtime.serve_until(shutdown).await
