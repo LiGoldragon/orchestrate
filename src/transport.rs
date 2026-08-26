@@ -5,7 +5,13 @@
 //! reaches the Nexus-owned store; the transport only preserves the frame
 //! exchange, route, and exchange identifier.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    io::ErrorKind,
+    os::unix::net::UnixStream as StandardUnixStream,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use meta_signal_orchestrate::{
     Configure, Frame as MetaFrame, FrameBody as MetaFrameBody, MetaOrchestrateReply,
@@ -52,6 +58,8 @@ impl TransportRuntime {
     /// Binds the ordinary and privileged sockets.  Successful return is the
     /// transport readiness event used by in-process tests.
     pub fn bind(configure: Configure, store: OrchestrateStore) -> Result<Self, TransportError> {
+        Self::prepare_socket_path(Path::new(&configure.ordinary_socket_path.0))?;
+        Self::prepare_socket_path(Path::new(&configure.meta_socket_path.0))?;
         let ordinary = UnixListener::bind(&configure.ordinary_socket_path.0)?;
         let meta = UnixListener::bind(&configure.meta_socket_path.0)?;
         Ok(Self {
@@ -59,6 +67,22 @@ impl TransportRuntime {
             meta,
             store: Arc::new(Mutex::new(store)),
         })
+    }
+
+    fn prepare_socket_path(path: &Path) -> Result<(), TransportError> {
+        let parent = path.parent().expect("configured socket path has a parent");
+        fs::create_dir_all(parent)?;
+        match StandardUnixStream::connect(path) {
+            Ok(_) => Err(TransportError::SocketAlreadyActive {
+                path: path.to_path_buf(),
+            }),
+            Err(error) if matches!(error.kind(), ErrorKind::NotFound) => Ok(()),
+            Err(error) if matches!(error.kind(), ErrorKind::ConnectionRefused) => {
+                fs::remove_file(path)?;
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     /// Serves connections until the supplied shutdown event resolves.
@@ -356,6 +380,9 @@ fn replies_from_meta_request(
 pub enum TransportError {
     #[error("Unix socket I/O failed: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("an Orchestrate Nexus already owns socket {path:?}")]
+    SocketAlreadyActive { path: PathBuf },
 
     #[error("generated Signal frame validation failed: {0}")]
     Frame(#[from] signal_frame::FrameError),

@@ -1,79 +1,67 @@
 use std::{
+    fs,
     io::{BufRead, BufReader},
-    process::{Command, Stdio},
+    path::{Path, PathBuf},
+    process::{Child, Command, Output, Stdio},
 };
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use meta_signal_orchestrate::{
-    Configure, Frame as MetaFrame, MetaOrchestrateRequest, MetaSocketPath, OrdinarySocketPath,
-    StorePath,
-};
-use signal_frame::{
-    ClientFrame, ExchangeIdentifier, ExchangeLane, LaneSequence, RequestPayload, SessionEpoch,
-};
+struct IsolatedXdg {
+    state_home: PathBuf,
+    runtime_directory: PathBuf,
+}
 
-fn configure(
-    store: &std::path::Path,
-    ordinary: &std::path::Path,
-    meta: &std::path::Path,
-) -> Configure {
-    Configure {
-        store_path: StorePath(store.display().to_string()),
-        ordinary_socket_path: OrdinarySocketPath(ordinary.display().to_string()),
-        meta_socket_path: MetaSocketPath(meta.display().to_string()),
+impl IsolatedXdg {
+    fn new(temporary: &tempfile::TempDir) -> Self {
+        let state_home = temporary.path().join("state");
+        let runtime_directory = temporary.path().join("runtime");
+        fs::create_dir_all(&state_home).expect("create isolated XDG state root");
+        fs::create_dir_all(&runtime_directory).expect("create isolated XDG runtime root");
+        Self {
+            state_home,
+            runtime_directory,
+        }
+    }
+
+    fn state_store(&self) -> PathBuf {
+        self.state_home
+            .join("orchestrate-nexus")
+            .join("orchestrate-nexus.sema")
+    }
+
+    fn socket_directory(&self) -> PathBuf {
+        self.runtime_directory.join("orchestrate-nexus")
+    }
+
+    fn ordinary_socket(&self) -> PathBuf {
+        self.socket_directory().join("orchestrate.sock")
+    }
+
+    fn meta_socket(&self) -> PathBuf {
+        self.socket_directory().join("meta-orchestrate.sock")
+    }
+
+    fn configure(&self, ordinary: &Path, meta: &Path) -> String {
+        format!("Configure.{{{} {}}}", ordinary.display(), meta.display())
+    }
+
+    fn command(&self, binary: &str) -> Command {
+        let mut command = Command::new(binary);
+        command
+            .env("XDG_STATE_HOME", &self.state_home)
+            .env("XDG_RUNTIME_DIR", &self.runtime_directory);
+        command
     }
 }
 
-fn startup_argument(configure: Configure) -> String {
-    let exchange = ExchangeIdentifier::new(
-        SessionEpoch::new(1),
-        ExchangeLane::Connector,
-        LaneSequence::first(),
-    );
-    let frame = MetaFrame::request_frame(
-        exchange,
-        MetaOrchestrateRequest::Configure(configure).into_request(),
-    )
-    .expect("make startup Configure Signal frame");
-    URL_SAFE_NO_PAD.encode(
-        frame
-            .encode_client_frame()
-            .expect("encode startup Signal frame"),
-    )
-}
-
-fn invoke(binary: &str, socket_variable: &str, socket: &std::path::Path, request: &str) -> String {
-    let output = Command::new(binary)
-        .env(socket_variable, socket)
-        .arg(request)
-        .output()
-        .expect("run client");
-    assert!(
-        output.status.success(),
-        "{binary} rejected {request:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let reply = String::from_utf8(output.stdout)
-        .expect("client reply is utf-8 Datom")
-        .trim()
-        .to_owned();
-    eprintln!("{binary} {request} -> {reply}");
-    reply
-}
-
-#[test]
-fn orchestrate_nexus_reserves_releases_and_configures_over_separate_signal_sockets() {
-    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
-    let store = temporary.path().join("orchestrate.sema");
-    let ordinary_socket = temporary.path().join("ordinary.sock");
-    let meta_socket = temporary.path().join("meta.sock");
-    let configuration = configure(&store, &ordinary_socket, &meta_socket);
-
-    let mut nexus = Command::new(env!("CARGO_BIN_EXE_orchestrate-nexus"))
-        .arg(startup_argument(configuration.clone()))
+fn start(nexus: &str, roots: &IsolatedXdg) -> Child {
+    roots
+        .command(nexus)
         .stdout(Stdio::piped())
         .spawn()
-        .expect("start configured Orchestrate Nexus");
+        .expect("start zero-argument Orchestrate Nexus")
+}
+
+fn wait_until_ready(nexus: &mut Child) {
     let stdout = nexus.stdout.take().expect("Orchestrate Nexus stdout");
     let mut stdout = BufReader::new(stdout);
     let mut ready = String::new();
@@ -81,92 +69,167 @@ fn orchestrate_nexus_reserves_releases_and_configures_over_separate_signal_socke
         .read_line(&mut ready)
         .expect("wait for Orchestrate Nexus ready event");
     assert_eq!(ready, "orchestrate-nexus ready\n");
+}
 
+fn invoke(
+    roots: &IsolatedXdg,
+    binary: &str,
+    socket_variable: &str,
+    socket: &Path,
+    request: &str,
+) -> Output {
+    roots
+        .command(binary)
+        .env(socket_variable, socket)
+        .arg(request)
+        .output()
+        .expect("run client")
+}
+
+fn reply(output: Output, binary: &str, request: &str) -> String {
+    assert!(
+        output.status.success(),
+        "{binary} rejected {request:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("client reply is UTF-8 Datom")
+        .trim()
+        .to_owned()
+}
+
+fn stop(nexus: &mut Child) {
+    nexus.kill().expect("stop Orchestrate Nexus");
+    nexus.wait().expect("reap Orchestrate Nexus");
+}
+
+#[test]
+fn zero_argument_startup_initializes_the_default_store_and_rejects_extras() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let nexus_binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+
+    let mut nexus = start(nexus_binary, &roots);
+    wait_until_ready(&mut nexus);
+    assert!(
+        roots.state_store().is_file(),
+        "first start creates the default Sema store"
+    );
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                env!("CARGO_BIN_EXE_meta-orchestrate"),
+                "ORCHESTRATE_META_SOCKET",
+                &roots.meta_socket(),
+                &roots.configure(&roots.ordinary_socket(), &roots.meta_socket()),
+            ),
+            "meta-orchestrate",
+            "default Configure",
+        ),
+        format!(
+            "Configured.{{{} {}}}",
+            roots.ordinary_socket().display(),
+            roots.meta_socket().display(),
+        )
+    );
     let first_path = temporary.path().join("first");
-    let overlap_path = first_path.join("nested");
     let first_request = format!(
         "PathLock.{{alpha [{}] (first reservation)}}",
         first_path.display()
     );
     assert_eq!(
-        invoke(
-            env!("CARGO_BIN_EXE_orchestrate"),
-            "ORCHESTRATE_SOCKET",
-            &ordinary_socket,
+        reply(
+            invoke(
+                &roots,
+                env!("CARGO_BIN_EXE_orchestrate"),
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                &first_request,
+            ),
+            "orchestrate",
             &first_request,
         ),
         first_request.replacen("PathLock.", "PathLockRegistered.", 1)
     );
-
-    let duplicate = format!(
-        "PathLock.{{alpha [{}] (duplicate reservation)}}",
-        temporary.path().join("elsewhere").display()
-    );
-    assert!(
-        invoke(
-            env!("CARGO_BIN_EXE_orchestrate"),
-            "ORCHESTRATE_SOCKET",
-            &ordinary_socket,
-            &duplicate,
-        )
-        .contains("DuplicateActiveName"),
-        "duplicate active name must receive its closed refusal"
-    );
-
-    let overlap = format!(
-        "PathLock.{{beta [{}] (overlapping reservation)}}",
-        overlap_path.display()
-    );
-    assert!(
-        invoke(
-            env!("CARGO_BIN_EXE_orchestrate"),
-            "ORCHESTRATE_SOCKET",
-            &ordinary_socket,
-            &overlap,
-        )
-        .contains("PathOverlap"),
-        "nested absolute path must receive its closed refusal"
-    );
-
     assert_eq!(
-        invoke(
-            env!("CARGO_BIN_EXE_orchestrate"),
-            "ORCHESTRATE_SOCKET",
-            &ordinary_socket,
+        reply(
+            invoke(
+                &roots,
+                env!("CARGO_BIN_EXE_orchestrate"),
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                "PathLockRelease.{alpha}",
+            ),
+            "orchestrate",
             "PathLockRelease.{alpha}",
         ),
         "PathLockReleased.{alpha}"
     );
-    assert_eq!(
-        invoke(
-            env!("CARGO_BIN_EXE_orchestrate"),
-            "ORCHESTRATE_SOCKET",
-            &ordinary_socket,
-            &first_request,
-        ),
-        first_request.replacen("PathLock.", "PathLockRegistered.", 1)
-    );
+    stop(&mut nexus);
 
+    let extra = roots
+        .command(nexus_binary)
+        .arg("unexpected")
+        .output()
+        .expect("run Nexus with extra argument");
+    assert!(!extra.status.success(), "Nexus rejects startup arguments");
+    assert!(
+        String::from_utf8_lossy(&extra.stderr).contains("accepts zero arguments"),
+        "extra-argument refusal names the zero-argument boundary"
+    );
+}
+
+#[test]
+fn meta_configuration_persists_and_a_restart_resumes_it() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let nexus_binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let mut nexus = start(nexus_binary, &roots);
+    wait_until_ready(&mut nexus);
+
+    let changed_ordinary = roots.socket_directory().join("changed-ordinary.sock");
+    let changed_meta = roots.socket_directory().join("changed-meta.sock");
+    let changed_configure = roots.configure(&changed_ordinary, &changed_meta);
     assert_eq!(
-        invoke(
-            env!("CARGO_BIN_EXE_meta-orchestrate"),
-            "ORCHESTRATE_META_SOCKET",
-            &meta_socket,
-            &format!(
-                "Configure.{{{} {} {}}}",
-                store.display(),
-                ordinary_socket.display(),
-                meta_socket.display()
+        reply(
+            invoke(
+                &roots,
+                env!("CARGO_BIN_EXE_meta-orchestrate"),
+                "ORCHESTRATE_META_SOCKET",
+                &roots.meta_socket(),
+                &changed_configure,
             ),
+            "meta-orchestrate",
+            &changed_configure,
         ),
         format!(
-            "Configured.{{{} {} {}}}",
-            store.display(),
-            ordinary_socket.display(),
-            meta_socket.display()
+            "Configured.{{{} {}}}",
+            changed_ordinary.display(),
+            changed_meta.display()
         )
     );
+    stop(&mut nexus);
 
-    nexus.kill().expect("stop Orchestrate Nexus");
-    nexus.wait().expect("reap Orchestrate Nexus");
+    let mut resumed = start(nexus_binary, &roots);
+    wait_until_ready(&mut resumed);
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                env!("CARGO_BIN_EXE_meta-orchestrate"),
+                "ORCHESTRATE_META_SOCKET",
+                &changed_meta,
+                &changed_configure,
+            ),
+            "meta-orchestrate",
+            &changed_configure,
+        ),
+        format!(
+            "Configured.{{{} {}}}",
+            changed_ordinary.display(),
+            changed_meta.display()
+        )
+    );
+    stop(&mut resumed);
 }

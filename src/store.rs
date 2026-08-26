@@ -2,12 +2,12 @@
 
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Component, Path},
 };
 
 use meta_signal_orchestrate::{
-    ConfigurationRefusal, ConfigurationRejected, Configure, Configured, MetaOrchestrateReply,
-    MetaOrchestrateRequest,
+    Configure, Configured, MetaOrchestrateReply, MetaOrchestrateRequest,
 };
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
@@ -33,8 +33,8 @@ pub enum StoreError {
     Engine(#[from] sema_engine::Error),
     #[error("the durable store has {count} configuration rows")]
     ConfigurationInvariant { count: usize },
-    #[error("persisted store path {persisted:?} differs from opened path {opened:?}")]
-    StorePathMismatch { persisted: String, opened: String },
+    #[error("filesystem: {0}")]
+    Filesystem(#[from] std::io::Error),
     #[error("path-lock path {path:?} is not absolute")]
     RelativePath { path: String },
     #[error("path lock has no paths")]
@@ -72,14 +72,19 @@ impl EngineRecord for StoredPathLock {
 pub struct OrchestrateStore {
     engine: Engine,
     configuration: Configure,
+    configurations: TableReference<StoredConfiguration>,
     path_locks: TableReference<StoredPathLock>,
 }
 
 impl OrchestrateStore {
-    /// A virgin store persists `startup`; a reopened one returns its durable
+    /// A virgin store persists `defaults`; a reopened one returns its durable
     /// configuration so the caller binds the sockets it originally configured.
-    pub fn open(startup: Configure) -> Result<(Self, Configure), StoreError> {
-        let opened_path = startup.store_path.0.clone();
+    pub fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError> {
+        let parent = store_path
+            .parent()
+            .expect("a configured store path has a parent");
+        fs::create_dir_all(parent)?;
+        let opened_path = store_path.display().to_string();
         let mut engine = Engine::open(EngineOpen::new(&opened_path, SCHEMA_VERSION))?;
         let configurations = engine.register_table(TableDescriptor::new(
             CONFIGURATION_TABLE,
@@ -99,7 +104,7 @@ impl OrchestrateStore {
                 engine.assert(Assertion::new(
                     configurations,
                     StoredConfiguration {
-                        configuration: startup,
+                        configuration: defaults,
                     },
                 ))?;
                 engine
@@ -111,16 +116,11 @@ impl OrchestrateStore {
             [stored] => stored.configuration.clone(),
             rows => return Err(StoreError::ConfigurationInvariant { count: rows.len() }),
         };
-        if configuration.store_path.0 != opened_path {
-            return Err(StoreError::StorePathMismatch {
-                persisted: configuration.store_path.0.clone(),
-                opened: opened_path,
-            });
-        }
         Ok((
             Self {
                 engine,
                 configuration: configuration.clone(),
+                configurations,
                 path_locks,
             },
             configuration,
@@ -142,23 +142,20 @@ impl OrchestrateStore {
         request: MetaOrchestrateRequest,
     ) -> Result<MetaOrchestrateReply, StoreError> {
         match request {
-            MetaOrchestrateRequest::Configure(configure)
-                if configure.store_path != self.configuration.store_path =>
-            {
-                Ok(MetaOrchestrateReply::ConfigurationRejected(
-                    ConfigurationRejected {
-                        configure,
-                        configuration_refusal: ConfigurationRefusal::StorePathImmutable,
-                    },
-                ))
-            }
-            MetaOrchestrateRequest::Configure(configure) if configure != self.configuration => Ok(
-                MetaOrchestrateReply::ConfigurationRejected(ConfigurationRejected {
-                    configure,
-                    configuration_refusal: ConfigurationRefusal::InvalidConfiguration,
-                }),
-            ),
             MetaOrchestrateRequest::Configure(configure) => {
+                if configure != self.configuration {
+                    self.engine.retract(Retraction::new(
+                        self.configurations,
+                        RecordKey::new(CONFIGURATION_KEY),
+                    ))?;
+                    self.engine.assert(Assertion::new(
+                        self.configurations,
+                        StoredConfiguration {
+                            configuration: configure.clone(),
+                        },
+                    ))?;
+                    self.configuration = configure.clone();
+                }
                 Ok(MetaOrchestrateReply::Configured(Configured { configure }))
             }
         }
@@ -293,17 +290,20 @@ fn is_ancestor(ancestor: &str, descendant: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meta_signal_orchestrate::{MetaSocketPath, OrdinarySocketPath, StorePath};
+    use meta_signal_orchestrate::{MetaSocketPath, OrdinarySocketPath};
     use signal_orchestrate::{PathLockDescription, PathLockName, PathLockPath, PathLockPaths};
 
     fn configure(dir: &tempfile::TempDir) -> Configure {
         Configure {
-            store_path: StorePath(dir.path().join("orchestrate.sema").display().to_string()),
             ordinary_socket_path: OrdinarySocketPath(
                 dir.path().join("ordinary.sock").display().to_string(),
             ),
             meta_socket_path: MetaSocketPath(dir.path().join("meta.sock").display().to_string()),
         }
+    }
+
+    fn store_path(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        dir.path().join("orchestrate.sema")
     }
 
     fn lock(name: &str, paths: &[String]) -> PathLock {
@@ -323,8 +323,8 @@ mod tests {
             "//{}/./owned",
             dir.path().display().to_string().trim_start_matches('/')
         );
-        let (mut store, persisted) =
-            OrchestrateStore::open(configure.clone()).expect("open virgin store");
+        let (mut store, persisted) = OrchestrateStore::open(&store_path(&dir), configure.clone())
+            .expect("open virgin store");
         assert_eq!(persisted, configure);
         assert!(matches!(
             store.ordinary(OrchestrateRequest::Register(lock("alpha", &[unnormalized]))),
@@ -332,7 +332,7 @@ mod tests {
         ));
         drop(store);
         let (mut reopened, persisted) =
-            OrchestrateStore::open(configure.clone()).expect("reopen store");
+            OrchestrateStore::open(&store_path(&dir), configure.clone()).expect("reopen store");
         assert_eq!(persisted, configure);
         assert!(
             matches!(reopened.ordinary(OrchestrateRequest::Register(lock("alpha", &[format!("{}/elsewhere", dir.path().display())]))), Ok(OrchestrateReply::PathLockRegistrationRejected(PathLockRegistrationRejected { path_lock_registration_refusal: PathLockRegistrationRefusal::DuplicateActiveName(holder), .. })) if holder.path_lock_paths.0 == [PathLockPath(normalized.clone())])
@@ -367,31 +367,38 @@ mod tests {
     }
 
     #[test]
-    fn configure_refuses_store_path_changes() {
+    fn configure_persists_socket_changes() {
         let dir = tempfile::tempdir().expect("isolated store directory");
         let configure = configure(&dir);
-        let (mut store, _) = OrchestrateStore::open(configure.clone()).expect("open store");
+        let (mut store, _) =
+            OrchestrateStore::open(&store_path(&dir), configure.clone()).expect("open store");
         assert!(matches!(
             store.meta(MetaOrchestrateRequest::Configure(configure.clone())),
             Ok(MetaOrchestrateReply::Configured(_))
         ));
-        let mut moved = configure;
-        moved.store_path.0.push_str(".other");
+        let moved = Configure {
+            ordinary_socket_path: OrdinarySocketPath(
+                dir.path().join("moved-ordinary.sock").display().to_string(),
+            ),
+            meta_socket_path: MetaSocketPath(
+                dir.path().join("moved-meta.sock").display().to_string(),
+            ),
+        };
         assert!(matches!(
-            store.meta(MetaOrchestrateRequest::Configure(moved)),
-            Ok(MetaOrchestrateReply::ConfigurationRejected(
-                ConfigurationRejected {
-                    configuration_refusal: ConfigurationRefusal::StorePathImmutable,
-                    ..
-                }
-            ))
+            store.meta(MetaOrchestrateRequest::Configure(moved.clone())),
+            Ok(MetaOrchestrateReply::Configured(Configured { configure: persisted })) if persisted == moved
         ));
+        drop(store);
+        let (_, resumed) =
+            OrchestrateStore::open(&store_path(&dir), configure).expect("resume store");
+        assert_eq!(resumed, moved);
     }
 
     #[test]
     fn rejects_an_empty_or_nonabsolute_path_set_before_writing() {
         let dir = tempfile::tempdir().expect("isolated store directory");
-        let (mut store, _) = OrchestrateStore::open(configure(&dir)).expect("open store");
+        let (mut store, _) =
+            OrchestrateStore::open(&store_path(&dir), configure(&dir)).expect("open store");
         assert!(matches!(
             store.ordinary(OrchestrateRequest::Register(lock("empty", &[]))),
             Err(StoreError::EmptyPathSet)

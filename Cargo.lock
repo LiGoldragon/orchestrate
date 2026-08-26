@@ -15,12 +15,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
-name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -152,6 +146,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethos-monolith"
+version = "0.4.0"
+source = "git+https://github.com/LiGoldragon/ethos-monolith.git?rev=b273030ee68f71184e3c9ae2e24f474d954555ce#b273030ee68f71184e3c9ae2e24f474d954555ce"
+dependencies = [
+ "protos",
+ "syn 3.0.3",
+ "thiserror",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -239,11 +243,11 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "meta-signal-orchestrate"
-version = "0.10.1"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=ebefb65c7076#ebefb65c707629a416e1ff3ba785bcaf4b47d0ea"
+version = "0.11.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=d4dd208cd6e1#d4dd208cd6e10254075a0c311a8e8a14a1ff3f8d"
 dependencies = [
  "dotos",
- "ethos-monolith",
+ "ethos-monolith 0.4.0",
  "rkyv",
  "signal-frame",
 ]
@@ -287,9 +291,8 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
- "base64",
  "dotos",
  "meta-signal-orchestrate",
  "rkyv",
@@ -495,7 +498,7 @@ version = "0.16.1"
 source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=d23fb6430eda#d23fb6430eda87e16a6f08899f02f013ece0803b"
 dependencies = [
  "dotos",
- "ethos-monolith",
+ "ethos-monolith 0.3.0",
  "rkyv",
  "signal-frame",
 ]

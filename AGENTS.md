@@ -16,6 +16,8 @@ and privileged Datom boundaries.
   compatibility layer belong here.
 - The long-running executable is `orchestrate-nexus`; do not reintroduce
   `orchestrate-daemon`.
+- `orchestrate-nexus` owns its XDG defaults and takes zero arguments. Do not
+  add a startup frame, configuration writer, or bootstrap binary.
 
 ## Protos estate status
 
