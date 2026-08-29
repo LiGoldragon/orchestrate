@@ -1,6 +1,9 @@
+//! Live two-socket proof for generated roots, Datomic edges, and persistence.
+
 use std::{
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
 };
@@ -67,7 +70,7 @@ fn wait_until_ready(nexus: &mut Child) {
     let mut ready = String::new();
     stdout
         .read_line(&mut ready)
-        .expect("wait for Orchestrate Nexus ready event");
+        .expect("wait for Nexus ready event");
     assert_eq!(ready, "orchestrate-nexus ready\n");
 }
 
@@ -104,17 +107,17 @@ fn stop(nexus: &mut Child) {
 }
 
 #[test]
-fn zero_argument_startup_initializes_the_default_store_and_rejects_extras() {
+fn zero_argument_startup_initializes_default_store_and_rejects_extras() {
     let temporary = tempfile::tempdir().expect("temporary Nexus directory");
     let roots = IsolatedXdg::new(&temporary);
     let nexus_binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
-
     let mut nexus = start(nexus_binary, &roots);
     wait_until_ready(&mut nexus);
     assert!(
         roots.state_store().is_file(),
         "first start creates the default Sema store"
     );
+    let default_configure = roots.configure(&roots.ordinary_socket(), &roots.meta_socket());
     assert_eq!(
         reply(
             invoke(
@@ -122,15 +125,15 @@ fn zero_argument_startup_initializes_the_default_store_and_rejects_extras() {
                 env!("CARGO_BIN_EXE_meta-orchestrate"),
                 "ORCHESTRATE_META_SOCKET",
                 &roots.meta_socket(),
-                &roots.configure(&roots.ordinary_socket(), &roots.meta_socket()),
+                &default_configure
             ),
             "meta-orchestrate",
             "default Configure",
         ),
         format!(
-            "Configured.{{{} {}}}",
+            "Configured.{{{{{} {}}}}}",
             roots.ordinary_socket().display(),
-            roots.meta_socket().display(),
+            roots.meta_socket().display()
         )
     );
     stop(&mut nexus);
@@ -141,10 +144,7 @@ fn zero_argument_startup_initializes_the_default_store_and_rejects_extras() {
         .output()
         .expect("run Nexus with extra argument");
     assert!(!extra.status.success(), "Nexus rejects startup arguments");
-    assert!(
-        String::from_utf8_lossy(&extra.stderr).contains("accepts zero arguments"),
-        "extra-argument refusal names the zero-argument boundary"
-    );
+    assert!(String::from_utf8_lossy(&extra.stderr).contains("accepts zero arguments"));
 }
 
 #[test]
@@ -158,6 +158,11 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
     let changed_ordinary = roots.socket_directory().join("changed-ordinary.sock");
     let changed_meta = roots.socket_directory().join("changed-meta.sock");
     let changed_configure = roots.configure(&changed_ordinary, &changed_meta);
+    let expected = format!(
+        "Configured.{{{{{} {}}}}}",
+        changed_ordinary.display(),
+        changed_meta.display()
+    );
     assert_eq!(
         reply(
             invoke(
@@ -165,16 +170,12 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
                 env!("CARGO_BIN_EXE_meta-orchestrate"),
                 "ORCHESTRATE_META_SOCKET",
                 &roots.meta_socket(),
-                &changed_configure,
+                &changed_configure
             ),
             "meta-orchestrate",
             &changed_configure,
         ),
-        format!(
-            "Configured.{{{} {}}}",
-            changed_ordinary.display(),
-            changed_meta.display()
-        )
+        expected,
     );
     stop(&mut nexus);
 
@@ -187,27 +188,26 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
                 env!("CARGO_BIN_EXE_meta-orchestrate"),
                 "ORCHESTRATE_META_SOCKET",
                 &changed_meta,
-                &changed_configure,
+                &changed_configure
             ),
             "meta-orchestrate",
             &changed_configure,
         ),
         format!(
-            "Configured.{{{} {}}}",
+            "Configured.{{{{{} {}}}}}",
             changed_ordinary.display(),
             changed_meta.display()
-        )
+        ),
     );
     stop(&mut resumed);
 }
 
 #[test]
-fn ordinary_cli_uses_the_generated_datom_roots_against_a_live_nexus() {
+fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexus() {
     let temporary = tempfile::tempdir().expect("temporary Nexus directory");
     let roots = IsolatedXdg::new(&temporary);
-    let nexus_binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
     let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
-    let mut nexus = start(nexus_binary, &roots);
+    let mut nexus = start(env!("CARGO_BIN_EXE_orchestrate-nexus"), &roots);
     wait_until_ready(&mut nexus);
 
     assert_eq!(
@@ -217,45 +217,84 @@ fn ordinary_cli_uses_the_generated_datom_roots_against_a_live_nexus() {
                 ordinary_binary,
                 "ORCHESTRATE_SOCKET",
                 &roots.ordinary_socket(),
-                "Observe.Locks",
+                "Observe.Locks"
             ),
             "orchestrate",
-            "Observe.Locks",
+            "Observe.Locks"
         ),
-        "Observed(Locks(LockSnapshot { locks: Locks([]) }))"
+        "Observed.Locks.[]",
     );
-
     let lock_path = temporary.path().join("cli-owned");
     let lock_request = format!(
         "Lock.{{cli-lock 01a03eda [{}] cli-reason}}",
         lock_path.display()
     );
-    let locked = reply(
-        invoke(
-            &roots,
-            ordinary_binary,
-            "ORCHESTRATE_SOCKET",
-            &roots.ordinary_socket(),
-            &lock_request,
-        ),
-        "orchestrate",
-        &lock_request,
+    let locked = format!(
+        "Locked.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+        lock_path.display()
     );
-    assert!(locked.starts_with("Locked(Lock { lock_id: LockId(1),"));
-
-    let released = reply(
-        invoke(
-            &roots,
-            ordinary_binary,
-            "ORCHESTRATE_SOCKET",
-            &roots.ordinary_socket(),
-            "Release.{1}",
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                &lock_request
+            ),
+            "orchestrate",
+            &lock_request
         ),
-        "orchestrate",
-        "Release.{1}",
+        locked,
     );
-    assert!(released.starts_with("Released(Lock { lock_id: LockId(1),"));
-
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                &lock_request
+            ),
+            "orchestrate",
+            &lock_request
+        ),
+        format!(
+            "LockRejected.DuplicateName.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+            lock_path.display()
+        ),
+    );
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                "Release.1"
+            ),
+            "orchestrate",
+            "Release.1"
+        ),
+        format!(
+            "Released.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+            lock_path.display()
+        ),
+    );
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                "Release.1"
+            ),
+            "orchestrate",
+            "Release.1"
+        ),
+        "ReleaseRejected.UnknownLockId",
+    );
     let obsolete = invoke(
         &roots,
         ordinary_binary,
@@ -265,7 +304,31 @@ fn ordinary_cli_uses_the_generated_datom_roots_against_a_live_nexus() {
     );
     assert!(
         !obsolete.status.success(),
-        "the old nested Observe request must not be accepted"
+        "the old nested Observe request is not accepted"
+    );
+    stop(&mut nexus);
+}
+
+#[test]
+fn malformed_frame_is_refused_before_it_reaches_the_store() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let mut nexus = start(env!("CARGO_BIN_EXE_orchestrate-nexus"), &roots);
+    wait_until_ready(&mut nexus);
+    let mut socket = UnixStream::connect(roots.ordinary_socket()).expect("connect ordinary socket");
+    socket
+        .write_all(&[1, 0, 0, 0, 0])
+        .expect("write malformed envelope");
+    socket
+        .shutdown(std::net::Shutdown::Write)
+        .expect("finish malformed envelope");
+    let mut reply = Vec::new();
+    socket
+        .read_to_end(&mut reply)
+        .expect("read malformed response");
+    assert!(
+        reply.is_empty(),
+        "invalid envelope gets no typed store response"
     );
     stop(&mut nexus);
 }

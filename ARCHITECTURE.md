@@ -8,18 +8,19 @@ peer-coordination machinery.
 
 ```mermaid
 flowchart LR
-    ordinary["orchestrate\\none Datom argument"] -->|"generated Orchestrate Frame"| normal["ordinary Unix socket"]
-    meta["meta-orchestrate\\none Datom argument"] -->|"generated MetaOrchestrate Frame"| privileged["meta Unix socket"]
+    ordinary["orchestrate\\none Datomic argument"] -->|"generated 1/6 Frame"| normal["ordinary Unix socket"]
+    meta["meta-orchestrate\\none Datomic argument"] -->|"generated 2/5 Frame"| privileged["meta Unix socket"]
     normal --> nexus
     privileged --> nexus["orchestrate-nexus\\nsole transition owner"]
     nexus --> store["orchestrate-nexus.sema\\nfresh XDG Sema store"]
 ```
 
-The ordinary and meta sockets use different Ethos-generated contracts:
-`signal-orchestrate` (ordinary contract id 1, wire revision 5) and
-`meta-signal-orchestrate` (meta contract id 2, wire revision 4). Handwritten
-code only dispatches the generated typed values and performs Unix transport;
-it does not declare a fallback contract or codec.
+The ordinary and meta sockets use different WireContract-generated contracts:
+`signal-orchestrate` (ordinary contract id 1, wire revision 6) and
+`meta-signal-orchestrate` (meta contract id 2, wire revision 5). Handwritten
+code only dispatches generated `Request`, `Reply`, and `Refusal` roots and
+uses each crate's hand-owned validated rkyv envelope; it declares neither a
+fallback contract nor a compatibility codec.
 
 Each accepted Unix connection carries exactly one length-prefixed generated
 frame and one reply. Framing rejects empty or oversized bodies before generated
@@ -33,7 +34,7 @@ normalized complete `Lock` rows, and the next Nexus-assigned `LockId`. A `Lock`
 request atomically acquires its complete normalized path set or returns a typed
 duplicate-name or overlapping-path refusal. `Release(LockId)` removes exactly
 that durable identity or returns the generated unknown-ID refusal. `Observe.Locks`
-returns one complete point-in-time `LockSnapshot`, canonically
+returns one complete point-in-time `Locks` value, canonically
 ordered by Lock name and then Lock ID. These domain outcomes are typed contract
 replies, not transport or storage errors.
 
@@ -47,7 +48,7 @@ The ordinary ontology is explicit in code: `Locks`, `Releases`, and `Observes`
 are implemented by the single `OrchestrateStore` owner. Transport invokes its
 ordinary dispatcher; it does not duplicate domain decisions.
 
-The ordinary wire upgrade is clean. On a pre-1/5 store, startup detects active
+The ordinary wire upgrade is clean. On a pre-0.25 store, startup detects active
 old rows and refuses service until they have been released under the prior
 Nexus. It never invents a Flow ID for old state. Once quiescent, durable
 configuration may be retained but old ordinary rows are not carried forward.
@@ -66,11 +67,10 @@ The Nexus takes zero arguments. `DefaultConfiguration` in the executable derives
 paths. The startup boundary is therefore local executable configuration, while
 the socket boundaries remain generated binary Signal frames.
 
-Both clients accept exactly one concrete Datom carrier value and no flags. The
-ordinary client accepts the generated type-directed `Operation` root (`Lock`,
-`Release`, or `Observe`) and prints the typed reply's structural debug
-representation rather than defining a reply-text codec. Its canonical
-observation input is `Observe.Locks`.
+Both clients accept exactly one concrete Datomic carrier value and no flags. The
+ordinary client accepts the generated `Request` root (`Lock`, `Release`, or
+`Observe`) and prints the canonical Datomic `Reply` or `Refusal` root. Its
+canonical observation input is `Observe.Locks`.
 It has no Dotos parser or prior-operation fallback. `meta-orchestrate` accepts
 `Configure` and does the analogue on the meta socket. The component-specific
 `meta-orchestrate` name is intentional:

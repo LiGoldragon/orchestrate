@@ -1,3 +1,5 @@
+//! Datomic edge client for the ordinary Orchestrate Nexus socket.
+
 use std::{
     env,
     io::{Read, Write},
@@ -5,13 +7,8 @@ use std::{
     process::ExitCode,
 };
 
-use datom::DatomText;
-use protos::{Realize, SourceText};
-use signal_frame_ordinary::{
-    ExchangeFrameBody, ExchangeIdentifier, ExchangeLane, LaneSequence, Reply, RequestPayload,
-    SessionEpoch, SubReply,
-};
-use signal_orchestrate::{Frame, OrchestrateReply, OrchestrateRequest};
+use datomic::{Datomic, Text, TextEdge};
+use signal_orchestrate::{Frame, FrameBody, SignalFrameCodec};
 
 fn main() -> ExitCode {
     match run() {
@@ -24,75 +21,69 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let text = single_argument()?;
-    let request = DatomText::<OrchestrateRequest>::from(SourceText(text))
-        .realize()
-        .map_err(|error| format!("{error:?}"))?;
-    let reply = exchange(request)?;
-    println!("{reply:?}");
-    Ok(())
-}
-
-fn exchange(request: OrchestrateRequest) -> Result<OrchestrateReply, String> {
-    let exchange = exchange_identifier();
-    let request = request.into_request();
-    let route = request.route().map_err(|error| error.to_string())?;
-    let frame = Frame::new(route, ExchangeFrameBody::Request { exchange, request });
+    let request = Text::<signal_orchestrate::Request>::from(single_argument()?)
+        .embody()
+        .map_err(|error| format!("Datomic request: {error:?}"))?;
     let mut stream = UnixStream::connect(
         env::var("ORCHESTRATE_SOCKET").map_err(|_| "ORCHESTRATE_SOCKET is required".to_owned())?,
     )
     .map_err(|error| error.to_string())?;
     stream
         .write_all(
-            &frame
+            &frame(FrameBody::Request(request))
                 .encode_length_prefixed()
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| format!("{error:?}"))?,
         )
         .map_err(|error| error.to_string())?;
+    let mut prefix = [0; 4];
     stream
-        .shutdown(std::net::Shutdown::Write)
+        .read_exact(&mut prefix)
         .map_err(|error| error.to_string())?;
-    let mut bytes = Vec::new();
+    let mut bytes = prefix.to_vec();
+    bytes.resize(4 + u32::from_le_bytes(prefix) as usize, 0);
     stream
-        .read_to_end(&mut bytes)
+        .read_exact(&mut bytes[4..])
         .map_err(|error| error.to_string())?;
-    let reply = Frame::decode_length_prefixed(&bytes).map_err(|error| error.to_string())?;
-    match reply.into_body() {
-        ExchangeFrameBody::Reply {
-            exchange: actual,
-            reply,
-        } if actual == exchange => take_payload(reply),
-        ExchangeFrameBody::Reply { .. } => Err("reply exchange does not match request".to_owned()),
-        _ => Err("expected an Orchestrate Nexus reply frame".to_owned()),
+    match Frame::decode_length_prefixed(&bytes)
+        .map_err(|error| format!("{error:?}"))?
+        .body
+    {
+        FrameBody::Reply(reply) => println!("{}", reply.textualize().as_ref()),
+        FrameBody::Refusal(refusal) => println!("{}", refusal.textualize().as_ref()),
+        _ => return Err("Nexus returned a non-reply frame".to_owned()),
     }
+    Ok(())
 }
 
-fn take_payload(reply: Reply<OrchestrateReply>) -> Result<OrchestrateReply, String> {
-    match reply {
-        Reply::Accepted { per_operation, .. } => match per_operation.into_head() {
-            SubReply::Ok(value)
-            | SubReply::Failed {
-                detail: Some(value),
-                ..
-            } => Ok(value),
-            other => Err(format!("unexpected Orchestrate Nexus reply: {other:?}")),
-        },
-        Reply::Rejected { reason } => Err(reason.to_string()),
+fn frame(body: FrameBody) -> Frame {
+    Frame {
+        channel_contract_id: signal_orchestrate::CHANNEL_CONTRACT_ID,
+        channel_wire_revision: signal_orchestrate::CHANNEL_WIRE_REVISION,
+        protocol_version: signal_orchestrate::PROTOCOL_VERSION,
+        body,
     }
-}
-
-fn exchange_identifier() -> ExchangeIdentifier {
-    ExchangeIdentifier::new(
-        SessionEpoch::new(1),
-        ExchangeLane::Connector,
-        LaneSequence::first(),
-    )
 }
 
 fn single_argument() -> Result<String, String> {
-    let values: Vec<_> = env::args().skip(1).collect();
-    match values.as_slice() {
+    single_argument_from(&env::args().skip(1).collect::<Vec<_>>())
+}
+
+fn single_argument_from(values: &[String]) -> Result<String, String> {
+    match values {
         [value] if !value.starts_with('-') => Ok(value.clone()),
-        _ => Err("accepts exactly one Datom object and no flags".to_owned()),
+        _ => Err("accepts exactly one Datomic object and no flags".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_exactly_one_non_flag_datom() {
+        assert!(single_argument_from(&["Observe.Locks".to_owned()]).is_ok());
+        assert!(single_argument_from(&[]).is_err());
+        assert!(single_argument_from(&["--help".to_owned()]).is_err());
+        assert!(single_argument_from(&["Observe.Locks".to_owned(), "extra".to_owned()]).is_err());
     }
 }

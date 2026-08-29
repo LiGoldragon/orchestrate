@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use meta_signal_orchestrate::{Configure, MetaSocketPath, OrdinarySocketPath};
+use meta_signal_orchestrate::Configure;
 use thiserror::Error;
 
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
@@ -28,21 +28,23 @@ impl DefaultConfiguration {
         let state_home = Self::state_home()?;
         let runtime_directory = Self::runtime_directory()?;
         let socket_directory = runtime_directory.join(STATE_DIRECTORY);
+        let ordinary_socket_path = socket_directory
+            .join(ORDINARY_SOCKET_FILE)
+            .display()
+            .to_string()
+            .try_into()
+            .map_err(|_| DefaultConfigurationError::InvalidSocketPath)?;
+        let meta_socket_path = socket_directory
+            .join(META_SOCKET_FILE)
+            .display()
+            .to_string()
+            .try_into()
+            .map_err(|_| DefaultConfigurationError::InvalidSocketPath)?;
         Ok(Self {
             store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
             configuration: Configure {
-                ordinary_socket_path: OrdinarySocketPath(
-                    socket_directory
-                        .join(ORDINARY_SOCKET_FILE)
-                        .display()
-                        .to_string(),
-                ),
-                meta_socket_path: MetaSocketPath(
-                    socket_directory
-                        .join(META_SOCKET_FILE)
-                        .display()
-                        .to_string(),
-                ),
+                ordinary_socket_path,
+                meta_socket_path,
             },
         })
     }
@@ -101,4 +103,6 @@ pub enum DefaultConfigurationError {
         variable: &'static str,
         path: PathBuf,
     },
+    #[error("derived socket path is not representable as Datomic text")]
+    InvalidSocketPath,
 }

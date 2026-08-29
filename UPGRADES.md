@@ -1,5 +1,27 @@
 # Upgrades
 
+## 0.26.0 — WireContract and Datomic roots
+
+This is a breaking socket-contract upgrade. Stop the 0.25 Nexus before
+activation: ordinary frames change from the legacy routed envelope to
+WireContract contract `1/6`, and privileged frames change to `2/5`. Replace
+every client at the same time; there is no old frame, Dotos parser, Datom
+parser, route/exchange, or text compatibility path.
+
+The durable Sema families, hashes, and schema version remain unchanged because
+the persisted configuration, complete Lock facts, and allocator are the same
+records. Keep the store in place, but run the existing zero-argument preflight
+against the same XDG roots before starting 0.26. It still refuses a nonempty
+pre-0.25 `active_path_locks` family and does not mutate the store. Do not
+activate if it reports active legacy rows.
+
+After the coordinated restart, verify `Observe.Locks` yields
+`Observed.Locks.[]`, acquire a Lock, observe the typed duplicate-name refusal,
+and release the returned ID. Verify meta `Configure.{<ordinary> <meta>}`
+returns `Configured.{{<ordinary> <meta>}}`; the change takes effect after the
+next restart. This release records an upgrade procedure only: it does not
+deploy or cut over any live Nexus.
+
 ## 0.25.0 — ordinary Lock contract
 
 This is a breaking ordinary-socket upgrade from `PathLock` registration to

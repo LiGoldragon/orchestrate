@@ -1,17 +1,16 @@
 //! Orchestrate Nexus-owned durable Lock state.
 
-use crate::ordinary::{Locks, Observes, Releases};
-use meta_signal_orchestrate::{
-    Configure, Configured, MetaOrchestrateReply, MetaOrchestrateRequest,
-};
+use crate::ordinary::{Locks, Observes, OrdinaryOutcome, Releases};
+use meta_signal_orchestrate::{Configure, Configured, Reply as MetaReply, Request as MetaRequest};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     Assertion, Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, Retraction,
     SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
 };
 use signal_orchestrate::{
-    Lock, LockId, LockOverlap, LockRejection, LockRequest, LockSnapshot, Locks as LockSet,
-    Observation, ObserveSelection, OrchestrateReply, OrchestrateRequest, ReleaseRejection,
+    Lock, LockId, LockOverlap, LockRejection, LockRequest, Locks as LockSet, Observation,
+    ObserveSelection, Refusal as OrdinaryRefusal, ReleaseRejection, Reply as OrdinaryReply,
+    Request as OrdinaryRequest,
 };
 use std::{
     collections::BTreeSet,
@@ -93,11 +92,11 @@ impl NormalizedLockRequest {
         }
         let mut paths = BTreeSet::new();
         for path in &mut request.lock_paths.0 {
-            path.0 = NormalizedLockPath::from_source(&path.0)?.0;
-            if !paths.insert(path.0.clone()) {
-                return Err(StoreError::DuplicateNormalizedPath {
-                    path: path.0.clone(),
-                });
+            let normalized = NormalizedLockPath::from_source(path.as_ref())?.0;
+            *path = signal_orchestrate::LockPath::try_from(normalized.clone())
+                .expect("normalized absolute paths are representable Datomic strings");
+            if !paths.insert(normalized.clone()) {
+                return Err(StoreError::DuplicateNormalizedPath { path: normalized });
             }
         }
         Ok(Self { request })
@@ -110,8 +109,8 @@ impl NormalizedLockRequest {
     fn overlapping_path_of(&self, lock: &Lock) -> Option<signal_orchestrate::LockPath> {
         self.request.lock_paths.0.iter().find_map(|requested| {
             lock.lock_paths.0.iter().find_map(|held| {
-                NormalizedLockPath::from_normalized(&requested.0)
-                    .overlaps(&NormalizedLockPath::from_normalized(&held.0))
+                NormalizedLockPath::from_normalized(requested.as_ref())
+                    .overlaps(&NormalizedLockPath::from_normalized(held.as_ref()))
                     .then(|| requested.clone())
             })
         })
@@ -182,7 +181,7 @@ impl EngineRecord for StoredAllocator {
     }
 }
 
-// The legacy row is readable only to refuse a nonempty pre-1/5 store. It is
+// The legacy row is readable only to refuse a nonempty pre-0.25 store. It is
 // never converted, so no old Lock acquires invented Flow attribution.
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
 struct LegacyName(String);
@@ -217,7 +216,7 @@ pub struct OrchestrateStore {
     allocator: TableReference<StoredAllocator>,
 }
 
-/// Read-only evidence about a pre-1/5 ordinary-state table.
+/// Read-only evidence about a pre-0.25 ordinary-state table.
 ///
 /// It never opens the configuration, Lock, or allocator tables and never
 /// materializes old rows as new Locks.  The legacy table descriptor is exactly
@@ -344,24 +343,18 @@ impl OrchestrateStore {
             configuration,
         ))
     }
-    pub fn ordinary(
-        &mut self,
-        request: OrchestrateRequest,
-    ) -> Result<OrchestrateReply, StoreError> {
+    pub fn ordinary(&mut self, request: OrdinaryRequest) -> Result<OrdinaryOutcome, StoreError> {
         match request {
-            OrchestrateRequest::Lock(request) => self.lock(request),
-            OrchestrateRequest::Release(id) => self.release(id),
-            OrchestrateRequest::Observe(selection) => {
-                Ok(OrchestrateReply::Observed(self.observe(selection)?))
-            }
+            OrdinaryRequest::Lock(request) => self.lock(request),
+            OrdinaryRequest::Release(id) => self.release(id),
+            OrdinaryRequest::Observe(selection) => Ok(OrdinaryOutcome::Reply(
+                OrdinaryReply::Observed(self.observe(selection)?),
+            )),
         }
     }
-    pub fn meta(
-        &mut self,
-        request: MetaOrchestrateRequest,
-    ) -> Result<MetaOrchestrateReply, StoreError> {
+    pub fn meta(&mut self, request: MetaRequest) -> Result<MetaReply, StoreError> {
         match request {
-            MetaOrchestrateRequest::Configure(configure) => {
+            MetaRequest::Configure(configure) => {
                 if configure != self.configuration {
                     self.engine.retract(Retraction::new(
                         self.configurations,
@@ -375,7 +368,7 @@ impl OrchestrateStore {
                     ))?;
                     self.configuration = configure.clone();
                 }
-                Ok(MetaOrchestrateReply::Configured(Configured { configure }))
+                Ok(MetaReply::Configured(Configured { configure }))
             }
         }
     }
@@ -389,28 +382,28 @@ impl OrchestrateStore {
             .collect();
         locks.sort_by(|left, right| {
             left.lock_name
-                .0
-                .cmp(&right.lock_name.0)
+                .as_ref()
+                .cmp(right.lock_name.as_ref())
                 .then_with(|| left.lock_id.0.cmp(&right.lock_id.0))
         });
         Ok(locks)
     }
 }
 impl Locks for OrchestrateStore {
-    fn lock(&mut self, request: LockRequest) -> Result<OrchestrateReply, StoreError> {
+    fn lock(&mut self, request: LockRequest) -> Result<OrdinaryOutcome, StoreError> {
         let request = NormalizedLockRequest::from_request(request)?;
         for holder in self.current_locks()? {
             if request.duplicates_name_of(&holder) {
-                return Ok(OrchestrateReply::LockRejected(
+                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::LockRejected(
                     LockRejection::DuplicateName(holder),
-                ));
+                )));
             }
             if let Some(lock_path) = request.overlapping_path_of(&holder) {
-                return Ok(OrchestrateReply::LockRejected(LockRejection::PathOverlap(
-                    LockOverlap {
+                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::LockRejected(
+                    LockRejection::PathOverlap(LockOverlap {
                         lock_path,
                         lock: holder,
-                    },
+                    }),
                 )));
             }
         }
@@ -433,11 +426,11 @@ impl Locks for OrchestrateStore {
                 .assert(self.locks, StoredLock { lock: lock.clone() })
                 .mutate(self.allocator, StoredAllocator { next_lock_id }),
         )?;
-        Ok(OrchestrateReply::Locked(lock))
+        Ok(OrdinaryOutcome::Reply(OrdinaryReply::Locked(lock)))
     }
 }
 impl Releases for OrchestrateStore {
-    fn release(&mut self, lock_id: LockId) -> Result<OrchestrateReply, StoreError> {
+    fn release(&mut self, lock_id: LockId) -> Result<OrdinaryOutcome, StoreError> {
         let key = RecordKey::new(lock_id.0.to_string());
         let stored = match self
             .engine
@@ -445,23 +438,21 @@ impl Releases for OrchestrateStore {
             .records()
         {
             [] => {
-                return Ok(OrchestrateReply::ReleaseRejected(
+                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::ReleaseRejected(
                     ReleaseRejection::UnknownLockId,
-                ));
+                )));
             }
             [row] => row.clone(),
             _ => unreachable!("Lock IDs are keys"),
         };
         self.engine.retract(Retraction::new(self.locks, key))?;
-        Ok(OrchestrateReply::Released(stored.lock))
+        Ok(OrdinaryOutcome::Reply(OrdinaryReply::Released(stored.lock)))
     }
 }
 impl Observes for OrchestrateStore {
     fn observe(&self, selection: ObserveSelection) -> Result<Observation, StoreError> {
         match selection {
-            ObserveSelection::Locks => Ok(Observation::Locks(LockSnapshot {
-                locks: LockSet(self.current_locks()?),
-            })),
+            ObserveSelection::Locks => Ok(Observation::Locks(LockSet(self.current_locks()?))),
         }
     }
 }
@@ -512,12 +503,20 @@ mod tests {
         assert_eq!(preflight.active_lock_count(), 1);
 
         let defaults = Configure {
-            ordinary_socket_path: meta_signal_orchestrate::OrdinarySocketPath(
-                directory.path().join("ordinary.sock").display().to_string(),
-            ),
-            meta_socket_path: meta_signal_orchestrate::MetaSocketPath(
-                directory.path().join("meta.sock").display().to_string(),
-            ),
+            ordinary_socket_path: directory
+                .path()
+                .join("ordinary.sock")
+                .display()
+                .to_string()
+                .try_into()
+                .expect("temporary path is representable"),
+            meta_socket_path: directory
+                .path()
+                .join("meta.sock")
+                .display()
+                .to_string()
+                .try_into()
+                .expect("temporary path is representable"),
         };
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),

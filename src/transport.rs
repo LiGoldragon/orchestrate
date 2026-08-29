@@ -1,9 +1,9 @@
 //! Unix transport for the generated ordinary and meta Signal contracts.
 //!
-//! The socket carries exactly one length-prefixed, generated Signal frame for
-//! each connection.  Contract and archive validation happen before a request
-//! reaches the Nexus-owned store; the transport only preserves the frame
-//! exchange, route, and exchange identifier.
+//! Each connection carries one complete hand-owned, length-prefixed rkyv
+//! envelope. The generated contract owns the frame anatomy; this module only
+//! validates that envelope and dispatches one typed request to the serialized
+//! Nexus-owned store.
 
 use std::{
     fs,
@@ -14,21 +14,16 @@ use std::{
 };
 
 use meta_signal_orchestrate::{
-    Configure, Frame as MetaFrame, FrameBody as MetaFrameBody, MetaOrchestrateReply,
-    MetaOrchestrateRequest,
-};
-use signal_frame::{
-    ExchangeFrameBody, ExchangeIdentifier, NonEmpty, OperationDispatchError, Reply, Request,
-    SubReply,
-};
-use signal_frame_ordinary::{
-    ExchangeFrameBody as OrdinaryExchangeFrameBody,
-    ExchangeIdentifier as OrdinaryExchangeIdentifier, NonEmpty as OrdinaryNonEmpty,
-    OperationDispatchError as OrdinaryOperationDispatchError, Reply as OrdinaryReply,
-    Request as OrdinaryRequest, SubReply as OrdinarySubReply,
+    CHANNEL_CONTRACT_ID as META_CHANNEL_CONTRACT_ID,
+    CHANNEL_WIRE_REVISION as META_CHANNEL_WIRE_REVISION, Frame as MetaFrame,
+    FrameBody as MetaFrameBody, FrameCodecError as MetaFrameCodecError,
+    PROTOCOL_VERSION as META_PROTOCOL_VERSION, SignalFrameCodec as MetaSignalFrameCodec,
 };
 use signal_orchestrate::{
-    Frame as OrdinaryFrame, FrameBody as OrdinaryFrameBody, OrchestrateReply, OrchestrateRequest,
+    CHANNEL_CONTRACT_ID as ORDINARY_CHANNEL_CONTRACT_ID,
+    CHANNEL_WIRE_REVISION as ORDINARY_CHANNEL_WIRE_REVISION, Frame as OrdinaryFrame,
+    FrameBody as OrdinaryFrameBody, FrameCodecError as OrdinaryFrameCodecError,
+    PROTOCOL_VERSION as ORDINARY_PROTOCOL_VERSION, SignalFrameCodec as OrdinarySignalFrameCodec,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -37,15 +32,15 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{OrchestrateStore, store::StoreError};
+use crate::{OrchestrateStore, ordinary::OrdinaryOutcome, store::StoreError};
 
 const MAXIMUM_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
 /// Starts both generated Signal listeners and runs until the task is stopped.
-///
-/// The readiness line is emitted only after both Unix sockets are bound.  The
-/// textual line is a process readiness event, never part of the Signal wire.
-pub async fn run(configure: Configure, store: OrchestrateStore) -> Result<(), TransportError> {
+pub async fn run(
+    configure: meta_signal_orchestrate::Configure,
+    store: OrchestrateStore,
+) -> Result<(), TransportError> {
     let runtime = TransportRuntime::bind(configure, store)?;
     println!("orchestrate-nexus ready");
     let (shutdown_sender, shutdown) = oneshot::channel();
@@ -61,13 +56,16 @@ pub struct TransportRuntime {
 }
 
 impl TransportRuntime {
-    /// Binds the ordinary and privileged sockets.  Successful return is the
-    /// transport readiness event used by in-process tests.
-    pub fn bind(configure: Configure, store: OrchestrateStore) -> Result<Self, TransportError> {
-        Self::prepare_socket_path(Path::new(&configure.ordinary_socket_path.0))?;
-        Self::prepare_socket_path(Path::new(&configure.meta_socket_path.0))?;
-        let ordinary = UnixListener::bind(&configure.ordinary_socket_path.0)?;
-        let meta = UnixListener::bind(&configure.meta_socket_path.0)?;
+    pub fn bind(
+        configure: meta_signal_orchestrate::Configure,
+        store: OrchestrateStore,
+    ) -> Result<Self, TransportError> {
+        let ordinary_path = Path::new(configure.ordinary_socket_path.as_ref());
+        let meta_path = Path::new(configure.meta_socket_path.as_ref());
+        Self::prepare_socket_path(ordinary_path)?;
+        Self::prepare_socket_path(meta_path)?;
+        let ordinary = UnixListener::bind(ordinary_path)?;
+        let meta = UnixListener::bind(meta_path)?;
         Ok(Self {
             ordinary,
             meta,
@@ -91,10 +89,6 @@ impl TransportRuntime {
         }
     }
 
-    /// Serves connections until the supplied shutdown event resolves.
-    ///
-    /// Connection tasks are cancelled and joined before this method returns,
-    /// making the shutdown event a clean boundary for socket tests.
     pub async fn serve_until(
         self,
         mut shutdown: oneshot::Receiver<()>,
@@ -103,7 +97,6 @@ impl TransportRuntime {
         let meta = self.meta;
         let store = self.store;
         let mut connections = JoinSet::new();
-
         loop {
             tokio::select! {
                 _ = &mut shutdown => {
@@ -145,30 +138,10 @@ impl OrdinarySignalTransport {
         }
     }
 
-    /// Exchanges one fully generated ordinary frame over a fresh Unix socket.
     pub async fn exchange(&self, frame: OrdinaryFrame) -> Result<OrdinaryFrame, TransportError> {
         let mut socket = OrdinarySocket::connect(&self.socket_path).await?;
         socket.write_frame(&frame).await?;
         socket.read_frame().await
-    }
-
-    /// Sends a typed ordinary request and returns its typed frame reply.
-    pub async fn request(
-        &self,
-        exchange: OrdinaryExchangeIdentifier,
-        request: OrdinaryRequest<OrchestrateRequest>,
-    ) -> Result<OrdinaryReply<OrchestrateReply>, TransportError> {
-        let route = request.route()?;
-        let frame = OrdinaryFrame::new(route, OrdinaryFrameBody::Request { exchange, request });
-        let reply = self.exchange(frame).await?;
-        match reply.into_body() {
-            OrdinaryExchangeFrameBody::Reply {
-                exchange: actual,
-                reply,
-            } if actual == exchange => Ok(reply),
-            OrdinaryExchangeFrameBody::Reply { .. } => Err(TransportError::ExchangeMismatch),
-            _ => Err(TransportError::UnexpectedReplyFrame),
-        }
     }
 }
 
@@ -184,30 +157,10 @@ impl MetaSignalTransport {
         }
     }
 
-    /// Exchanges one fully generated meta frame over a fresh Unix socket.
     pub async fn exchange(&self, frame: MetaFrame) -> Result<MetaFrame, TransportError> {
         let mut socket = MetaSocket::connect(&self.socket_path).await?;
         socket.write_frame(&frame).await?;
         socket.read_frame().await
-    }
-
-    /// Sends a typed privileged request and returns its typed frame reply.
-    pub async fn request(
-        &self,
-        exchange: ExchangeIdentifier,
-        request: Request<MetaOrchestrateRequest>,
-    ) -> Result<Reply<MetaOrchestrateReply>, TransportError> {
-        let route = request.route()?;
-        let frame = MetaFrame::new(route, MetaFrameBody::Request { exchange, request });
-        let reply = self.exchange(frame).await?;
-        match reply.into_body() {
-            ExchangeFrameBody::Reply {
-                exchange: actual,
-                reply,
-            } if actual == exchange => Ok(reply),
-            ExchangeFrameBody::Reply { .. } => Err(TransportError::ExchangeMismatch),
-            _ => Err(TransportError::UnexpectedReplyFrame),
-        }
     }
 }
 
@@ -220,40 +173,37 @@ impl OrdinarySocket {
         Self { stream }
     }
 
-    async fn connect(socket_path: &std::path::Path) -> Result<Self, TransportError> {
+    async fn connect(socket_path: &Path) -> Result<Self, TransportError> {
         Ok(Self::new(UnixStream::connect(socket_path).await?))
     }
 
     async fn read_frame(&mut self) -> Result<OrdinaryFrame, TransportError> {
         let bytes = LengthPrefixedSignal::read(&mut self.stream).await?;
-        Ok(OrdinaryFrame::decode_length_prefixed(bytes.as_slice())?)
+        OrdinaryFrame::decode_length_prefixed(bytes.as_slice())
+            .map_err(TransportError::OrdinaryFrame)
     }
 
     async fn write_frame(&mut self, frame: &OrdinaryFrame) -> Result<(), TransportError> {
-        LengthPrefixedSignal::from_ordinary(frame)?
-            .write(&mut self.stream)
-            .await
+        LengthPrefixedSignal::from_bytes(
+            frame
+                .encode_length_prefixed()
+                .map_err(TransportError::OrdinaryFrame)?,
+        )?
+        .write(&mut self.stream)
+        .await
     }
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let route = frame.short_header().route();
-        let OrdinaryFrameBody::Request { exchange, request } = frame.into_body() else {
-            return Err(OrdinaryOperationDispatchError::UnexpectedFrameBody.into());
+        let OrdinaryFrameBody::Request(request) = frame.body else {
+            return Err(TransportError::UnexpectedRequestFrame);
         };
-        if request.route()? != route {
-            return Err(OrdinaryOperationDispatchError::HeaderRouteMismatch {
-                expected: request.route()?,
-                actual: route,
-            }
-            .into());
-        }
-        let reply = {
-            let mut store = store.lock().await;
-            replies_from_ordinary_request(&mut store, request)?
+        let outcome = store.lock().await.ordinary(request)?;
+        let body = match outcome {
+            OrdinaryOutcome::Reply(reply) => OrdinaryFrameBody::Reply(reply),
+            OrdinaryOutcome::Refusal(refusal) => OrdinaryFrameBody::Refusal(refusal),
         };
-        let frame = OrdinaryFrame::new(route, OrdinaryFrameBody::Reply { exchange, reply });
-        self.write_frame(&frame).await
+        self.write_frame(&ordinary_frame(body)).await
     }
 }
 
@@ -266,40 +216,51 @@ impl MetaSocket {
         Self { stream }
     }
 
-    async fn connect(socket_path: &std::path::Path) -> Result<Self, TransportError> {
+    async fn connect(socket_path: &Path) -> Result<Self, TransportError> {
         Ok(Self::new(UnixStream::connect(socket_path).await?))
     }
 
     async fn read_frame(&mut self) -> Result<MetaFrame, TransportError> {
         let bytes = LengthPrefixedSignal::read(&mut self.stream).await?;
-        Ok(MetaFrame::decode_length_prefixed(bytes.as_slice())?)
+        MetaFrame::decode_length_prefixed(bytes.as_slice()).map_err(TransportError::MetaFrame)
     }
 
     async fn write_frame(&mut self, frame: &MetaFrame) -> Result<(), TransportError> {
-        LengthPrefixedSignal::from_meta(frame)?
-            .write(&mut self.stream)
-            .await
+        LengthPrefixedSignal::from_bytes(
+            frame
+                .encode_length_prefixed()
+                .map_err(TransportError::MetaFrame)?,
+        )?
+        .write(&mut self.stream)
+        .await
     }
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let route = frame.short_header().route();
-        let MetaFrameBody::Request { exchange, request } = frame.into_body() else {
-            return Err(OperationDispatchError::UnexpectedFrameBody.into());
+        let MetaFrameBody::Request(request) = frame.body else {
+            return Err(TransportError::UnexpectedRequestFrame);
         };
-        if request.route()? != route {
-            return Err(OperationDispatchError::HeaderRouteMismatch {
-                expected: request.route()?,
-                actual: route,
-            }
-            .into());
-        }
-        let reply = {
-            let mut store = store.lock().await;
-            replies_from_meta_request(&mut store, request)?
-        };
-        let frame = MetaFrame::new(route, MetaFrameBody::Reply { exchange, reply });
-        self.write_frame(&frame).await
+        let reply = store.lock().await.meta(request)?;
+        self.write_frame(&meta_frame(MetaFrameBody::Reply(reply)))
+            .await
+    }
+}
+
+fn ordinary_frame(body: OrdinaryFrameBody) -> OrdinaryFrame {
+    OrdinaryFrame {
+        channel_contract_id: ORDINARY_CHANNEL_CONTRACT_ID,
+        channel_wire_revision: ORDINARY_CHANNEL_WIRE_REVISION,
+        protocol_version: ORDINARY_PROTOCOL_VERSION,
+        body,
+    }
+}
+
+fn meta_frame(body: MetaFrameBody) -> MetaFrame {
+    MetaFrame {
+        channel_contract_id: META_CHANNEL_CONTRACT_ID,
+        channel_wire_revision: META_CHANNEL_WIRE_REVISION,
+        protocol_version: META_PROTOCOL_VERSION,
+        body,
     }
 }
 
@@ -311,7 +272,7 @@ impl LengthPrefixedSignal {
     async fn read(stream: &mut UnixStream) -> Result<Self, TransportError> {
         let mut prefix = [0; 4];
         stream.read_exact(&mut prefix).await?;
-        let length = u32::from_be_bytes(prefix) as usize;
+        let length = u32::from_le_bytes(prefix) as usize;
         if length > MAXIMUM_FRAME_BYTES {
             return Err(TransportError::FrameTooLarge {
                 maximum: MAXIMUM_FRAME_BYTES,
@@ -323,14 +284,6 @@ impl LengthPrefixedSignal {
         bytes.resize(4 + length, 0);
         stream.read_exact(&mut bytes[4..]).await?;
         Ok(Self { bytes })
-    }
-
-    fn from_ordinary(frame: &OrdinaryFrame) -> Result<Self, TransportError> {
-        Self::from_bytes(frame.encode_length_prefixed()?)
-    }
-
-    fn from_meta(frame: &MetaFrame) -> Result<Self, TransportError> {
-        Self::from_bytes(frame.encode_length_prefixed()?)
     }
 
     fn from_bytes(bytes: Vec<u8>) -> Result<Self, TransportError> {
@@ -356,69 +309,20 @@ impl LengthPrefixedSignal {
     }
 }
 
-fn replies_from_ordinary_request(
-    store: &mut OrchestrateStore,
-    request: OrdinaryRequest<OrchestrateRequest>,
-) -> Result<OrdinaryReply<OrchestrateReply>, TransportError> {
-    let (head, tail) = request.payloads.into_head_and_tail();
-    let head = OrdinarySubReply::Ok(store.ordinary(head)?);
-    let tail = tail
-        .into_iter()
-        .map(|request| store.ordinary(request).map(OrdinarySubReply::Ok))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(OrdinaryReply::committed(
-        OrdinaryNonEmpty::from_head_and_tail(head, tail),
-    ))
-}
-
-fn replies_from_meta_request(
-    store: &mut OrchestrateStore,
-    request: Request<MetaOrchestrateRequest>,
-) -> Result<Reply<MetaOrchestrateReply>, TransportError> {
-    let (head, tail) = request.payloads.into_head_and_tail();
-    let head = SubReply::Ok(store.meta(head)?);
-    let tail = tail
-        .into_iter()
-        .map(|request| store.meta(request).map(SubReply::Ok))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Reply::committed(NonEmpty::from_head_and_tail(head, tail)))
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum TransportError {
     #[error("Unix socket I/O failed: {0}")]
     Io(#[from] std::io::Error),
-
     #[error("an Orchestrate Nexus already owns socket {path:?}")]
     SocketAlreadyActive { path: PathBuf },
-
-    #[error("generated Signal frame validation failed: {0}")]
-    Frame(#[from] signal_frame::FrameError),
-
-    #[error("generated ordinary Signal frame validation failed: {0}")]
-    OrdinaryFrame(#[from] signal_frame_ordinary::FrameError),
-
-    #[error("generated Signal request route failed: {0}")]
-    Route(#[from] signal_frame::WireRouteError),
-
-    #[error("generated ordinary Signal request route failed: {0}")]
-    OrdinaryRoute(#[from] signal_frame_ordinary::WireRouteError),
-
-    #[error("generated Signal dispatch failed: {0}")]
-    Dispatch(#[from] signal_frame::OperationDispatchError),
-
-    #[error("generated ordinary Signal dispatch failed: {0}")]
-    OrdinaryDispatch(#[from] signal_frame_ordinary::OperationDispatchError),
-
+    #[error("generated meta Signal frame validation failed: {0:?}")]
+    MetaFrame(MetaFrameCodecError),
+    #[error("generated ordinary Signal frame validation failed: {0:?}")]
+    OrdinaryFrame(OrdinaryFrameCodecError),
     #[error("store failed: {0}")]
     Store(#[from] StoreError),
-
     #[error("length-prefixed Signal frame exceeds {maximum} bytes: {found} bytes")]
     FrameTooLarge { maximum: usize, found: usize },
-
-    #[error("received a reply for a different exchange")]
-    ExchangeMismatch,
-
-    #[error("expected a generated Signal reply frame")]
-    UnexpectedReplyFrame,
+    #[error("expected a generated Signal request frame")]
+    UnexpectedRequestFrame,
 }
