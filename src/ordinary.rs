@@ -7,7 +7,7 @@
 //! values.
 
 use signal_orchestrate::{
-    Lock, LockId, LockRequest, Observation, ObserveSelection, Refusal, Reply,
+    Lock, LockRequest, Observation, ObserveSelection, Refusal, Reply,
 };
 
 use crate::store::StoreError;
@@ -19,7 +19,7 @@ pub trait Locks {
 
 /// Removes exactly the Lock named by its durable, non-reusable identity.
 pub trait Releases {
-    fn release(&mut self, lock_id: LockId) -> Result<OrdinaryOutcome, StoreError>;
+    fn release(&mut self, lock_id: i64) -> Result<OrdinaryOutcome, StoreError>;
 }
 
 /// The wire-root result of one ordinary transition.
@@ -40,11 +40,11 @@ pub trait Observes {
 
 /// The complete durable fact accepted and returned by the Nexus.
 pub trait IdentifiesLock {
-    fn lock_id(&self) -> &LockId;
+    fn lock_id(&self) -> &i64;
 }
 
 impl IdentifiesLock for Lock {
-    fn lock_id(&self) -> &LockId {
-        &self.lock_id
+    fn lock_id(&self) -> &i64 {
+        &self.0
     }
 }

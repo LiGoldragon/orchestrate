@@ -14,16 +14,14 @@ use std::{
 };
 
 use meta_signal_orchestrate::{
-    CHANNEL_CONTRACT_ID as META_CHANNEL_CONTRACT_ID,
-    CHANNEL_WIRE_REVISION as META_CHANNEL_WIRE_REVISION, Frame as MetaFrame,
-    FrameBody as MetaFrameBody, FrameCodecError as MetaFrameCodecError,
-    PROTOCOL_VERSION as META_PROTOCOL_VERSION, SignalFrameCodec as MetaSignalFrameCodec,
+    Body as MetaBody, Frame as MetaFrame,
+    FrameCodecError as MetaFrameCodecError,
+    SIGNAL_VERSION as META_SIGNAL_VERSION, SignalFrameCodec as MetaSignalFrameCodec,
 };
 use signal_orchestrate::{
-    CHANNEL_CONTRACT_ID as ORDINARY_CHANNEL_CONTRACT_ID,
-    CHANNEL_WIRE_REVISION as ORDINARY_CHANNEL_WIRE_REVISION, Frame as OrdinaryFrame,
-    FrameBody as OrdinaryFrameBody, FrameCodecError as OrdinaryFrameCodecError,
-    PROTOCOL_VERSION as ORDINARY_PROTOCOL_VERSION, SignalFrameCodec as OrdinarySignalFrameCodec,
+    Body as OrdinaryBody, Frame as OrdinaryFrame,
+    FrameCodecError as OrdinaryFrameCodecError,
+    SIGNAL_VERSION as ORDINARY_SIGNAL_VERSION, SignalFrameCodec as OrdinarySignalFrameCodec,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -60,8 +58,8 @@ impl TransportRuntime {
         configure: meta_signal_orchestrate::Configure,
         store: OrchestrateStore,
     ) -> Result<Self, TransportError> {
-        let ordinary_path = Path::new(configure.ordinary_socket_path.as_ref());
-        let meta_path = Path::new(configure.meta_socket_path.as_ref());
+        let ordinary_path = Path::new(configure.0.as_str());
+        let meta_path = Path::new(configure.1.as_str());
         Self::prepare_socket_path(ordinary_path)?;
         Self::prepare_socket_path(meta_path)?;
         let ordinary = UnixListener::bind(ordinary_path)?;
@@ -195,13 +193,13 @@ impl OrdinarySocket {
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let OrdinaryFrameBody::Request(request) = frame.body else {
+        let OrdinaryBody::Request(request) = frame.1 else {
             return Err(TransportError::UnexpectedRequestFrame);
         };
         let outcome = store.lock().await.ordinary(request)?;
         let body = match outcome {
-            OrdinaryOutcome::Reply(reply) => OrdinaryFrameBody::Reply(reply),
-            OrdinaryOutcome::Refusal(refusal) => OrdinaryFrameBody::Refusal(refusal),
+            OrdinaryOutcome::Reply(reply) => OrdinaryBody::Reply(reply),
+            OrdinaryOutcome::Refusal(refusal) => OrdinaryBody::Refusal(refusal),
         };
         self.write_frame(&ordinary_frame(body)).await
     }
@@ -237,31 +235,21 @@ impl MetaSocket {
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let MetaFrameBody::Request(request) = frame.body else {
+        let MetaBody::Request(request) = frame.1 else {
             return Err(TransportError::UnexpectedRequestFrame);
         };
         let reply = store.lock().await.meta(request)?;
-        self.write_frame(&meta_frame(MetaFrameBody::Reply(reply)))
+        self.write_frame(&meta_frame(MetaBody::Reply(reply)))
             .await
     }
 }
 
-fn ordinary_frame(body: OrdinaryFrameBody) -> OrdinaryFrame {
-    OrdinaryFrame {
-        channel_contract_id: ORDINARY_CHANNEL_CONTRACT_ID,
-        channel_wire_revision: ORDINARY_CHANNEL_WIRE_REVISION,
-        protocol_version: ORDINARY_PROTOCOL_VERSION,
-        body,
-    }
+fn ordinary_frame(body: OrdinaryBody) -> OrdinaryFrame {
+    OrdinaryFrame(ORDINARY_SIGNAL_VERSION, body)
 }
 
-fn meta_frame(body: MetaFrameBody) -> MetaFrame {
-    MetaFrame {
-        channel_contract_id: META_CHANNEL_CONTRACT_ID,
-        channel_wire_revision: META_CHANNEL_WIRE_REVISION,
-        protocol_version: META_PROTOCOL_VERSION,
-        body,
-    }
+fn meta_frame(body: MetaBody) -> MetaFrame {
+    MetaFrame(META_SIGNAL_VERSION, body)
 }
 
 struct LengthPrefixedSignal {

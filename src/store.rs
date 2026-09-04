@@ -1,15 +1,15 @@
 //! Orchestrate Nexus-owned durable Lock state.
 
 use crate::ordinary::{Locks, Observes, OrdinaryOutcome, Releases};
-use meta_signal_orchestrate::{Configure, Configured, Reply as MetaReply, Request as MetaRequest};
+use meta_signal_orchestrate::{Configure, Reply as MetaReply, Request as MetaRequest};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     Assertion, Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, Retraction,
     SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
 };
 use signal_orchestrate::{
-    Lock, LockId, LockOverlap, LockRejection, LockRequest, Locks as LockSet, Observation,
-    ObserveSelection, Refusal as OrdinaryRefusal, ReleaseRejection, Reply as OrdinaryReply,
+    Lock, LockOverlap, LockRejection, LockRequest, Observation,
+    ObserveSelection, ReleaseRejection, Reply as OrdinaryReply,
     Request as OrdinaryRequest,
 };
 use std::{
@@ -68,7 +68,7 @@ struct StoredLock {
 }
 impl EngineRecord for StoredLock {
     fn record_key(&self) -> RecordKey {
-        RecordKey::new(self.lock.lock_id.0.to_string())
+        RecordKey::new(self.lock.0.to_string())
     }
 }
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
@@ -87,14 +87,13 @@ struct NormalizedLockRequest {
 
 impl NormalizedLockRequest {
     fn from_request(mut request: LockRequest) -> Result<Self, StoreError> {
-        if request.lock_paths.0.is_empty() {
+        if request.2.is_empty() {
             return Err(StoreError::EmptyPathSet);
         }
         let mut paths = BTreeSet::new();
-        for path in &mut request.lock_paths.0 {
-            let normalized = NormalizedLockPath::from_source(path.as_ref())?.0;
-            *path = signal_orchestrate::LockPath::try_from(normalized.clone())
-                .expect("normalized absolute paths are representable Datomic strings");
+        for path in &mut request.2 {
+            let normalized = NormalizedLockPath::from_source(path.as_str())?.0;
+            *path = normalized.clone();
             if !paths.insert(normalized.clone()) {
                 return Err(StoreError::DuplicateNormalizedPath { path: normalized });
             }
@@ -103,27 +102,21 @@ impl NormalizedLockRequest {
     }
 
     fn duplicates_name_of(&self, lock: &Lock) -> bool {
-        self.request.lock_name == lock.lock_name
+        self.request.0 == lock.1
     }
 
-    fn overlapping_path_of(&self, lock: &Lock) -> Option<signal_orchestrate::LockPath> {
-        self.request.lock_paths.0.iter().find_map(|requested| {
-            lock.lock_paths.0.iter().find_map(|held| {
-                NormalizedLockPath::from_normalized(requested.as_ref())
-                    .overlaps(&NormalizedLockPath::from_normalized(held.as_ref()))
+    fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
+        self.request.2.iter().find_map(|requested| {
+            lock.3.iter().find_map(|held| {
+                NormalizedLockPath::from_normalized(requested.as_str())
+                    .overlaps(&NormalizedLockPath::from_normalized(held.as_str()))
                     .then(|| requested.clone())
             })
         })
     }
 
-    fn into_lock(self, lock_id: LockId) -> Lock {
-        Lock {
-            lock_id,
-            lock_name: self.request.lock_name,
-            flow_id: self.request.flow_id,
-            lock_paths: self.request.lock_paths,
-            lock_reason: self.request.lock_reason,
-        }
+    fn into_lock(self, lock_id: i64) -> Lock {
+        Lock(lock_id, self.request.0, self.request.1, self.request.2, self.request.3)
     }
 }
 
@@ -368,7 +361,7 @@ impl OrchestrateStore {
                     ))?;
                     self.configuration = configure.clone();
                 }
-                Ok(MetaReply::Configured(Configured { configure }))
+                Ok(MetaReply::Configured(configure))
             }
         }
     }
@@ -381,10 +374,10 @@ impl OrchestrateStore {
             .map(|stored| stored.lock.clone())
             .collect();
         locks.sort_by(|left, right| {
-            left.lock_name
-                .as_ref()
-                .cmp(right.lock_name.as_ref())
-                .then_with(|| left.lock_id.0.cmp(&right.lock_id.0))
+            left.1
+                .as_str()
+                .cmp(right.1.as_str())
+                .then_with(|| left.0.cmp(&right.0))
         });
         Ok(locks)
     }
@@ -394,16 +387,13 @@ impl Locks for OrchestrateStore {
         let request = NormalizedLockRequest::from_request(request)?;
         for holder in self.current_locks()? {
             if request.duplicates_name_of(&holder) {
-                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::LockRejected(
+                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::LockRejected(
                     LockRejection::DuplicateName(holder),
                 )));
             }
-            if let Some(lock_path) = request.overlapping_path_of(&holder) {
-                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::LockRejected(
-                    LockRejection::PathOverlap(LockOverlap {
-                        lock_path,
-                        lock: holder,
-                    }),
+            if let Some(path) = request.overlapping_path_of(&holder) {
+                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::LockRejected(
+                    LockRejection::PathOverlap(LockOverlap(path, holder)),
                 )));
             }
         }
@@ -419,7 +409,7 @@ impl Locks for OrchestrateStore {
             .next_lock_id
             .checked_add(1)
             .ok_or(StoreError::LockIdExhausted)?;
-        let lock = request.into_lock(LockId(allocator.next_lock_id));
+        let lock = request.into_lock(allocator.next_lock_id);
         self.engine.commit_atomic(
             self.engine
                 .begin_atomic_commit()
@@ -430,15 +420,15 @@ impl Locks for OrchestrateStore {
     }
 }
 impl Releases for OrchestrateStore {
-    fn release(&mut self, lock_id: LockId) -> Result<OrdinaryOutcome, StoreError> {
-        let key = RecordKey::new(lock_id.0.to_string());
+    fn release(&mut self, lock_id: i64) -> Result<OrdinaryOutcome, StoreError> {
+        let key = RecordKey::new(lock_id.to_string());
         let stored = match self
             .engine
             .match_records(QueryPlan::key(self.locks, key.clone()))?
             .records()
         {
             [] => {
-                return Ok(OrdinaryOutcome::Refusal(OrdinaryRefusal::ReleaseRejected(
+                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::ReleaseRejected(
                     ReleaseRejection::UnknownLockId,
                 )));
             }
@@ -452,7 +442,7 @@ impl Releases for OrchestrateStore {
 impl Observes for OrchestrateStore {
     fn observe(&self, selection: ObserveSelection) -> Result<Observation, StoreError> {
         match selection {
-            ObserveSelection::Locks => Ok(Observation::Locks(LockSet(self.current_locks()?))),
+            ObserveSelection::Locks => Ok(Observation::Locks(self.current_locks()?)),
         }
     }
 }
@@ -502,22 +492,18 @@ mod tests {
             .expect("inspect legacy store");
         assert_eq!(preflight.active_lock_count(), 1);
 
-        let defaults = Configure {
-            ordinary_socket_path: directory
+        let defaults = Configure(
+            directory
                 .path()
                 .join("ordinary.sock")
                 .display()
-                .to_string()
-                .try_into()
-                .expect("temporary path is representable"),
-            meta_socket_path: directory
+                .to_string(),
+            directory
                 .path()
                 .join("meta.sock")
                 .display()
-                .to_string()
-                .try_into()
-                .expect("temporary path is representable"),
-        };
+                .to_string(),
+        );
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),
             Err(StoreError::LegacyActiveLocks { count: 1 })

@@ -44,7 +44,7 @@ impl IsolatedXdg {
     }
 
     fn configure(&self, ordinary: &Path, meta: &Path) -> String {
-        format!("Configure.{{{} {}}}", ordinary.display(), meta.display())
+        format!("Configure.{{ {} {} }}", ordinary.display(), meta.display())
     }
 
     fn command(&self, binary: &str) -> Command {
@@ -131,7 +131,7 @@ fn zero_argument_startup_initializes_default_store_and_rejects_extras() {
             "default Configure",
         ),
         format!(
-            "Configured.{{{{{} {}}}}}",
+            "Configured.{{ {} {} }}",
             roots.ordinary_socket().display(),
             roots.meta_socket().display()
         )
@@ -159,7 +159,7 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
     let changed_meta = roots.socket_directory().join("changed-meta.sock");
     let changed_configure = roots.configure(&changed_ordinary, &changed_meta);
     let expected = format!(
-        "Configured.{{{{{} {}}}}}",
+        "Configured.{{ {} {} }}",
         changed_ordinary.display(),
         changed_meta.display()
     );
@@ -194,7 +194,7 @@ fn meta_configuration_persists_and_a_restart_resumes_it() {
             &changed_configure,
         ),
         format!(
-            "Configured.{{{{{} {}}}}}",
+            "Configured.{{ {} {} }}",
             changed_ordinary.display(),
             changed_meta.display()
         ),
@@ -226,11 +226,11 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
     );
     let lock_path = temporary.path().join("cli-owned");
     let lock_request = format!(
-        "Lock.{{cli-lock 01a03eda [{}] cli-reason}}",
+        "Lock.{{ cli-lock 01a03eda [ {} ] cli-reason }}",
         lock_path.display()
     );
     let locked = format!(
-        "Locked.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+        "Locked.{{ 1 cli-lock 01a03eda [ {} ] cli-reason }}",
         lock_path.display()
     );
     assert_eq!(
@@ -260,7 +260,7 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
             &lock_request
         ),
         format!(
-            "LockRejected.DuplicateName.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+            "LockRejected.DuplicateName.{{ 1 cli-lock 01a03eda [ {} ] cli-reason }}",
             lock_path.display()
         ),
     );
@@ -277,7 +277,7 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
             "Release.1"
         ),
         format!(
-            "Released.{{1 cli-lock 01a03eda [{}] cli-reason}}",
+            "Released.{{ 1 cli-lock 01a03eda [ {} ] cli-reason }}",
             lock_path.display()
         ),
     );
@@ -306,6 +306,44 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
         !obsolete.status.success(),
         "the old nested Observe request is not accepted"
     );
+    stop(&mut nexus);
+}
+
+#[test]
+fn no_argument_prints_ethos_source() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
+    let no_arg = roots
+        .command(ordinary_binary)
+        .env("ORCHESTRATE_SOCKET", roots.ordinary_socket())
+        .output()
+        .expect("no-arg run");
+    assert!(no_arg.status.success());
+    let stdout = String::from_utf8(no_arg.stdout).unwrap();
+    assert!(
+        stdout.contains("Signal.{ 1 0 0 }"),
+        "ethos source should contain Signal version"
+    );
+}
+
+#[test]
+fn invalid_request_fails_on_stderr() {
+    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
+    let roots = IsolatedXdg::new(&temporary);
+    let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
+    let mut nexus = start(env!("CARGO_BIN_EXE_orchestrate-nexus"), &roots);
+    wait_until_ready(&mut nexus);
+    let bad = invoke(
+        &roots,
+        ordinary_binary,
+        "ORCHESTRATE_SOCKET",
+        &roots.ordinary_socket(),
+        "NotARequest.{ bad }",
+    );
+    assert!(!bad.status.success());
+    let stderr = String::from_utf8(bad.stderr).unwrap();
+    assert!(!stderr.is_empty());
     stop(&mut nexus);
 }
 

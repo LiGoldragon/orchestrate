@@ -31,21 +31,14 @@ impl DefaultConfiguration {
         let ordinary_socket_path = socket_directory
             .join(ORDINARY_SOCKET_FILE)
             .display()
-            .to_string()
-            .try_into()
-            .map_err(|_| DefaultConfigurationError::InvalidSocketPath)?;
+            .to_string();
         let meta_socket_path = socket_directory
             .join(META_SOCKET_FILE)
             .display()
-            .to_string()
-            .try_into()
-            .map_err(|_| DefaultConfigurationError::InvalidSocketPath)?;
+            .to_string();
         Ok(Self {
             store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
-            configuration: Configure {
-                ordinary_socket_path,
-                meta_socket_path,
-            },
+            configuration: Configure(ordinary_socket_path, meta_socket_path),
         })
     }
 
@@ -103,6 +96,4 @@ pub enum DefaultConfigurationError {
         variable: &'static str,
         path: PathBuf,
     },
-    #[error("derived socket path is not representable as Datomic text")]
-    InvalidSocketPath,
 }

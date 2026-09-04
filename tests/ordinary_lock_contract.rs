@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use meta_signal_orchestrate::Configure;
 use orchestrate::{OrchestrateStore, ordinary::OrdinaryOutcome};
 use signal_orchestrate::{
-    FlowId, Lock, LockOverlap, LockPaths, LockRejection, LockRequest, Locks, Observation,
-    ObserveSelection, Refusal, ReleaseRejection, Reply, Request,
+    Lock, LockOverlap, LockRejection, LockRequest, Observation,
+    ObserveSelection, ReleaseRejection, Reply, Request,
 };
 
 struct StoreFixture {
@@ -25,17 +25,12 @@ impl StoreFixture {
     }
 
     fn lock_request(&self, name: &str, paths: &[&str]) -> LockRequest {
-        LockRequest {
-            lock_name: name.try_into().expect("test Lock name"),
-            flow_id: "test-flow".try_into().expect("test Flow ID"),
-            lock_paths: LockPaths(
-                paths
-                    .iter()
-                    .map(|path| (*path).try_into().expect("test absolute path"))
-                    .collect(),
-            ),
-            lock_reason: "behavioral proof".try_into().expect("test reason"),
-        }
+        LockRequest(
+            name.to_owned(),
+            "test-flow".to_owned(),
+            paths.iter().map(|path| (*path).to_owned()).collect(),
+            "behavioral proof".to_owned(),
+        )
     }
 
     fn request(&mut self, request: Request) -> OrdinaryOutcome {
@@ -44,22 +39,18 @@ impl StoreFixture {
 }
 
 fn configuration(directory: &tempfile::TempDir) -> Configure {
-    Configure {
-        ordinary_socket_path: directory
+    Configure(
+        directory
             .path()
             .join("ordinary.sock")
             .display()
-            .to_string()
-            .try_into()
-            .expect("temporary socket path"),
-        meta_socket_path: directory
+            .to_string(),
+        directory
             .path()
             .join("meta.sock")
             .display()
-            .to_string()
-            .try_into()
-            .expect("temporary socket path"),
-    }
+            .to_string(),
+    )
 }
 
 fn path(fixture: &StoreFixture, segment: &str) -> String {
@@ -70,13 +61,6 @@ fn reply(outcome: OrdinaryOutcome) -> Reply {
     match outcome {
         OrdinaryOutcome::Reply(reply) => reply,
         OrdinaryOutcome::Refusal(refusal) => panic!("expected reply, found refusal {refusal:?}"),
-    }
-}
-
-fn refusal(outcome: OrdinaryOutcome) -> Refusal {
-    match outcome {
-        OrdinaryOutcome::Reply(reply) => panic!("expected refusal, found reply {reply:?}"),
-        OrdinaryOutcome::Refusal(refusal) => refusal,
     }
 }
 
@@ -96,20 +80,19 @@ fn locks_are_atomic_complete_and_released_by_durable_id() {
         fixture.lock_request("alpha", &[&first, &second]),
     )));
 
-    assert_eq!(acquired.lock_name.as_ref(), "alpha");
-    assert_eq!(acquired.flow_id.as_ref(), "test-flow");
+    assert_eq!(acquired.1.as_str(), "alpha");
+    assert_eq!(acquired.2.as_str(), "test-flow");
     assert_eq!(
         acquired
-            .lock_paths
-            .0
+            .3
             .iter()
-            .map(AsRef::as_ref)
+            .map(String::as_str)
             .collect::<Vec<_>>(),
         vec![first.as_str(), second.as_str()]
     );
-    assert_eq!(acquired.lock_reason.as_ref(), "behavioral proof");
+    assert_eq!(acquired.4.as_str(), "behavioral proof");
     assert_eq!(
-        reply(fixture.request(Request::Release(acquired.lock_id.clone()))),
+        reply(fixture.request(Request::Release(acquired.0))),
         Reply::Released(acquired),
     );
 }
@@ -121,25 +104,25 @@ fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let held = locked(fixture.request(Request::Lock(fixture.lock_request("alpha", &[&owned]))));
 
     assert_eq!(
-        refusal(fixture.request(Request::Lock(
+        reply(fixture.request(Request::Lock(
             fixture.lock_request("alpha", &[&path(&fixture, "elsewhere")])
         ))),
-        Refusal::LockRejected(LockRejection::DuplicateName(held.clone())),
+        Reply::LockRejected(LockRejection::DuplicateName(held.clone())),
     );
     let requested = format!("{owned}/child");
     assert_eq!(
-        refusal(fixture.request(Request::Lock(fixture.lock_request("beta", &[&requested])))),
-        Refusal::LockRejected(LockRejection::PathOverlap(LockOverlap {
-            lock_path: requested.as_str().try_into().expect("test path"),
-            lock: held,
-        })),
+        reply(fixture.request(Request::Lock(fixture.lock_request("beta", &[&requested])))),
+        Reply::LockRejected(LockRejection::PathOverlap(LockOverlap(
+            requested.clone(),
+            held,
+        ))),
     );
     let independently_available = path(&fixture, "independently-available");
     assert!(matches!(
-        refusal(fixture.request(Request::Lock(
+        reply(fixture.request(Request::Lock(
             fixture.lock_request("gamma", &[&independently_available, &owned])
         ))),
-        Refusal::LockRejected(LockRejection::PathOverlap(_)),
+        Reply::LockRejected(LockRejection::PathOverlap(_)),
     ));
     assert!(matches!(
         reply(fixture.request(Request::Lock(
@@ -161,7 +144,7 @@ fn observe_locks_is_a_name_then_id_ordered_point_in_time_value() {
 
     assert_eq!(
         reply(fixture.request(Request::Observe(ObserveSelection::Locks))),
-        Reply::Observed(Observation::Locks(Locks(vec![alpha, beta]))),
+        Reply::Observed(Observation::Locks(vec![alpha, beta])),
     );
 }
 
@@ -185,7 +168,7 @@ fn released_ids_never_reach_a_later_lock_after_restart() {
     assert_eq!(
         reply(
             first_store
-                .ordinary(Request::Release(first.lock_id.clone()))
+                .ordinary(Request::Release(first.0))
                 .expect("release first lock")
         ),
         Reply::Released(first.clone()),
@@ -204,24 +187,24 @@ fn released_ids_never_reach_a_later_lock_after_restart() {
             )))
             .expect("acquire later lock"),
     );
-    assert_ne!(first.lock_id, later.lock_id);
+    assert_ne!(first.0, later.0);
     assert_eq!(
-        refusal(
+        reply(
             reopened
-                .ordinary(Request::Release(first.lock_id))
+                .ordinary(Request::Release(first.0))
                 .expect("reject stale release")
         ),
-        Refusal::ReleaseRejected(ReleaseRejection::UnknownLockId),
+        Reply::ReleaseRejected(ReleaseRejection::UnknownLockId),
     );
 }
 
 fn lock_request(name: &str, flow: &str, path: String, reason: &str) -> LockRequest {
-    LockRequest {
-        lock_name: name.try_into().expect("test Lock name"),
-        flow_id: FlowId::try_from(flow).expect("test Flow ID"),
-        lock_paths: LockPaths(vec![path.try_into().expect("test absolute path")]),
-        lock_reason: reason.try_into().expect("test reason"),
-    }
+    LockRequest(
+        name.to_owned(),
+        flow.to_owned(),
+        vec![path],
+        reason.to_owned(),
+    )
 }
 
 fn pathbuf(directory: &tempfile::TempDir, segment: &str) -> String {

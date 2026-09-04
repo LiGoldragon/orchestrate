@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.26.0"
+version      = "0.27.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -29,12 +29,12 @@ name = "orchestrate-upgrade-preflight"
 path = "src/bin/orchestrate_upgrade_preflight.rs"
 
 [dependencies]
-datomic = { git = "https://github.com/LiGoldragon/datomic.git", rev = "b670c72d0c2cb94ad1e39b372271f6569d91e214" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "5cdf35a989f273b84f20a802855a03b6593b376d", default-features = false }
-protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "bfde3b878dd3de2991d7f605b59f57a13ef8f20b" }
+datomic = { git = "https://github.com/LiGoldragon/datomic.git", rev = "768426ea5f34" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "3ff2e1ca05e0", default-features = false }
+protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "56c683ec8d1e" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "a597f1ae991059f6c2029b59a4773b2f77a62064", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "3ffcfb15faa0", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 

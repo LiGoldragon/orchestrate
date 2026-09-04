@@ -1,5 +1,33 @@
 # Upgrades
 
+## 0.27.0 — ProtoformStack
+
+### Wire change
+
+The signal wire has changed:
+- Frame envelope is now `Frame(Version, Body)` — contract id and wire revision are removed.
+- All domain types are tuple structs (positional fields, no names).
+- Single-field newtypes (`LockName`, `FlowId`, `LockPath`, `LockReason`, `LockPaths`, `Configured`) are removed.
+- `LockId` type alias is removed; `Lock.0` and `Request::Release` use plain `i64`.
+- Canonical textual datom uses spaced delimiters: `{ a b }` not `{a b}`.
+
+### Datomic API change
+
+- `datomic::Text::<T>::from(text).embody()` is replaced by `protos::Potential::<T, datomic::Datom>::from(text).actualize()`.
+- `reply.textualize().as_ref()` is replaced by `datomic::Textualizable::textualize(&reply)` (returns `String`).
+
+### Ethos source
+
+Both signal crates now export `ETHOS_SOURCE: &str`. The CLI binaries print it
+when invoked with no arguments.
+
+### Rollout
+
+1. Bump CriomOS flake input `orchestrate` to this revision.
+2. Rebuild CriomOS-home: `nixos-rebuild switch --flake ...`
+3. Restart the nexus: `systemctl --user restart orchestrate-nexus`
+4. The CriomOS-home check `checks/orchestrate-service-path` must assert the new spaced-delimiter text.
+
 ## 0.26.0 — WireContract and Datomic roots
 
 This is a breaking socket-contract upgrade. Stop the 0.25 Nexus before
