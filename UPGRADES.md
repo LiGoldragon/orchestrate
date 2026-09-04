@@ -49,12 +49,15 @@ exists or is needed.
 
 ### Rollout
 
-1. Bump CriomOS-home flake input `orchestrate` to the 0.27 rev.
-2. Rebuild CriomOS-home: `nixos-rebuild switch --flake ...`
-3. Restart the nexus: `systemctl --user restart orchestrate-nexus`
-4. Verify: `orchestrate 'Observe.Locks'` -- the reply must use spaced
+1. Bump CriomOS flake input `orchestrate` to the 0.27 rev. CriomOS
+   carries `criomos-home.inputs.orchestrate.follows = "orchestrate"`,
+   so the pin propagates to CriomOS-home without a separate bump.
+2. Deploy via Lojix `Deploy.UserEnvironment` with `ActivateNow` at the
+   new CriomOS rev. The activation sets the home-manager profile and
+   restarts `orchestrate-nexus` automatically.
+3. Verify: `orchestrate 'Observe.Locks'` -- the reply must use spaced
    delimiters and curly-quoted reasons.
-5. The CriomOS-home check `checks/orchestrate-service-path` asserts
+4. The CriomOS-home check `checks/orchestrate-service-path` asserts
    the new spaced-delimiter text.
 
 Existing locks survive the restart. The 0.27 Nexus reads the 0.26
