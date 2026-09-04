@@ -1,34 +1,66 @@
 # Upgrades
 
-## 0.27.0 — ProtoformStack
+## 0.26.0 to 0.27.0 -- ProtoformStack
 
-### Wire change
+### What changed
 
-The signal wire has changed:
-- Frame envelope is now `Frame(Version, Body)` — contract id and wire revision are removed.
-- All domain types are tuple structs (positional fields, no names).
-- Single-field newtypes (`LockName`, `FlowId`, `LockPath`, `LockReason`, `LockPaths`, `Configured`) are removed.
-- `LockId` type alias is removed; `Lock.0` and `Request::Release` use plain `i64`.
-- Canonical textual datom uses spaced delimiters: `{ a b }` not `{a b}`.
+The entire datom pipeline is rewritten. The signal wire, the CLIs, and
+all domain types now use the ProtoformStack generation of protos,
+datomic, and ethos-zero.
 
-### Datomic API change
+**Wire**: Frame envelope is now `Frame.{ Version Body }` -- contract id
+and wire revision fields are removed. All domain types are positional
+tuple structs. Single-field newtypes (`LockName`, `FlowId`, `LockPath`,
+`LockReason`, `LockPaths`, `Configured`) are removed; named type
+aliases remain in the ethos but generate as Rust `pub type` aliases.
 
-- `datomic::Text::<T>::from(text).embody()` is replaced by `protos::Potential::<T, datomic::Datom>::from(text).actualize()`.
-- `reply.textualize().as_ref()` is replaced by `datomic::Textualizable::textualize(&reply)` (returns `String`).
+**Datom text**: canonical output uses spaced delimiters (`{ a b }` not
+`{a b}`). A reason with spaces is curly-quoted (`\u{201C}...\u{201D}`).
+Empty enclosures are tight (`[]`).
 
-### Ethos source
+**CLIs**: both CLIs now print replies and refusals as canonical datom
+text (not Rust Debug). Client faults (`Unreadable`, `Unreachable`,
+`Refused`) print datom on stderr with exit 1, no prefix. With no
+argument, each CLI prints its signal ethos source and its client
+failure ethos, then exits 0.
 
-Both signal crates now export `ETHOS_SOURCE: &str`. The CLI binaries print it
-when invoked with no arguments.
+**Ethos**: both signal crates carry an `ethos/signal.ethos` file and a
+`tests/regeneration.rs` freshness test that proves the committed
+generated module matches ethos-zero output.
+
+**API**: `datomic::Text::<T>::from(text).embody()` is replaced by
+`protos::Potential::<T, datomic::Datom>::from(text).actualize()`.
+`reply.textualize().as_ref()` is replaced by
+`datomic::Textualizable::textualize(&reply)` (returns `String`).
+
+### Store compatibility
+
+The Sema store schema version, table names, table descriptors, and
+record key shapes are unchanged between 0.26 and 0.27. The persisted
+rkyv archives of `Configure` and `Lock` use the same field layout
+(positional tuple structs in both versions). The `LockId` allocator
+record is an `i64` in both. The 0.27 Nexus opens a 0.26 store without
+migration.
+
+This was verified in flow 6329f1's final witness: the test suite
+includes `released_ids_never_reach_a_later_lock_after_restart`, which
+creates a store, stops, and resumes from it. No store migration code
+exists or is needed.
 
 ### Rollout
 
-1. Bump CriomOS flake input `orchestrate` to this revision.
+1. Bump CriomOS-home flake input `orchestrate` to the 0.27 rev.
 2. Rebuild CriomOS-home: `nixos-rebuild switch --flake ...`
 3. Restart the nexus: `systemctl --user restart orchestrate-nexus`
-4. The CriomOS-home check `checks/orchestrate-service-path` must assert the new spaced-delimiter text.
+4. Verify: `orchestrate 'Observe.Locks'` -- the reply must use spaced
+   delimiters and curly-quoted reasons.
+5. The CriomOS-home check `checks/orchestrate-service-path` asserts
+   the new spaced-delimiter text.
 
-## 0.26.0 — WireContract and Datomic roots
+Existing locks survive the restart. The 0.27 Nexus reads the 0.26
+store as-is. New replies use spaced canonical datom.
+
+## 0.25.0 to 0.26.0 -- WireContract and Datomic roots
 
 This is a breaking socket-contract upgrade. Stop the 0.25 Nexus before
 activation: ordinary frames change from the legacy routed envelope to
@@ -47,10 +79,9 @@ After the coordinated restart, verify `Observe.Locks` yields
 `Observed.Locks.[]`, acquire a Lock, observe the typed duplicate-name refusal,
 and release the returned ID. Verify meta `Configure.{<ordinary> <meta>}`
 returns `Configured.{{<ordinary> <meta>}}`; the change takes effect after the
-next restart. This release records an upgrade procedure only: it does not
-deploy or cut over any live Nexus.
+next restart.
 
-## 0.25.0 — ordinary Lock contract
+## 0.24.0 to 0.25.0 -- ordinary Lock contract
 
 This is a breaking ordinary-socket upgrade from `PathLock` registration to
 `Lock`, `Release(LockId)`, and `Observe.Locks`. Stop the old Nexus
@@ -62,7 +93,7 @@ configuration and initializes its Lock rows and ID allocator cleanly.
 Before activation, run the zero-argument preflight against the same XDG state
 root that the Nexus uses:
 
-```text
+```
 orchestrate-upgrade-preflight
 ```
 
@@ -80,38 +111,30 @@ the Dotos fallback are not accepted. The meta contract remains unchanged.
 
 After starting the new Nexus, verify one atomic Lock over more than one path,
 a typed duplicate-name refusal, `Observe.Locks`, and Release by
-the returned Lock ID. Do not force-release or automatically release Locks:
-those operations are outside this revision.
+the returned Lock ID.
 
-## 0.24.0 — zero-argument default Nexus
+## 0.23.0 to 0.24.0 -- zero-argument default Nexus
 
 This breaking replacement removes the startup `Configure` Signal argv. Start
 `orchestrate-nexus` with zero arguments. It creates or resumes only
-`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema` (or
-`$HOME/.local/state/orchestrate-nexus/orchestrate-nexus.sema` when the XDG
-state root is unset), with runtime sockets under
+`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema` (falling back to
+`$HOME/.local/state`), with runtime sockets under
 `$XDG_RUNTIME_DIR/orchestrate-nexus/`.
 
 Do not point the Nexus at, import, move, or migrate the legacy
-`$XDG_STATE_HOME/orchestrate/` state. It is deliberately untouched. The fresh
-`orchestrate-nexus` namespace is the only store opened by this release.
+`$XDG_STATE_HOME/orchestrate/` state. The fresh `orchestrate-nexus` namespace
+is the only store opened by this release.
 
 The meta client now sends `Configure.{<ordinary-socket> <meta-socket>}`. That
 configuration persists for the next start; it does not rebind a running Nexus.
 
-## 0.23.0 — Orchestrate Nexus replacement
+## 0.22.0 to 0.23.0 -- Orchestrate Nexus replacement
 
 This is a breaking deployment replacement. Stop and remove the
 `orchestrate-daemon` service, then deploy `orchestrate-nexus`. Keep the ordinary
-`orchestrate` and privileged `meta-orchestrate` clients; they retain their
-single-Datom-argument interfaces.
+`orchestrate` and privileged `meta-orchestrate` clients.
 
 Discard the old lane, worktree, claim, and lock-projection state. Do not migrate
-it, import it, or add a compatibility path. Remove the old durable store and
-its projected lock files before starting the fresh Nexus. Start Orchestrate
-Nexus with an empty default Sema store, then verify a PathLock registration
-and release through the ordinary client.
-
-The 0.23.0 Nexus preserves only PathLock registration and release plus meta
-configuration. Former orchestration operations are not available after the
-replacement.
+it. Remove the old durable store and its projected lock files before starting the
+fresh Nexus. Start with an empty default Sema store, then verify a PathLock
+registration and release through the ordinary client.

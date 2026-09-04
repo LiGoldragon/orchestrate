@@ -1,72 +1,80 @@
-# Orchestrate — Agent Instructions
+# Orchestrate -- Agent Instructions
 
 ## Purpose
 
-Orchestrate Nexus is the durable owner of PathLock registration, release, and
-configuration. The `orchestrate` and `meta-orchestrate` clients are its ordinary
-and privileged Datom boundaries.
+Orchestrate Nexus is the durable owner of Lock coordination. The
+`orchestrate` and `meta-orchestrate` CLIs are its ordinary and
+privileged datom boundaries.
 
-## Local Rules
+## Local rules
 
 - Use Jujutsu for version control.
-- Keep repositories public unless the human gives a specific reason otherwise.
 - Use Nix for build and test entry points.
-- Durable orchestration state uses `sema-engine` over the redb + rkyv substrate.
-- Preserve the small PathLock surface: no lanes, claims, worktrees, roles, or
-  compatibility layer belong here.
-- The long-running executable is `orchestrate-nexus`; do not reintroduce
-  `orchestrate-daemon`.
-- `orchestrate-nexus` owns its XDG defaults and takes zero arguments. Do not
-  add a startup frame, configuration writer, or bootstrap binary.
+- Durable state uses `sema-engine` over the redb + rkyv substrate.
+- Preserve the small Lock surface: no lanes, claims, worktrees, roles,
+  or compatibility layer belong here.
+- The long-running executable is `orchestrate-nexus`; do not
+  reintroduce `orchestrate-daemon`.
+- `orchestrate-nexus` owns its XDG defaults and takes zero arguments.
+  Do not add a startup frame, configuration writer, or bootstrap
+  binary.
 
-## Protos estate status
+## CLI shape
 
-Stack: active PathLock Nexus
-Status: current deployment surface
+Each CLI takes exactly one inline datom value and no flags. Flag-style
+arguments (`--anything`) are rejected. With no argument, the CLI
+prints its signal contract ethos and its client failure ethos, then
+exits 0.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
+A string containing a space or a delimiter character is written in
+curly quotes \u{201C} \u{201D}. A word without them is bare.
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+## Ordinary operations
 
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+```
+orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] "reason" }'
+orchestrate 'Observe.Locks'
+orchestrate 'Release.442'
 ```
 
-### Rules
+`Locked` returns the complete Lock with its integer ID.
+`Released` returns the complete Lock.
+`LockRejected` and `ReleaseRejected` are typed refusals.
+`Observed.Locks.[]` is the empty snapshot; `Observed.Locks.[ { ... } ]`
+carries locks.
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+## Meta operations
 
-## Session Completion
+```
+meta-orchestrate 'Configure.{ /o.sock /m.sock }'
+```
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+## Faults
 
-**MANDATORY WORKFLOW:**
+A client fault prints one datom value on stderr and exits 1:
 
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
+- `Unreadable.{ ... }` -- argument failed actualization.
+- `Unreachable.{ ... }` -- socket unreachable.
+- `Refused.{ ... }` -- wire-level refusal.
 
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+## Code shape
+
+Every method lives under a trait. `fn main()` is the only free
+function. The ordinary ontology is three traits on `OrchestrateStore`:
+`Locks`, `Releases`, `Observes`. The transport dispatches to them.
+
+## Wire
+
+Binary rkyv frames: `Frame.{ Version Body }`. Version is the signal
+contract's semver. The Signal's version is the wire version.
+
+## Contract changes
+
+Edit the ethos in `signal-orchestrate` or `meta-signal-orchestrate`,
+regenerate through ethos-zero, run the freshness test, then pin the
+new signal crate rev in orchestrate's `Cargo.toml`.
+
+## Deployment
+
+Bump the `orchestrate` flake input in CriomOS-home, rebuild, restart
+`orchestrate-nexus` with `systemctl --user restart orchestrate-nexus`.
