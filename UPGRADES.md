@@ -1,5 +1,26 @@
 # Upgrades
 
+## 0.28.0 to 0.29.0 -- Pin datomic 0.9.0, ethos-zero 1.2.0
+
+### What changed
+
+Dependency pins updated: datomic 0.9.0 (Situated<F> bears Corporal/Datomic;
+impl_datomic_box!), ethos-zero 1.2.0 (Library derives Clone/Debug/PartialEq/Eq;
+Meaning intrinsic; recursive positions boxed). Signal crates updated to
+signal-orchestrate 0.20.0 and meta-signal-orchestrate 0.14.0.
+
+Generated Library types now carry `#[derive(Clone, Debug, PartialEq, Eq)]`.
+Situated remains locally declared because `protos::Situated<F>` lacks
+PartialEq/Eq; datomic 0.9.0 provides Corporal/Datomic for Situated<F>
+but the Library derives prevent importing it directly.
+
+No wire change. The datom shape and all CLI stderr lines are byte-identical.
+
+### Rollout
+
+Bump the CriomOS `orchestrate` input to the new rev, deploy through Lojix,
+and restart orchestrate-nexus. No store migration.
+
 ## 0.27.0 to 0.28.0 -- Generated ClientFailure
 
 ### What changed

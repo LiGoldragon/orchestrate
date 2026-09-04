@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Situated(pub Option<protos::Extent>, pub datomic::Fault);
 impl datomic::Corporal<datomic::Datom> for Situated {
     type Fault = datomic::Fault;
@@ -34,7 +35,9 @@ impl datomic::Datomic for Situated {
         ])
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientFailureUnreachable(pub protos::Text, pub protos::Text);
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientFailure {
     Unreadable(Situated),
     Unreachable(ClientFailureUnreachable),

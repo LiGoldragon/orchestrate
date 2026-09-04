@@ -64,9 +64,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cc"
-version = "1.4.4"
+version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ad534f4357a5264cce5019c989cf66a4f0dc4e0d1b1d15f8aacec0ff7360273"
+checksum = "005ec2760ca554fae18df7a11195552ec576cd665632a881bc011d5bb2fd4d80"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -95,8 +95,8 @@ dependencies = [
 
 [[package]]
 name = "datomic"
-version = "0.8.0"
-source = "git+https://github.com/LiGoldragon/datomic.git?rev=a27f9b8e7789#a27f9b8e778935f1fb2ec0011620cf44a96ea81b"
+version = "0.9.0"
+source = "git+https://github.com/LiGoldragon/datomic?rev=e4430bfe#e4430bfedb5c05134c1480b04e3890d3dad64c4b"
 dependencies = [
  "protos",
 ]
@@ -119,8 +119,8 @@ dependencies = [
 
 [[package]]
 name = "ethos-zero"
-version = "1.1.0"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=31c5984c7fda#31c5984c7fda5baeb65295bef6c33fe3429220e0"
+version = "1.2.0"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=8bcb0b9402fb#8bcb0b9402fbfc378c41e32562662b65f753dde1"
 dependencies = [
  "datomic",
  "proc-macro2",
@@ -138,9 +138,9 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "futures-core"
@@ -218,8 +218,8 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "meta-signal-orchestrate"
-version = "0.13.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=5a99ccb1781f#5a99ccb1781fdf6ca9e1677e7148d7f0151390b5"
+version = "0.14.0"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=a29abc912e4a#a29abc912e4a296e1a43082a0d6bd8cc3409afb5"
 dependencies = [
  "datomic",
  "protos",
@@ -228,9 +228,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
+checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
 dependencies = [
  "libc",
  "wasi",
@@ -265,7 +265,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "datomic",
  "ethos-zero",
@@ -468,8 +468,8 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.19.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=b25bbd9fbc8f#b25bbd9fbc8f136f3318ce25955e451a5cfe7783"
+version = "0.20.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=43db4af50686#43db4af50686930c3570be7d98859fcf76e5fea0"
 dependencies = [
  "datomic",
  "protos",
@@ -564,9 +564,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.12.0"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb4ebadaa0af04fab11ae01eb5f9fdb5f9c5b875506e210e71c07873528baa7f"
+checksum = "4cf0ded5c4e56918d8f8a339e1bb67d038d3bc6d144ac407904015ba2e4cde9b"
 dependencies = [
  "tinyvec_macros",
 ]

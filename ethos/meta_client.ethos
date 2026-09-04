@@ -1,8 +1,8 @@
 ; Meta-orchestrate CLI client failure vocabulary.
 ;
-; Situated is defined locally (see client.ethos comment).
+; Situated is declared locally (see client.ethos comment).
 
-Library.{ 0 28 0 }
+Library.{ 0 29 0 }
 [ protos:[ Extent ]
   datomic:[ Fault ]
   meta_signal_orchestrate:Refusal ]

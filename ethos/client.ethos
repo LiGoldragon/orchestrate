@@ -1,10 +1,10 @@
 ; Orchestrate CLI client failure vocabulary.
 ;
-; Situated is defined locally rather than imported as a generic from
-; datomic because datomic does not yet carry blanket Corporal/Datomic
-; impls for Situated<F>. The local struct has an identical datom shape.
+; Situated is declared locally because protos::Situated<F> lacks
+; PartialEq/Eq derives that the Library emitter requires. The shape
+; is identical to datomic::Situated<datomic::Fault>.
 
-Library.{ 0 28 0 }
+Library.{ 0 29 0 }
 [ protos:[ Extent ]
   datomic:[ Fault ]
   signal_orchestrate:Refusal ]
