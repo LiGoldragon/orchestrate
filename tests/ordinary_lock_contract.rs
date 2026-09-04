@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use meta_signal_orchestrate::Configure;
 use orchestrate::{OrchestrateStore, ordinary::OrdinaryOutcome};
 use signal_orchestrate::{
-    Lock, LockOverlap, LockRejection, LockRequest, Observation,
-    ObserveSelection, ReleaseRejection, Reply, Request,
+    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, ReleaseRejection,
+    Reply, Request,
 };
 
 struct StoreFixture {
@@ -40,16 +40,8 @@ impl StoreFixture {
 
 fn configuration(directory: &tempfile::TempDir) -> Configure {
     Configure(
-        directory
-            .path()
-            .join("ordinary.sock")
-            .display()
-            .to_string(),
-        directory
-            .path()
-            .join("meta.sock")
-            .display()
-            .to_string(),
+        directory.path().join("ordinary.sock").display().to_string(),
+        directory.path().join("meta.sock").display().to_string(),
     )
 }
 
@@ -83,11 +75,7 @@ fn locks_are_atomic_complete_and_released_by_durable_id() {
     assert_eq!(acquired.1.as_str(), "alpha");
     assert_eq!(acquired.2.as_str(), "test-flow");
     assert_eq!(
-        acquired
-            .3
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        acquired.3.iter().map(String::as_str).collect::<Vec<_>>(),
         vec![first.as_str(), second.as_str()]
     );
     assert_eq!(acquired.4.as_str(), "behavioral proof");

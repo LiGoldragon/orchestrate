@@ -26,8 +26,9 @@
           sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
         };
         inherit (rust) craneLib toolchain;
+        ethosFilter = path: type: type == "regular" && pkgs.lib.hasSuffix ".ethos" path;
         src = rust.cleanSource {
-          root = ./.;
+          root = ./.; extraFilters = [ ethosFilter ];
         };
         commonArgs = {
           inherit src;
@@ -65,6 +66,13 @@
             // {
               inherit cargoArtifacts;
               cargoTestExtraArgs = "--test ordinary_lock_contract";
+            }
+          );
+          client-freshness = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--test client_freshness";
             }
           );
           test-doc = craneLib.cargoTest (

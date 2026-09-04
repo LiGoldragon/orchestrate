@@ -6,9 +6,7 @@
 //! transitions below, while transport only carries their generated Signal
 //! values.
 
-use signal_orchestrate::{
-    Lock, LockRequest, Observation, ObserveSelection, Refusal, Reply,
-};
+use signal_orchestrate::{Lock, LockRequest, Observation, ObserveSelection, Refusal, Reply};
 
 use crate::store::StoreError;
 

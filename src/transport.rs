@@ -14,13 +14,11 @@ use std::{
 };
 
 use meta_signal_orchestrate::{
-    Body as MetaBody, Frame as MetaFrame,
-    FrameCodecError as MetaFrameCodecError,
+    Body as MetaBody, Frame as MetaFrame, FrameCodecError as MetaFrameCodecError,
     SIGNAL_VERSION as META_SIGNAL_VERSION, SignalFrameCodec as MetaSignalFrameCodec,
 };
 use signal_orchestrate::{
-    Body as OrdinaryBody, Frame as OrdinaryFrame,
-    FrameCodecError as OrdinaryFrameCodecError,
+    Body as OrdinaryBody, Frame as OrdinaryFrame, FrameCodecError as OrdinaryFrameCodecError,
     SIGNAL_VERSION as ORDINARY_SIGNAL_VERSION, SignalFrameCodec as OrdinarySignalFrameCodec,
 };
 use tokio::{
@@ -239,8 +237,7 @@ impl MetaSocket {
             return Err(TransportError::UnexpectedRequestFrame);
         };
         let reply = store.lock().await.meta(request)?;
-        self.write_frame(&meta_frame(MetaBody::Reply(reply)))
-            .await
+        self.write_frame(&meta_frame(MetaBody::Reply(reply))).await
     }
 }
 

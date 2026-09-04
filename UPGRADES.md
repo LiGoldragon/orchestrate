@@ -1,5 +1,35 @@
 # Upgrades
 
+## 0.27.0 to 0.28.0 -- Generated ClientFailure
+
+### What changed
+
+The hand-written `ClientFailure` enum and its `Corporal`/`Datomic` impls
+are replaced by a generated Library ethos file. Each CLI has its own
+ethos file (`ethos/client.ethos`, `ethos/meta_client.ethos`) that imports
+`Fault` from datomic, `Extent` from protos, and `Refusal` from its
+signal crate. The generated Rust is committed at `src/generated/` with
+a freshness test.
+
+`Situated` is defined locally in the ethos file (not imported as a
+generic) because datomic does not yet carry blanket `Corporal`/`Datomic`
+impls for `Situated<F>`. The local struct has an identical datom shape.
+
+The no-argument self-description now prints the client Library's
+canonical text from its ethos concept (actualized and protosized through
+ethos-zero) instead of a hand-written commented block.
+
+### Wire and store compatibility
+
+No wire or store changes. The datom text output of every client fault
+is byte-identical to 0.27.0.
+
+### Rollout
+
+Same as 0.27.0: bump the CriomOS flake input `orchestrate` to the
+0.28.0 rev and deploy via Lojix `Deploy.UserEnvironment` with
+`ActivateNow`.
+
 ## 0.26.0 to 0.27.0 -- ProtoformStack
 
 ### What changed

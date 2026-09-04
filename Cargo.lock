@@ -118,6 +118,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethos-zero"
+version = "1.1.0"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=31c5984c7fda#31c5984c7fda5baeb65295bef6c33fe3429220e0"
+dependencies = [
+ "datomic",
+ "proc-macro2",
+ "protos",
+ "quote",
+ "syn 3.0.4",
+ "thiserror",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -252,9 +265,10 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "datomic",
+ "ethos-zero",
  "meta-signal-orchestrate",
  "protos",
  "rkyv",

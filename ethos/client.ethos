@@ -1,0 +1,14 @@
+; Orchestrate CLI client failure vocabulary.
+;
+; Situated is defined locally rather than imported as a generic from
+; datomic because datomic does not yet carry blanket Corporal/Datomic
+; impls for Situated<F>. The local struct has an identical datom shape.
+
+Library.{ 0 28 0 }
+[ protos:[ Extent ]
+  datomic:[ Fault ]
+  signal_orchestrate:Refusal ]
+[ Situated.{ Option<Extent> Fault }
+  ClientFailure.[ Unreadable.Situated Unreachable.{ Text Text } Refused.Refusal ] ]
+[]
+[]

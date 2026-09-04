@@ -8,9 +8,8 @@ use sema_engine::{
     SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
 };
 use signal_orchestrate::{
-    Lock, LockOverlap, LockRejection, LockRequest, Observation,
-    ObserveSelection, ReleaseRejection, Reply as OrdinaryReply,
-    Request as OrdinaryRequest,
+    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, ReleaseRejection,
+    Reply as OrdinaryReply, Request as OrdinaryRequest,
 };
 use std::{
     collections::BTreeSet,
@@ -116,7 +115,13 @@ impl NormalizedLockRequest {
     }
 
     fn into_lock(self, lock_id: i64) -> Lock {
-        Lock(lock_id, self.request.0, self.request.1, self.request.2, self.request.3)
+        Lock(
+            lock_id,
+            self.request.0,
+            self.request.1,
+            self.request.2,
+            self.request.3,
+        )
     }
 }
 
@@ -493,16 +498,8 @@ mod tests {
         assert_eq!(preflight.active_lock_count(), 1);
 
         let defaults = Configure(
-            directory
-                .path()
-                .join("ordinary.sock")
-                .display()
-                .to_string(),
-            directory
-                .path()
-                .join("meta.sock")
-                .display()
-                .to_string(),
+            directory.path().join("ordinary.sock").display().to_string(),
+            directory.path().join("meta.sock").display().to_string(),
         );
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),

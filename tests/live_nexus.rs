@@ -345,7 +345,8 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
         "Observe.Locks",
     );
     assert!(
-        spaced_observed.contains("\u{201C}create isolated workspace for one authorized witness\u{201D}"),
+        spaced_observed
+            .contains("\u{201C}create isolated workspace for one authorized witness\u{201D}"),
         "observed output contains curly-quoted reason: {spaced_observed}",
     );
 
@@ -387,10 +388,12 @@ fn client_failures_are_datom_on_stderr() {
         "Lock.{ broken",
     );
     assert!(!unclosed.status.success());
-    let unclosed_stderr = String::from_utf8(unclosed.stderr).unwrap().trim().to_owned();
+    let unclosed_stderr = String::from_utf8(unclosed.stderr)
+        .unwrap()
+        .trim()
+        .to_owned();
     assert_eq!(
-        unclosed_stderr,
-        "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed.Braced } }",
+        unclosed_stderr, "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed.Braced } }",
         "unclosed brace fault is datom on stderr"
     );
 
@@ -403,10 +406,12 @@ fn client_failures_are_datom_on_stderr() {
         "Nonsense",
     );
     assert!(!nonsense.status.success());
-    let nonsense_stderr = String::from_utf8(nonsense.stderr).unwrap().trim().to_owned();
+    let nonsense_stderr = String::from_utf8(nonsense.stderr)
+        .unwrap()
+        .trim()
+        .to_owned();
     assert_eq!(
-        nonsense_stderr,
-        "Unreadable.{ None Corporal.{ [] Shape.{ Variant Nonsense } } }",
+        nonsense_stderr, "Unreadable.{ None Corporal.{ [] Shape.{ Variant Nonsense } } }",
         "unknown variant fault is datom on stderr"
     );
 
@@ -418,7 +423,10 @@ fn client_failures_are_datom_on_stderr() {
         .output()
         .expect("run client with bad socket");
     assert!(!unreachable.status.success());
-    let unreachable_stderr = String::from_utf8(unreachable.stderr).unwrap().trim().to_owned();
+    let unreachable_stderr = String::from_utf8(unreachable.stderr)
+        .unwrap()
+        .trim()
+        .to_owned();
     assert_eq!(
         unreachable_stderr,
         "Unreachable.{ /no/such.sock \u{201C}No such file or directory (os error 2)\u{201D} }",

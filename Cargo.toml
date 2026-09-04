@@ -1,6 +1,6 @@
 [package]
 name         = "orchestrate"
-version      = "0.27.0"
+version      = "0.28.0"
 edition      = "2024"
 rust-version = "1.89"
 license      = "MIT OR Apache-2.0"
@@ -30,6 +30,7 @@ path = "src/bin/orchestrate_upgrade_preflight.rs"
 
 [dependencies]
 datomic = { git = "https://github.com/LiGoldragon/datomic.git", rev = "a27f9b8e7789" }
+ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "31c5984c7fda" }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "5a99ccb1781f", default-features = false }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "56c683ec8d1e" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
