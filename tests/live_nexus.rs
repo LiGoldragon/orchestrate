@@ -371,22 +371,60 @@ fn no_argument_prints_ethos_source() {
 }
 
 #[test]
-fn invalid_request_fails_on_stderr() {
+fn client_failures_are_datom_on_stderr() {
     let temporary = tempfile::tempdir().expect("temporary Nexus directory");
     let roots = IsolatedXdg::new(&temporary);
     let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
     let mut nexus = start(env!("CARGO_BIN_EXE_orchestrate-nexus"), &roots);
     wait_until_ready(&mut nexus);
-    let bad = invoke(
+
+    // Unclosed brace: structural fault with extent
+    let unclosed = invoke(
         &roots,
         ordinary_binary,
         "ORCHESTRATE_SOCKET",
         &roots.ordinary_socket(),
-        "NotARequest.{ bad }",
+        "Lock.{ broken",
     );
-    assert!(!bad.status.success());
-    let stderr = String::from_utf8(bad.stderr).unwrap();
-    assert!(!stderr.is_empty());
+    assert!(!unclosed.status.success());
+    let unclosed_stderr = String::from_utf8(unclosed.stderr).unwrap().trim().to_owned();
+    assert_eq!(
+        unclosed_stderr,
+        "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed(Braced) } }",
+        "unclosed brace fault is datom on stderr"
+    );
+
+    // Unknown variant: corporal fault with no extent
+    let nonsense = invoke(
+        &roots,
+        ordinary_binary,
+        "ORCHESTRATE_SOCKET",
+        &roots.ordinary_socket(),
+        "Nonsense",
+    );
+    assert!(!nonsense.status.success());
+    let nonsense_stderr = String::from_utf8(nonsense.stderr).unwrap().trim().to_owned();
+    assert_eq!(
+        nonsense_stderr,
+        "Unreadable.{ None Corporal.{ [] Shape.{ Variant Nonsense } } }",
+        "unknown variant fault is datom on stderr"
+    );
+
+    // Unreachable socket
+    let unreachable = roots
+        .command(ordinary_binary)
+        .env("ORCHESTRATE_SOCKET", "/no/such.sock")
+        .arg("Observe.Locks")
+        .output()
+        .expect("run client with bad socket");
+    assert!(!unreachable.status.success());
+    let unreachable_stderr = String::from_utf8(unreachable.stderr).unwrap().trim().to_owned();
+    assert_eq!(
+        unreachable_stderr,
+        "Unreachable.{ /no/such.sock \u{201C}No such file or directory (os error 2)\u{201D} }",
+        "unreachable socket fault is datom on stderr"
+    );
+
     stop(&mut nexus);
 }
 
