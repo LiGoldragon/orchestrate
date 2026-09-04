@@ -58,7 +58,10 @@ fn run() -> Result<(), String> {
                 .1
             {
                 Body::Reply(reply) => println!("{}", Textualizable::textualize(&reply)),
-                Body::Refusal(refusal) => return Err(format!("{refusal:?}")),
+                Body::Refusal(refusal) => {
+                    eprintln!("{}", Textualizable::textualize(&refusal));
+                    return Err("Nexus refused the request".to_owned());
+                }
                 _ => return Err("Nexus returned a non-reply frame".to_owned()),
             }
             Ok(())

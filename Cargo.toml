@@ -30,11 +30,11 @@ path = "src/bin/orchestrate_upgrade_preflight.rs"
 
 [dependencies]
 datomic = { git = "https://github.com/LiGoldragon/datomic.git", rev = "768426ea5f34" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "3ff2e1ca05e0", default-features = false }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "6798fb896699", default-features = false }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "56c683ec8d1e" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "3ffcfb15faa0", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "63e325f496fd", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
