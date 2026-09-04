@@ -306,6 +306,49 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
         !obsolete.status.success(),
         "the old nested Observe request is not accepted"
     );
+
+    // A reason with spaces prints in curly quotes.
+    let spaced_path = temporary.path().join("spaced-reason-owned");
+    let spaced_request = format!(
+        "Lock.{{ spaced-reason 6329f1 [ {} ] \u{201C}create isolated workspace for one authorized witness\u{201D} }}",
+        spaced_path.display()
+    );
+    let spaced_locked = format!(
+        "Locked.{{ 2 spaced-reason 6329f1 [ {} ] \u{201C}create isolated workspace for one authorized witness\u{201D} }}",
+        spaced_path.display()
+    );
+    assert_eq!(
+        reply(
+            invoke(
+                &roots,
+                ordinary_binary,
+                "ORCHESTRATE_SOCKET",
+                &roots.ordinary_socket(),
+                &spaced_request
+            ),
+            "orchestrate",
+            &spaced_request
+        ),
+        spaced_locked,
+    );
+
+    // Observe shows the spaced-reason lock with curly-quoted reason.
+    let spaced_observed = reply(
+        invoke(
+            &roots,
+            ordinary_binary,
+            "ORCHESTRATE_SOCKET",
+            &roots.ordinary_socket(),
+            "Observe.Locks",
+        ),
+        "orchestrate",
+        "Observe.Locks",
+    );
+    assert!(
+        spaced_observed.contains("\u{201C}create isolated workspace for one authorized witness\u{201D}"),
+        "observed output contains curly-quoted reason: {spaced_observed}",
+    );
+
     stop(&mut nexus);
 }
 
