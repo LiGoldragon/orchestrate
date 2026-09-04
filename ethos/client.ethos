@@ -1,8 +1,7 @@
 ; Orchestrate CLI client failure vocabulary.
 ;
-; Situated is declared locally because protos::Situated<F> lacks
-; PartialEq/Eq derives that the Library emitter requires. The shape
-; is identical to datomic::Situated<datomic::Fault>.
+; Situated is declared locally because the ethos emitter does not
+; specialize generic imports; datomic::Situated<F> is generic.
 
 Library.{ 0 29 0 }
 [ protos:[ Extent ]

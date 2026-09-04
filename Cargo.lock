@@ -95,8 +95,8 @@ dependencies = [
 
 [[package]]
 name = "datomic"
-version = "0.9.0"
-source = "git+https://github.com/LiGoldragon/datomic?rev=e4430bfe#e4430bfedb5c05134c1480b04e3890d3dad64c4b"
+version = "0.9.1"
+source = "git+https://github.com/LiGoldragon/datomic?rev=4712361c0194#4712361c0194fd4e251b2b79a80b2c298f82ce4b"
 dependencies = [
  "protos",
 ]
@@ -119,8 +119,8 @@ dependencies = [
 
 [[package]]
 name = "ethos-zero"
-version = "1.2.0"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=8bcb0b9402fb#8bcb0b9402fbfc378c41e32562662b65f753dde1"
+version = "1.3.1"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=0f198968d208#0f198968d20842d224bed957c55ed774a46c3335"
 dependencies = [
  "datomic",
  "proc-macro2",
@@ -218,8 +218,8 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "meta-signal-orchestrate"
-version = "0.14.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=a29abc912e4a#a29abc912e4a296e1a43082a0d6bd8cc3409afb5"
+version = "0.14.1"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=3ae11c132272#3ae11c132272078f6a035a3bfaa944ff0b8bb15e"
 dependencies = [
  "datomic",
  "protos",
@@ -265,7 +265,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.29.0"
+version = "0.29.1"
 dependencies = [
  "datomic",
  "ethos-zero",
@@ -302,8 +302,8 @@ dependencies = [
 
 [[package]]
 name = "protos"
-version = "0.15.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=56c683ec8d1e#56c683ec8d1ec8f8f80e9e12251fbfd08d27d728"
+version = "0.15.1"
+source = "git+https://github.com/LiGoldragon/protos.git?rev=48061367872b#48061367872b4d6f209df1f1f65f40f2818ffe1b"
 
 [[package]]
 name = "ptr_meta"
@@ -468,8 +468,8 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "0.20.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=43db4af50686#43db4af50686930c3570be7d98859fcf76e5fea0"
+version = "0.20.1"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=f366d6accf8d#f366d6accf8d906804ec66617292b91b14f1c58c"
 dependencies = [
  "datomic",
  "protos",

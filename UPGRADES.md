@@ -1,5 +1,20 @@
 # Upgrades
 
+## 0.29.0 to 0.29.1 -- Pin protos 0.15.1, datomic 0.9.1, ethos-zero 1.3.1
+
+### What changed
+
+Dependency pins updated: protos 0.15.1 (Situated<F> gains
+Clone/Debug/PartialEq/Eq), datomic 0.9.1 (re-exports the new derives),
+ethos-zero 1.3.1 (Copy for unit-only enums, pin fixes), signal-orchestrate
+0.20.1 and meta-signal-orchestrate 0.14.1. No wire change, no store change.
+Generated code and all CLI stderr lines are byte-identical.
+
+### Rollout
+
+Bump the CriomOS `orchestrate` input to the new rev, deploy through Lojix,
+and restart orchestrate-nexus. No store migration.
+
 ## 0.28.0 to 0.29.0 -- Pin datomic 0.9.0, ethos-zero 1.2.0
 
 ### What changed
