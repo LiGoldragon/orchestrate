@@ -1,5 +1,22 @@
 # Upgrades
 
+## 0.29.1 to 0.29.2 -- Import datomic::Situated<datomic::Fault> from datomic
+
+### What changed
+
+`ethos/client.ethos` and `ethos/meta_client.ethos` now import
+`datomic:[ Situated Fault ]` and declare
+`ClientFailure.[ Unreadable.Situated<Fault> ... ]`. The local `Situated`
+struct is removed. Generated code references `datomic::Situated<datomic::Fault>`
+directly; the blanket `impl<F: Datomic> Corporal<Datom> for Situated<F>` added
+in datomic 0.9.1 makes this compile without orphan violations. Wire format and
+all CLI stderr lines are byte-identical to 0.29.1.
+
+### Rollout
+
+Bump the CriomOS `orchestrate` input to the new rev, deploy through Lojix,
+and restart orchestrate-nexus. No store migration.
+
 ## 0.29.0 to 0.29.1 -- Pin protos 0.15.1, datomic 0.9.1, ethos-zero 1.3.1
 
 ### What changed

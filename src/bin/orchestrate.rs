@@ -43,7 +43,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "{}",
-                client::ClientFailure::Unreadable(client::Situated(
+                client::ClientFailure::Unreadable(datomic::Situated(
                     None,
                     datomic::Fault::Corporal(
                         vec![],
@@ -65,7 +65,7 @@ fn exchange(arg: &str) -> Result<(), client::ClientFailure> {
     let request: signal_orchestrate::Request =
         protos::Potential::<signal_orchestrate::Request, datomic::Datom>::from(arg.to_owned())
             .actualize()
-            .map_err(|s| client::ClientFailure::Unreadable(client::Situated(s.0, s.1)))?;
+            .map_err(|s| client::ClientFailure::Unreadable(datomic::Situated(s.0, s.1)))?;
     let socket_path = env::var("ORCHESTRATE_SOCKET")
         .map_err(|_| unreachable(String::new(), "ORCHESTRATE_SOCKET is required".to_owned()))?;
     let mut stream = UnixStream::connect(&socket_path)

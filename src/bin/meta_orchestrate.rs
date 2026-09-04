@@ -43,7 +43,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "{}",
-                meta_client::ClientFailure::Unreadable(meta_client::Situated(
+                meta_client::ClientFailure::Unreadable(datomic::Situated(
                     None,
                     datomic::Fault::Corporal(
                         vec![],
@@ -65,7 +65,7 @@ fn exchange(arg: &str) -> Result<(), meta_client::ClientFailure> {
     let request: meta_signal_orchestrate::Request =
         protos::Potential::<meta_signal_orchestrate::Request, datomic::Datom>::from(arg.to_owned())
             .actualize()
-            .map_err(|s| meta_client::ClientFailure::Unreadable(meta_client::Situated(s.0, s.1)))?;
+            .map_err(|s| meta_client::ClientFailure::Unreadable(datomic::Situated(s.0, s.1)))?;
     let socket_path = env::var("ORCHESTRATE_META_SOCKET").map_err(|_| {
         unreachable(
             String::new(),
