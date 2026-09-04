@@ -390,7 +390,7 @@ fn client_failures_are_datom_on_stderr() {
     let unclosed_stderr = String::from_utf8(unclosed.stderr).unwrap().trim().to_owned();
     assert_eq!(
         unclosed_stderr,
-        "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed(Braced) } }",
+        "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed.Braced } }",
         "unclosed brace fault is datom on stderr"
     );
 

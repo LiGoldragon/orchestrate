@@ -96,7 +96,7 @@ dependencies = [
 [[package]]
 name = "datomic"
 version = "0.8.0"
-source = "git+https://github.com/LiGoldragon/datomic.git?rev=768426ea5f34#768426ea5f34318f929d4d39188e16bc5ae75bb2"
+source = "git+https://github.com/LiGoldragon/datomic.git?rev=a27f9b8e7789#a27f9b8e778935f1fb2ec0011620cf44a96ea81b"
 dependencies = [
  "protos",
 ]
@@ -206,7 +206,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.13.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=6401248ab0f2#6401248ab0f2c8fd5dad7bfaff13d07998afbe6c"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=5a99ccb1781f#5a99ccb1781fdf6ca9e1677e7148d7f0151390b5"
 dependencies = [
  "datomic",
  "protos",
@@ -455,7 +455,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.19.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=e7540192f2b3#e7540192f2b34e9898ebbf3eadf10c92fea35349"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=b25bbd9fbc8f#b25bbd9fbc8f136f3318ce25955e451a5cfe7783"
 dependencies = [
  "datomic",
  "protos",
