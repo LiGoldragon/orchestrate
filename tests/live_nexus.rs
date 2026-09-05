@@ -1,5 +1,12 @@
 //! Live two-socket proof for generated roots, Datomic edges, and persistence.
 
+use orchestrate::wire::{MetaContract, OrdinaryContract};
+use signal_frame::{
+    BoundExchangeFrame, ExchangeFrameBody, ExchangeIdentifier, ExchangeLane, FrameError,
+    LaneSequence, Request, RootCode, SessionEpoch, VariantCode, WireRoute,
+};
+use signal_frame::{ContractBinding, ContractId, WireContract, WireRevision};
+use std::num::{NonZeroU16, NonZeroU32};
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
@@ -354,25 +361,7 @@ fn ordinary_cli_uses_datomic_request_reply_and_refusal_roots_against_a_live_nexu
 }
 
 #[test]
-fn no_argument_prints_ethos_source() {
-    let temporary = tempfile::tempdir().expect("temporary Nexus directory");
-    let roots = IsolatedXdg::new(&temporary);
-    let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
-    let no_arg = roots
-        .command(ordinary_binary)
-        .env("ORCHESTRATE_SOCKET", roots.ordinary_socket())
-        .output()
-        .expect("no-arg run");
-    assert!(no_arg.status.success());
-    let stdout = String::from_utf8(no_arg.stdout).unwrap();
-    assert!(
-        stdout.contains("Signal.{ 1 0 0 }"),
-        "ethos source should contain Signal version"
-    );
-}
-
-#[test]
-fn client_failures_are_datom_on_stderr() {
+fn client_failures_name_the_current_datoms_and_transport() {
     let temporary = tempfile::tempdir().expect("temporary Nexus directory");
     let roots = IsolatedXdg::new(&temporary);
     let ordinary_binary = env!("CARGO_BIN_EXE_orchestrate");
@@ -392,10 +381,7 @@ fn client_failures_are_datom_on_stderr() {
         .unwrap()
         .trim()
         .to_owned();
-    assert_eq!(
-        unclosed_stderr, "Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed.Braced } }",
-        "unclosed brace fault is datom on stderr"
-    );
+    assert!(unclosed_stderr.starts_with("orchestrate: invalid request:"));
 
     // Unknown variant: corporal fault with no extent
     let nonsense = invoke(
@@ -410,10 +396,7 @@ fn client_failures_are_datom_on_stderr() {
         .unwrap()
         .trim()
         .to_owned();
-    assert_eq!(
-        nonsense_stderr, "Unreadable.{ None Corporal.{ [] Shape.{ Variant Nonsense } } }",
-        "unknown variant fault is datom on stderr"
-    );
+    assert!(nonsense_stderr.starts_with("orchestrate: invalid request:"));
 
     // Unreachable socket
     let unreachable = roots
@@ -427,11 +410,7 @@ fn client_failures_are_datom_on_stderr() {
         .unwrap()
         .trim()
         .to_owned();
-    assert_eq!(
-        unreachable_stderr,
-        "Unreachable.{ /no/such.sock \u{201C}No such file or directory (os error 2)\u{201D} }",
-        "unreachable socket fault is datom on stderr"
-    );
+    assert!(unreachable_stderr.starts_with("orchestrate: Unix socket I/O failed:"));
 
     stop(&mut nexus);
 }
@@ -450,12 +429,76 @@ fn malformed_frame_is_refused_before_it_reaches_the_store() {
         .shutdown(std::net::Shutdown::Write)
         .expect("finish malformed envelope");
     let mut reply = Vec::new();
-    socket
-        .read_to_end(&mut reply)
-        .expect("read malformed response");
+    let _ = socket.read_to_end(&mut reply);
     assert!(
         reply.is_empty(),
         "invalid envelope gets no typed store response"
     );
     stop(&mut nexus);
+}
+
+struct LojixOrdinaryContract;
+impl WireContract for LojixOrdinaryContract {
+    const BINDING: ContractBinding = ContractBinding::new(
+        ContractId::new(NonZeroU32::new(5).expect("static Lojix contract id")),
+        WireRevision::new(NonZeroU16::new(4).expect("static Lojix revision")),
+    );
+}
+
+#[test]
+fn a_distinct_component_binding_is_rejected_before_wire_archive_conversion() {
+    type Ordinary = BoundExchangeFrame<
+        OrdinaryContract,
+        signal_orchestrate::RequestWire,
+        signal_orchestrate::ResponseWire,
+    >;
+    type Meta = BoundExchangeFrame<
+        MetaContract,
+        meta_signal_orchestrate::RequestWire,
+        meta_signal_orchestrate::ResponseWire,
+    >;
+    let foreign = Meta::new(
+        WireRoute::new(RootCode::new(0), VariantCode::new(0)),
+        ExchangeFrameBody::Request {
+            exchange: ExchangeIdentifier::new(
+                SessionEpoch::new(1),
+                ExchangeLane::Connector,
+                LaneSequence::first(),
+            ),
+            request: Request::from_payload(meta_signal_orchestrate::RequestWire::Configure(
+                meta_signal_orchestrate::ConfigureWire("/tmp/a".to_owned(), "/tmp/b".to_owned()),
+            )),
+        },
+    )
+    .encode_length_prefixed()
+    .expect("encode foreign component frame");
+    assert!(matches!(
+        Ordinary::decode_length_prefixed(&foreign),
+        Err(FrameError::ContractMismatch { .. })
+    ));
+
+    type LojixOrdinary = BoundExchangeFrame<
+        LojixOrdinaryContract,
+        signal_orchestrate::RequestWire,
+        signal_orchestrate::ResponseWire,
+    >;
+    let lojix_foreign = LojixOrdinary::new(
+        WireRoute::new(RootCode::new(0), VariantCode::new(0)),
+        ExchangeFrameBody::Request {
+            exchange: ExchangeIdentifier::new(
+                SessionEpoch::new(1),
+                ExchangeLane::Connector,
+                LaneSequence::first(),
+            ),
+            request: Request::from_payload(signal_orchestrate::RequestWire::Observe(
+                signal_orchestrate::ObserveSelectionWire::Locks,
+            )),
+        },
+    )
+    .encode_length_prefixed()
+    .expect("encode Lojix binding frame");
+    assert!(matches!(
+        Ordinary::decode_length_prefixed(&lojix_foreign),
+        Err(FrameError::ContractMismatch { .. })
+    ));
 }

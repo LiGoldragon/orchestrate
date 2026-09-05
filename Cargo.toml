@@ -25,17 +25,22 @@ name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
 
 [[bin]]
+name = "orchestrate-store-migrate"
+path = "src/bin/orchestrate_store_migrate.rs"
+
+[[bin]]
 name = "orchestrate-upgrade-preflight"
 path = "src/bin/orchestrate_upgrade_preflight.rs"
 
 [dependencies]
-datomic = { git = "https://github.com/LiGoldragon/datomic", rev = "4712361c0194" }
-ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "0f198968d208" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "3ae11c132272", default-features = false }
-protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "48061367872b" }
+datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2" }
+ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "a0c0548a73f1b6350d4267416b4109304888d67e" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "8ccb5c2d07628f3fed0158eae12b5834786f0791", default-features = false }
+protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "2d999f173334" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "f366d6accf8d", default-features = false }
+signal-frame = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "80f70d929ae6d72707052f097be2264872913983", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "5c28bbf7ec4cb4d58c26a24e82948a7a9218794b", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 

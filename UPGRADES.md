@@ -224,3 +224,22 @@ Discard the old lane, worktree, claim, and lock-projection state. Do not migrate
 it. Remove the old durable store and its projected lock files before starting the
 fresh Nexus. Start with an empty default Sema store, then verify a PathLock
 registration and release through the ordinary client.
+# Signal frame and durable-record v2
+
+This release replaces the generated producer-owned frame with signal-frame's
+bound structural archives. Stop the Nexus before upgrading; this document does
+not authorize a service restart or deployment.
+
+Existing v1 configuration, Lock, and allocator records require the explicit
+offline `orchestrate-store-migrate <absolute-store-path>` operation. It copies
+all three record classes into v2 tables and retracts the v1 rows in the same
+atomic durable commit. The normal daemon refuses any remaining v1 rows with
+`PreviousSignalMigrationRequired`; it never resets, drops, or reads those rows
+at runtime.
+
+Stop the daemon and preserve a backup copy before running the migration. Run
+`orchestrate-store-migrate <absolute-store-path>` once while the daemon is
+offline. It refuses a nonempty v2 target, so a repeated invocation cannot
+overwrite a completed migration. Start the new daemon only after it succeeds,
+then verify the retained configuration, active locks, and next allocated Lock
+identifier.

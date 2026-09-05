@@ -68,11 +68,11 @@
               cargoTestExtraArgs = "--test ordinary_lock_contract";
             }
           );
-          client-freshness = craneLib.cargoTest (
+          datom-cli = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test client_freshness";
+              cargoTestExtraArgs = "--test live_nexus";
             }
           );
           test-doc = craneLib.cargoTest (

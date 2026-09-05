@@ -38,7 +38,7 @@ impl DefaultConfiguration {
             .to_string();
         Ok(Self {
             store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
-            configuration: Configure(ordinary_socket_path, meta_socket_path),
+            configuration: Configure(text(ordinary_socket_path), text(meta_socket_path)),
         })
     }
 
@@ -81,6 +81,10 @@ impl DefaultConfiguration {
             Err(DefaultConfigurationError::RelativePath { variable, path })
         }
     }
+}
+
+fn text(value: String) -> protos::Text {
+    protos::Text::try_from(value).expect("XDG socket path is valid text")
 }
 
 #[derive(Debug, Error)]

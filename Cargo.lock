@@ -53,7 +53,7 @@ checksum = "46d07918caa9eeaaf06b7873925c53a61daac173539b4f7715090745e44e4e69"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -94,9 +94,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "datomic"
-version = "0.9.1"
-source = "git+https://github.com/LiGoldragon/datomic?rev=4712361c0194#4712361c0194fd4e251b2b79a80b2c298f82ce4b"
+name = "datom-codec"
+version = "0.21.0"
+source = "git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5#41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2"
+dependencies = [
+ "protos",
+]
+
+[[package]]
+name = "datom-codec"
+version = "0.21.0"
+source = "git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2#41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2"
 dependencies = [
  "protos",
 ]
@@ -119,15 +127,15 @@ dependencies = [
 
 [[package]]
 name = "ethos-zero"
-version = "1.3.1"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=0f198968d208#0f198968d20842d224bed957c55ed774a46c3335"
+version = "5.0.0"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=a0c0548a73f1b6350d4267416b4109304888d67e#a0c0548a73f1b6350d4267416b4109304888d67e"
 dependencies = [
- "datomic",
+ "datom-codec 0.21.0 (git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5)",
+ "prettyplease",
  "proc-macro2",
  "protos",
  "quote",
- "syn 3.0.4",
- "thiserror",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -185,9 +193,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "indexmap"
-version = "2.14.1"
+version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07aa2048142242915a31d35844fb311e0e53fcca590c3a0a40dcf1b841fa09eb"
+checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown",
@@ -195,9 +203,9 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.104"
+version = "0.3.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e0c1080212aad755ea003d18543e8768dd432c48819efd73a7bf1e39b7a5a3a"
+checksum = "ce57d20d1ea864ce2ac172ab472d409214f4fd359f0b2a2775abdf522e2af99e"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -219,9 +227,9 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 [[package]]
 name = "meta-signal-orchestrate"
 version = "0.14.1"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=3ae11c132272#3ae11c132272078f6a035a3bfaa944ff0b8bb15e"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=8ccb5c2d07628f3fed0158eae12b5834786f0791#8ccb5c2d07628f3fed0158eae12b5834786f0791"
 dependencies = [
- "datomic",
+ "datom-codec 0.21.0 (git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2)",
  "protos",
  "rkyv",
 ]
@@ -267,12 +275,13 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "orchestrate"
 version = "0.29.2"
 dependencies = [
- "datomic",
+ "datom-codec 0.21.0 (git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2)",
  "ethos-zero",
  "meta-signal-orchestrate",
  "protos",
  "rkyv",
  "sema-engine",
+ "signal-frame 0.3.2",
  "signal-orchestrate",
  "tempfile",
  "thiserror",
@@ -292,6 +301,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "prettyplease"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bfe0f4c752e450fc2faf62654f1c134747922825d5b04ca717b8874f41a40c0"
+dependencies = [
+ "proc-macro2",
+ "syn 3.0.5",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -302,8 +321,8 @@ dependencies = [
 
 [[package]]
 name = "protos"
-version = "0.15.1"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=48061367872b#48061367872b4d6f209df1f1f65f40f2818ffe1b"
+version = "0.26.0"
+source = "git+https://github.com/LiGoldragon/protos.git?rev=2d999f173334#2d999f1733347b7e64e24b2f75ba889ad7182bc0"
 
 [[package]]
 name = "ptr_meta"
@@ -322,7 +341,7 @@ checksum = "1c8d9ca532f185d5d4db7a7c9d51420b452168ea1c2b913953281bd6fe1fcbd0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -394,7 +413,7 @@ checksum = "1c25ef604ac7dd839d44d64648952ea23c97866f124ff671b0ed2cf3ad9bb06e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -434,7 +453,7 @@ dependencies = [
  "blake3",
  "rkyv",
  "sema",
- "signal-frame",
+ "signal-frame 0.3.1",
  "signal-sema",
  "thiserror",
 ]
@@ -452,8 +471,29 @@ source = "git+https://github.com/LiGoldragon/signal-frame.git?rev=8aa0bcaeb29fe9
 dependencies = [
  "paste",
  "rkyv",
- "signal-frame-macros",
+ "signal-frame-macros 0.1.2 (git+https://github.com/LiGoldragon/signal-frame.git?rev=8aa0bcaeb29fe9e461a11706a469638d2fd109ac)",
  "thiserror",
+]
+
+[[package]]
+name = "signal-frame"
+version = "0.3.2"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?rev=80f70d929ae6d72707052f097be2264872913983#80f70d929ae6d72707052f097be2264872913983"
+dependencies = [
+ "paste",
+ "rkyv",
+ "signal-frame-macros 0.1.2 (git+https://github.com/LiGoldragon/signal-frame.git?rev=80f70d929ae6d72707052f097be2264872913983)",
+ "thiserror",
+]
+
+[[package]]
+name = "signal-frame-macros"
+version = "0.1.2"
+source = "git+https://github.com/LiGoldragon/signal-frame.git?rev=80f70d929ae6d72707052f097be2264872913983#80f70d929ae6d72707052f097be2264872913983"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -469,9 +509,9 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "0.20.1"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=f366d6accf8d#f366d6accf8d906804ec66617292b91b14f1c58c"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=5c28bbf7ec4cb4d58c26a24e82948a7a9218794b#5c28bbf7ec4cb4d58c26a24e82948a7a9218794b"
 dependencies = [
- "datomic",
+ "datom-codec 0.21.0 (git+https://github.com/LiGoldragon/datom-codec?rev=41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2)",
  "protos",
  "rkyv",
 ]
@@ -520,9 +560,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.4"
+version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6275cddf4610d1775e6d1fe9469b2e77d0f39fd98fb7450901b821e0c53649f"
+checksum = "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -559,7 +599,7 @@ checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -600,7 +640,7 @@ checksum = "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.4",
+ "syn 3.0.5",
 ]
 
 [[package]]
@@ -627,9 +667,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b70935747edd64d89de3efa29d73789b806c15798f8e7dca4d8ac356b50ce70"
+checksum = "aecb87a33d3b0c5e3b7aa46336eaf486cffafbd281b195e4c8b80d50df2351bf"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -640,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77775f8f3f7217702089053b94958f8f54061a3f663417df76e19cbdcca29bc1"
+checksum = "a690d511e3c1a8b3a55e33511e3c2c00c78415cd23650f32b808627f5696b9ed"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -650,22 +690,22 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e11d33f857dc2fb11b8bc75aee111aa9cbeb12cd9f25efd3d4c2a3dd4e235284"
+checksum = "411e4887f0071ef2d2164a9d5fdf2d20efbef78fccd3a78b0c10a1dc5295e48a"
 dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.5",
  "wasm-bindgen-shared",
 ]
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.127"
+version = "0.2.128"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef64dbcc55df09c7e5a46182d181c2cfa3e925f3da937ea764728b4bbb9dcbf"
+checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
 dependencies = [
  "unicode-ident",
 ]

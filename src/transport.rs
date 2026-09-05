@@ -13,14 +13,9 @@ use std::{
     sync::Arc,
 };
 
-use meta_signal_orchestrate::{
-    Body as MetaBody, Frame as MetaFrame, FrameCodecError as MetaFrameCodecError,
-    SIGNAL_VERSION as META_SIGNAL_VERSION, SignalFrameCodec as MetaSignalFrameCodec,
-};
-use signal_orchestrate::{
-    Body as OrdinaryBody, Frame as OrdinaryFrame, FrameCodecError as OrdinaryFrameCodecError,
-    SIGNAL_VERSION as ORDINARY_SIGNAL_VERSION, SignalFrameCodec as OrdinarySignalFrameCodec,
-};
+use meta_signal_orchestrate::WireConversion as MetaWireConversion;
+use signal_frame::{BoundExchangeFrame, ExchangeFrameBody, FrameError, NonEmpty, Reply, SubReply};
+use signal_orchestrate::WireConversion as OrdinaryWireConversion;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
@@ -28,9 +23,20 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{OrchestrateStore, ordinary::OrdinaryOutcome, store::StoreError};
+use crate::{OrchestrateStore, ordinary::OrdinaryOutcome, store::StoreError, wire};
 
 const MAXIMUM_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
+type OrdinaryFrame = BoundExchangeFrame<
+    wire::OrdinaryContract,
+    signal_orchestrate::RequestWire,
+    signal_orchestrate::ResponseWire,
+>;
+type MetaFrame = BoundExchangeFrame<
+    wire::MetaContract,
+    meta_signal_orchestrate::RequestWire,
+    meta_signal_orchestrate::ResponseWire,
+>;
 
 /// Starts both generated Signal listeners and runs until the task is stopped.
 pub async fn run(
@@ -56,8 +62,8 @@ impl TransportRuntime {
         configure: meta_signal_orchestrate::Configure,
         store: OrchestrateStore,
     ) -> Result<Self, TransportError> {
-        let ordinary_path = Path::new(configure.0.as_str());
-        let meta_path = Path::new(configure.1.as_str());
+        let ordinary_path = Path::new(configure.0.as_ref());
+        let meta_path = Path::new(configure.1.as_ref());
         Self::prepare_socket_path(ordinary_path)?;
         Self::prepare_socket_path(meta_path)?;
         let ordinary = UnixListener::bind(ordinary_path)?;
@@ -104,14 +110,18 @@ impl TransportRuntime {
                     let (stream, _) = accepted?;
                     let store = Arc::clone(&store);
                     connections.spawn(async move {
-                        let _ = OrdinarySocket::new(stream).serve(store).await;
+                        if let Err(error) = OrdinarySocket::new(stream).serve(store).await {
+                            eprintln!("orchestrate ordinary socket: {error}");
+                        }
                     });
                 }
                 accepted = meta.accept() => {
                     let (stream, _) = accepted?;
                     let store = Arc::clone(&store);
                     connections.spawn(async move {
-                        let _ = MetaSocket::new(stream).serve(store).await;
+                        if let Err(error) = MetaSocket::new(stream).serve(store).await {
+                            eprintln!("orchestrate meta socket: {error}");
+                        }
                     });
                 }
                 joined = connections.join_next(), if !connections.is_empty() => {
@@ -139,6 +149,41 @@ impl OrdinarySignalTransport {
         socket.write_frame(&frame).await?;
         socket.read_frame().await
     }
+
+    pub async fn request(
+        &self,
+        request: signal_orchestrate::Request,
+    ) -> Result<signal_orchestrate::Response, TransportError> {
+        let route = wire::ordinary_request_route(&request);
+        let frame = OrdinaryFrame::new(
+            route,
+            ExchangeFrameBody::Request {
+                exchange: signal_frame::ExchangeIdentifier::new(
+                    signal_frame::SessionEpoch::new(1),
+                    signal_frame::ExchangeLane::Connector,
+                    signal_frame::LaneSequence::first(),
+                ),
+                request: signal_frame::Request::from_payload(request.into_wire()),
+            },
+        );
+        let frame = self.exchange(frame).await?;
+        let route = frame.short_header().route();
+        let ExchangeFrameBody::Reply { reply, .. } = frame.into_body() else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let Reply::Accepted { per_operation, .. } = reply else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let SubReply::Ok(response) = per_operation.head() else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let response = signal_orchestrate::Response::try_from_wire(response.clone())
+            .map_err(|error| TransportError::Wire(format!("{error:?}")))?;
+        if route != wire::ordinary_response_route(&response) {
+            return Err(TransportError::RouteMismatch);
+        }
+        Ok(response)
+    }
 }
 
 /// Concrete client for the privileged generated Signal contract.
@@ -158,6 +203,40 @@ impl MetaSignalTransport {
         socket.write_frame(&frame).await?;
         socket.read_frame().await
     }
+
+    pub async fn request(
+        &self,
+        request: meta_signal_orchestrate::Request,
+    ) -> Result<meta_signal_orchestrate::Response, TransportError> {
+        let frame = MetaFrame::new(
+            wire::meta_request_route(&request),
+            ExchangeFrameBody::Request {
+                exchange: signal_frame::ExchangeIdentifier::new(
+                    signal_frame::SessionEpoch::new(1),
+                    signal_frame::ExchangeLane::Connector,
+                    signal_frame::LaneSequence::first(),
+                ),
+                request: signal_frame::Request::from_payload(request.into_wire()),
+            },
+        );
+        let frame = self.exchange(frame).await?;
+        let route = frame.short_header().route();
+        let ExchangeFrameBody::Reply { reply, .. } = frame.into_body() else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let Reply::Accepted { per_operation, .. } = reply else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let SubReply::Ok(response) = per_operation.head() else {
+            return Err(TransportError::UnexpectedReplyFrame);
+        };
+        let response = meta_signal_orchestrate::Response::try_from_wire(response.clone())
+            .map_err(|error| TransportError::Wire(format!("{error:?}")))?;
+        if route != wire::meta_response_route(&response) {
+            return Err(TransportError::RouteMismatch);
+        }
+        Ok(response)
+    }
 }
 
 struct OrdinarySocket {
@@ -175,15 +254,14 @@ impl OrdinarySocket {
 
     async fn read_frame(&mut self) -> Result<OrdinaryFrame, TransportError> {
         let bytes = LengthPrefixedSignal::read(&mut self.stream).await?;
-        OrdinaryFrame::decode_length_prefixed(bytes.as_slice())
-            .map_err(TransportError::OrdinaryFrame)
+        OrdinaryFrame::decode_length_prefixed(bytes.as_slice()).map_err(TransportError::Frame)
     }
 
     async fn write_frame(&mut self, frame: &OrdinaryFrame) -> Result<(), TransportError> {
         LengthPrefixedSignal::from_bytes(
             frame
                 .encode_length_prefixed()
-                .map_err(TransportError::OrdinaryFrame)?,
+                .map_err(TransportError::Frame)?,
         )?
         .write(&mut self.stream)
         .await
@@ -191,15 +269,20 @@ impl OrdinarySocket {
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let OrdinaryBody::Request(request) = frame.1 else {
+        let route = frame.short_header().route();
+        let ExchangeFrameBody::Request { exchange, request } = frame.into_body() else {
             return Err(TransportError::UnexpectedRequestFrame);
         };
-        let outcome = store.lock().await.ordinary(request)?;
-        let body = match outcome {
-            OrdinaryOutcome::Reply(reply) => OrdinaryBody::Reply(reply),
-            OrdinaryOutcome::Refusal(refusal) => OrdinaryBody::Refusal(refusal),
-        };
-        self.write_frame(&ordinary_frame(body)).await
+        if !request.payloads().tail().is_empty() {
+            return Err(TransportError::MultipleRequests);
+        }
+        let request = signal_orchestrate::Request::try_from_wire(request.payloads().head().clone())
+            .map_err(|error| TransportError::Wire(format!("{error:?}")))?;
+        if route != wire::ordinary_request_route(&request) {
+            return Err(TransportError::RouteMismatch);
+        }
+        let OrdinaryOutcome::Response(response) = store.lock().await.ordinary(request)?;
+        self.write_frame(&ordinary_frame(exchange, response)).await
     }
 }
 
@@ -218,14 +301,14 @@ impl MetaSocket {
 
     async fn read_frame(&mut self) -> Result<MetaFrame, TransportError> {
         let bytes = LengthPrefixedSignal::read(&mut self.stream).await?;
-        MetaFrame::decode_length_prefixed(bytes.as_slice()).map_err(TransportError::MetaFrame)
+        MetaFrame::decode_length_prefixed(bytes.as_slice()).map_err(TransportError::Frame)
     }
 
     async fn write_frame(&mut self, frame: &MetaFrame) -> Result<(), TransportError> {
         LengthPrefixedSignal::from_bytes(
             frame
                 .encode_length_prefixed()
-                .map_err(TransportError::MetaFrame)?,
+                .map_err(TransportError::Frame)?,
         )?
         .write(&mut self.stream)
         .await
@@ -233,20 +316,50 @@ impl MetaSocket {
 
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let frame = self.read_frame().await?;
-        let MetaBody::Request(request) = frame.1 else {
+        let route = frame.short_header().route();
+        let ExchangeFrameBody::Request { exchange, request } = frame.into_body() else {
             return Err(TransportError::UnexpectedRequestFrame);
         };
-        let reply = store.lock().await.meta(request)?;
-        self.write_frame(&meta_frame(MetaBody::Reply(reply))).await
+        if !request.payloads().tail().is_empty() {
+            return Err(TransportError::MultipleRequests);
+        }
+        let request =
+            meta_signal_orchestrate::Request::try_from_wire(request.payloads().head().clone())
+                .map_err(|error| TransportError::Wire(format!("{error:?}")))?;
+        if route != wire::meta_request_route(&request) {
+            return Err(TransportError::RouteMismatch);
+        }
+        let response = store.lock().await.meta(request)?;
+        self.write_frame(&meta_frame(exchange, response)).await
     }
 }
 
-fn ordinary_frame(body: OrdinaryBody) -> OrdinaryFrame {
-    OrdinaryFrame(ORDINARY_SIGNAL_VERSION, body)
+fn ordinary_frame(
+    exchange: signal_frame::ExchangeIdentifier,
+    response: signal_orchestrate::Response,
+) -> OrdinaryFrame {
+    let route = wire::ordinary_response_route(&response);
+    OrdinaryFrame::new(
+        route,
+        ExchangeFrameBody::Reply {
+            exchange,
+            reply: Reply::committed(NonEmpty::single(SubReply::Ok(response.into_wire()))),
+        },
+    )
 }
 
-fn meta_frame(body: MetaBody) -> MetaFrame {
-    MetaFrame(META_SIGNAL_VERSION, body)
+fn meta_frame(
+    exchange: signal_frame::ExchangeIdentifier,
+    response: meta_signal_orchestrate::Response,
+) -> MetaFrame {
+    let route = wire::meta_response_route(&response);
+    MetaFrame::new(
+        route,
+        ExchangeFrameBody::Reply {
+            exchange,
+            reply: Reply::committed(NonEmpty::single(SubReply::Ok(response.into_wire()))),
+        },
+    )
 }
 
 struct LengthPrefixedSignal {
@@ -257,7 +370,7 @@ impl LengthPrefixedSignal {
     async fn read(stream: &mut UnixStream) -> Result<Self, TransportError> {
         let mut prefix = [0; 4];
         stream.read_exact(&mut prefix).await?;
-        let length = u32::from_le_bytes(prefix) as usize;
+        let length = u32::from_be_bytes(prefix) as usize;
         if length > MAXIMUM_FRAME_BYTES {
             return Err(TransportError::FrameTooLarge {
                 maximum: MAXIMUM_FRAME_BYTES,
@@ -300,14 +413,20 @@ pub enum TransportError {
     Io(#[from] std::io::Error),
     #[error("an Orchestrate Nexus already owns socket {path:?}")]
     SocketAlreadyActive { path: PathBuf },
-    #[error("generated meta Signal frame validation failed: {0:?}")]
-    MetaFrame(MetaFrameCodecError),
-    #[error("generated ordinary Signal frame validation failed: {0:?}")]
-    OrdinaryFrame(OrdinaryFrameCodecError),
+    #[error("bound Signal frame validation failed: {0:?}")]
+    Frame(FrameError),
     #[error("store failed: {0}")]
     Store(#[from] StoreError),
     #[error("length-prefixed Signal frame exceeds {maximum} bytes: {found} bytes")]
     FrameTooLarge { maximum: usize, found: usize },
     #[error("expected a generated Signal request frame")]
     UnexpectedRequestFrame,
+    #[error("expected a generated Signal reply frame")]
+    UnexpectedReplyFrame,
+    #[error("Signal request contains more than one operation")]
+    MultipleRequests,
+    #[error("Signal header route does not match its generated payload")]
+    RouteMismatch,
+    #[error("generated Signal wire conversion failed: {0}")]
+    Wire(String),
 }

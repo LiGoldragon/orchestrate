@@ -1,7 +1,7 @@
 //! Orchestrate Nexus-owned durable Lock state.
 
 use crate::ordinary::{Locks, Observes, OrdinaryOutcome, Releases};
-use meta_signal_orchestrate::{Configure, Reply as MetaReply, Request as MetaRequest};
+use meta_signal_orchestrate::{Configure, Request as MetaRequest, Response as MetaResponse};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     Assertion, Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, Retraction,
@@ -9,7 +9,7 @@ use sema_engine::{
 };
 use signal_orchestrate::{
     Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, ReleaseRejection,
-    Reply as OrdinaryReply, Request as OrdinaryRequest,
+    Request as OrdinaryRequest, Response as OrdinaryResponse,
 };
 use std::{
     collections::BTreeSet,
@@ -19,9 +19,12 @@ use std::{
 use thiserror::Error;
 
 const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
-const CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration");
-const LOCKS_TABLE: TableName = TableName::new("locks");
-const ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator");
+const CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration_v2");
+const LOCKS_TABLE: TableName = TableName::new("locks_v2");
+const ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator_v2");
+const PREVIOUS_CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration");
+const PREVIOUS_LOCKS_TABLE: TableName = TableName::new("locks");
+const PREVIOUS_ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator");
 const LEGACY_TABLE: TableName = TableName::new("active_path_locks");
 const CONFIGURATION_KEY: &str = "configuration";
 const ALLOCATOR_KEY: &str = "next";
@@ -38,6 +41,28 @@ pub enum StoreError {
         "the old store still has {count} active PathLock rows; release them before deploying the Lock contract"
     )]
     LegacyActiveLocks { count: usize },
+    #[error(
+        "the previous Signal durable representation has {configuration_count} configuration and {lock_count} Lock rows; run the explicit one-time migration before activating the framed contract"
+    )]
+    PreviousSignalMigrationRequired {
+        configuration_count: usize,
+        lock_count: usize,
+    },
+    #[error(
+        "the v2 migration target is not empty: {configuration_count} configuration, {lock_count} Lock, and {allocator_count} allocator rows"
+    )]
+    MigrationTargetNotEmpty {
+        configuration_count: usize,
+        lock_count: usize,
+        allocator_count: usize,
+    },
+    #[error(
+        "the v1 migration source has {configuration_count} configuration and {allocator_count} allocator rows; expected one of each"
+    )]
+    MigrationSourceInvariant {
+        configuration_count: usize,
+        allocator_count: usize,
+    },
     #[error("the durable Lock ID allocator is exhausted")]
     LockIdExhausted,
     #[error("filesystem: {0}")]
@@ -54,7 +79,8 @@ pub enum StoreError {
 
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
 struct StoredConfiguration {
-    configuration: Configure,
+    ordinary_socket: String,
+    meta_socket: String,
 }
 impl EngineRecord for StoredConfiguration {
     fn record_key(&self) -> RecordKey {
@@ -63,16 +89,55 @@ impl EngineRecord for StoredConfiguration {
 }
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
 struct StoredLock {
-    lock: Lock,
+    lock_id: i64,
+    lock_name: String,
+    flow_id: String,
+    paths: Vec<String>,
+    reason: String,
 }
 impl EngineRecord for StoredLock {
     fn record_key(&self) -> RecordKey {
-        RecordKey::new(self.lock.0.to_string())
+        RecordKey::new(self.lock_id.to_string())
     }
 }
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
 struct StoredAllocator {
     next_lock_id: i64,
+}
+
+// These read-only v1 shapes are deliberately separate from the current public
+// Signal types.  They make the durable break explicit instead of attempting a
+// runtime compatibility conversion or silently ignoring old locks.
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+struct PreviousConfigure(String, String);
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+struct PreviousStoredConfiguration {
+    configuration: PreviousConfigure,
+}
+impl EngineRecord for PreviousStoredConfiguration {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(CONFIGURATION_KEY)
+    }
+}
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+struct PreviousLock(i64, String, String, Vec<String>, String);
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+struct PreviousStoredLock {
+    lock: PreviousLock,
+}
+impl EngineRecord for PreviousStoredLock {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(self.lock.0.to_string())
+    }
+}
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+struct PreviousStoredAllocator {
+    next_lock_id: i64,
+}
+impl EngineRecord for PreviousStoredAllocator {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(ALLOCATOR_KEY)
+    }
 }
 
 /// A Lock request whose path values have passed Nexus normalization.
@@ -91,8 +156,8 @@ impl NormalizedLockRequest {
         }
         let mut paths = BTreeSet::new();
         for path in &mut request.2 {
-            let normalized = NormalizedLockPath::from_source(path.as_str())?.0;
-            *path = normalized.clone();
+            let normalized = NormalizedLockPath::from_source(path.as_ref())?.0;
+            *path = text(normalized.clone());
             if !paths.insert(normalized.clone()) {
                 return Err(StoreError::DuplicateNormalizedPath { path: normalized });
             }
@@ -107,9 +172,9 @@ impl NormalizedLockRequest {
     fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
         self.request.2.iter().find_map(|requested| {
             lock.3.iter().find_map(|held| {
-                NormalizedLockPath::from_normalized(requested.as_str())
-                    .overlaps(&NormalizedLockPath::from_normalized(held.as_str()))
-                    .then(|| requested.clone())
+                NormalizedLockPath::from_normalized(requested.as_ref())
+                    .overlaps(&NormalizedLockPath::from_normalized(held.as_ref()))
+                    .then(|| requested.to_string())
             })
         })
     }
@@ -121,6 +186,43 @@ impl NormalizedLockRequest {
             self.request.1,
             self.request.2,
             self.request.3,
+        )
+    }
+}
+
+fn text(value: impl ToString) -> protos::Text {
+    protos::Text::try_from(value.to_string()).expect("stored public text remains valid")
+}
+
+impl StoredConfiguration {
+    fn from_public(value: &Configure) -> Self {
+        Self {
+            ordinary_socket: value.0.to_string(),
+            meta_socket: value.1.to_string(),
+        }
+    }
+    fn into_public(self) -> Configure {
+        Configure(text(self.ordinary_socket), text(self.meta_socket))
+    }
+}
+
+impl StoredLock {
+    fn from_public(value: &Lock) -> Self {
+        Self {
+            lock_id: value.0,
+            lock_name: value.1.to_string(),
+            flow_id: value.2.to_string(),
+            paths: value.3.iter().map(ToString::to_string).collect(),
+            reason: value.4.to_string(),
+        }
+    }
+    fn into_public(self) -> Lock {
+        Lock(
+            self.lock_id,
+            text(self.lock_name),
+            text(self.flow_id),
+            self.paths.into_iter().map(text).collect(),
+            text(self.reason),
         )
     }
 }
@@ -260,6 +362,126 @@ impl PreflightsLegacyStore for LegacyStorePreflight {
 }
 
 impl OrchestrateStore {
+    /// Offline, one-time import of the retired v1 Signal records.
+    ///
+    /// The daemon must be stopped. This method is the only legacy reader; the
+    /// runtime open path never invokes it.
+    pub fn migrate_previous_signal(store_path: &Path) -> Result<(), StoreError> {
+        let mut engine = Engine::open(EngineOpen::new(
+            store_path.display().to_string(),
+            SCHEMA_VERSION,
+        ))?;
+        let old_configurations: TableReference<PreviousStoredConfiguration> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v1"),
+            ))?;
+        let old_locks: TableReference<PreviousStoredLock> =
+            engine.register_table(TableDescriptor::new(
+                PREVIOUS_LOCKS_TABLE,
+                FamilyName::new("orchestrate-lock"),
+                SchemaHash::for_label("orchestrate-lock-v1"),
+            ))?;
+        let old_allocator: TableReference<PreviousStoredAllocator> =
+            engine.register_table(TableDescriptor::new(
+                PREVIOUS_ALLOCATOR_TABLE,
+                FamilyName::new("orchestrate-lock-id-allocator"),
+                SchemaHash::for_label("orchestrate-lock-id-allocator-v1"),
+            ))?;
+        let configurations: TableReference<StoredConfiguration> =
+            engine.register_table(TableDescriptor::new(
+                CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v2"),
+            ))?;
+        let locks: TableReference<StoredLock> = engine.register_table(TableDescriptor::new(
+            LOCKS_TABLE,
+            FamilyName::new("orchestrate-lock"),
+            SchemaHash::for_label("orchestrate-lock-v2"),
+        ))?;
+        let allocator: TableReference<StoredAllocator> =
+            engine.register_table(TableDescriptor::new(
+                ALLOCATOR_TABLE,
+                FamilyName::new("orchestrate-lock-id-allocator"),
+                SchemaHash::for_label("orchestrate-lock-id-allocator-v2"),
+            ))?;
+
+        let target_configuration_count = engine
+            .match_records(QueryPlan::all(configurations))?
+            .records()
+            .len();
+        let target_lock_count = engine.match_records(QueryPlan::all(locks))?.records().len();
+        let target_allocator_count = engine
+            .match_records(QueryPlan::all(allocator))?
+            .records()
+            .len();
+        if target_configuration_count != 0 || target_lock_count != 0 || target_allocator_count != 0
+        {
+            return Err(StoreError::MigrationTargetNotEmpty {
+                configuration_count: target_configuration_count,
+                lock_count: target_lock_count,
+                allocator_count: target_allocator_count,
+            });
+        }
+
+        let old_configuration = engine
+            .match_records(QueryPlan::all(old_configurations))?
+            .records()
+            .to_vec();
+        let old_lock_rows = engine
+            .match_records(QueryPlan::all(old_locks))?
+            .records()
+            .to_vec();
+        let old_allocator_rows = engine
+            .match_records(QueryPlan::all(old_allocator))?
+            .records()
+            .to_vec();
+        if old_configuration.len() != 1 || old_allocator_rows.len() != 1 {
+            return Err(StoreError::MigrationSourceInvariant {
+                configuration_count: old_configuration.len(),
+                allocator_count: old_allocator_rows.len(),
+            });
+        }
+
+        let PreviousConfigure(ordinary_socket, meta_socket) =
+            old_configuration[0].configuration.clone();
+        let mut migration = engine.begin_atomic_commit().assert(
+            configurations,
+            StoredConfiguration {
+                ordinary_socket,
+                meta_socket,
+            },
+        );
+        for row in &old_lock_rows {
+            let PreviousLock(lock_id, lock_name, flow_id, paths, reason) = row.lock.clone();
+            migration = migration.assert(
+                locks,
+                StoredLock {
+                    lock_id,
+                    lock_name,
+                    flow_id,
+                    paths,
+                    reason,
+                },
+            );
+        }
+        migration = migration.assert(
+            allocator,
+            StoredAllocator {
+                next_lock_id: old_allocator_rows[0].next_lock_id,
+            },
+        );
+        for row in old_configuration {
+            migration = migration.retract(old_configurations, row.record_key());
+        }
+        for row in old_lock_rows {
+            migration = migration.retract(old_locks, row.record_key());
+        }
+        migration = migration.retract(old_allocator, RecordKey::new(ALLOCATOR_KEY));
+        engine.commit_atomic(migration)?;
+        Ok(())
+    }
     pub fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError> {
         fs::create_dir_all(
             store_path
@@ -270,10 +492,36 @@ impl OrchestrateStore {
             store_path.display().to_string(),
             SCHEMA_VERSION,
         ))?;
+        let previous_configurations: TableReference<PreviousStoredConfiguration> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v1"),
+            ))?;
+        let previous_locks: TableReference<PreviousStoredLock> =
+            engine.register_table(TableDescriptor::new(
+                PREVIOUS_LOCKS_TABLE,
+                FamilyName::new("orchestrate-lock"),
+                SchemaHash::for_label("orchestrate-lock-v1"),
+            ))?;
+        let previous_configuration_count = engine
+            .match_records(QueryPlan::all(previous_configurations))?
+            .records()
+            .len();
+        let previous_lock_count = engine
+            .match_records(QueryPlan::all(previous_locks))?
+            .records()
+            .len();
+        if previous_configuration_count != 0 || previous_lock_count != 0 {
+            return Err(StoreError::PreviousSignalMigrationRequired {
+                configuration_count: previous_configuration_count,
+                lock_count: previous_lock_count,
+            });
+        }
         let configurations = engine.register_table(TableDescriptor::new(
             CONFIGURATION_TABLE,
             FamilyName::new("orchestrate-configuration"),
-            SchemaHash::for_label("orchestrate-configuration-v1"),
+            SchemaHash::for_label("orchestrate-configuration-v2"),
         ))?;
         let legacy: TableReference<LegacyStoredLock> =
             engine.register_table(TableDescriptor::new(
@@ -293,12 +541,12 @@ impl OrchestrateStore {
         let locks = engine.register_table(TableDescriptor::new(
             LOCKS_TABLE,
             FamilyName::new("orchestrate-lock"),
-            SchemaHash::for_label("orchestrate-lock-v1"),
+            SchemaHash::for_label("orchestrate-lock-v2"),
         ))?;
         let allocator = engine.register_table(TableDescriptor::new(
             ALLOCATOR_TABLE,
             FamilyName::new("orchestrate-lock-id-allocator"),
-            SchemaHash::for_label("orchestrate-lock-id-allocator-v1"),
+            SchemaHash::for_label("orchestrate-lock-id-allocator-v2"),
         ))?;
         let configuration = match engine
             .match_records(QueryPlan::all(configurations))?
@@ -307,17 +555,15 @@ impl OrchestrateStore {
             [] => {
                 engine.assert(Assertion::new(
                     configurations,
-                    StoredConfiguration {
-                        configuration: defaults,
-                    },
+                    StoredConfiguration::from_public(&defaults),
                 ))?;
                 engine
                     .match_records(QueryPlan::all(configurations))?
                     .records()[0]
-                    .configuration
                     .clone()
+                    .into_public()
             }
-            [stored] => stored.configuration.clone(),
+            [stored] => stored.clone().into_public(),
             rows => return Err(StoreError::ConfigurationInvariant { count: rows.len() }),
         };
         match engine.match_records(QueryPlan::all(allocator))?.records() {
@@ -345,12 +591,12 @@ impl OrchestrateStore {
         match request {
             OrdinaryRequest::Lock(request) => self.lock(request),
             OrdinaryRequest::Release(id) => self.release(id),
-            OrdinaryRequest::Observe(selection) => Ok(OrdinaryOutcome::Reply(
-                OrdinaryReply::Observed(self.observe(selection)?),
+            OrdinaryRequest::Observe(selection) => Ok(OrdinaryOutcome::Response(
+                OrdinaryResponse::Observed(self.observe(selection)?),
             )),
         }
     }
-    pub fn meta(&mut self, request: MetaRequest) -> Result<MetaReply, StoreError> {
+    pub fn meta(&mut self, request: MetaRequest) -> Result<MetaResponse, StoreError> {
         match request {
             MetaRequest::Configure(configure) => {
                 if configure != self.configuration {
@@ -360,13 +606,11 @@ impl OrchestrateStore {
                     ))?;
                     self.engine.assert(Assertion::new(
                         self.configurations,
-                        StoredConfiguration {
-                            configuration: configure.clone(),
-                        },
+                        StoredConfiguration::from_public(&configure),
                     ))?;
                     self.configuration = configure.clone();
                 }
-                Ok(MetaReply::Configured(configure))
+                Ok(MetaResponse::Configured(configure))
             }
         }
     }
@@ -376,12 +620,12 @@ impl OrchestrateStore {
             .match_records(QueryPlan::all(self.locks))?
             .records()
             .iter()
-            .map(|stored| stored.lock.clone())
+            .map(|stored| stored.clone().into_public())
             .collect();
         locks.sort_by(|left, right| {
             left.1
-                .as_str()
-                .cmp(right.1.as_str())
+                .as_ref()
+                .cmp(right.1.as_ref())
                 .then_with(|| left.0.cmp(&right.0))
         });
         Ok(locks)
@@ -392,13 +636,13 @@ impl Locks for OrchestrateStore {
         let request = NormalizedLockRequest::from_request(request)?;
         for holder in self.current_locks()? {
             if request.duplicates_name_of(&holder) {
-                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::LockRejected(
+                return Ok(OrdinaryOutcome::Response(OrdinaryResponse::LockRejected(
                     LockRejection::DuplicateName(holder),
                 )));
             }
             if let Some(path) = request.overlapping_path_of(&holder) {
-                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::LockRejected(
-                    LockRejection::PathOverlap(LockOverlap(path, holder)),
+                return Ok(OrdinaryOutcome::Response(OrdinaryResponse::LockRejected(
+                    LockRejection::PathOverlap(LockOverlap(text(path), holder)),
                 )));
             }
         }
@@ -418,10 +662,10 @@ impl Locks for OrchestrateStore {
         self.engine.commit_atomic(
             self.engine
                 .begin_atomic_commit()
-                .assert(self.locks, StoredLock { lock: lock.clone() })
+                .assert(self.locks, StoredLock::from_public(&lock))
                 .mutate(self.allocator, StoredAllocator { next_lock_id }),
         )?;
-        Ok(OrdinaryOutcome::Reply(OrdinaryReply::Locked(lock)))
+        Ok(OrdinaryOutcome::Response(OrdinaryResponse::Locked(lock)))
     }
 }
 impl Releases for OrchestrateStore {
@@ -433,15 +677,17 @@ impl Releases for OrchestrateStore {
             .records()
         {
             [] => {
-                return Ok(OrdinaryOutcome::Reply(OrdinaryReply::ReleaseRejected(
-                    ReleaseRejection::UnknownLockId,
-                )));
+                return Ok(OrdinaryOutcome::Response(
+                    OrdinaryResponse::ReleaseRejected(ReleaseRejection::UnknownLockId),
+                ));
             }
             [row] => row.clone(),
             _ => unreachable!("Lock IDs are keys"),
         };
         self.engine.retract(Retraction::new(self.locks, key))?;
-        Ok(OrdinaryOutcome::Reply(OrdinaryReply::Released(stored.lock)))
+        Ok(OrdinaryOutcome::Response(OrdinaryResponse::Released(
+            stored.into_public(),
+        )))
     }
 }
 impl Observes for OrchestrateStore {
@@ -498,12 +744,130 @@ mod tests {
         assert_eq!(preflight.active_lock_count(), 1);
 
         let defaults = Configure(
-            directory.path().join("ordinary.sock").display().to_string(),
-            directory.path().join("meta.sock").display().to_string(),
+            text(directory.path().join("ordinary.sock").display()),
+            text(directory.path().join("meta.sock").display()),
         );
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),
             Err(StoreError::LegacyActiveLocks { count: 1 })
+        ));
+    }
+
+    #[test]
+    fn previous_signal_rows_require_an_explicit_migration() {
+        let directory = tempfile::tempdir().expect("temporary previous store");
+        let store_path = directory.path().join("previous.sema");
+        let mut engine = Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION))
+            .expect("open previous store");
+        let configurations: TableReference<PreviousStoredConfiguration> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v1"),
+            ))
+            .expect("register previous configuration family");
+        engine
+            .assert(Assertion::new(
+                configurations,
+                PreviousStoredConfiguration {
+                    configuration: PreviousConfigure(
+                        "/tmp/ordinary.sock".to_owned(),
+                        "/tmp/meta.sock".to_owned(),
+                    ),
+                },
+            ))
+            .expect("write previous row");
+        let locks: TableReference<PreviousStoredLock> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_LOCKS_TABLE,
+                FamilyName::new("orchestrate-lock"),
+                SchemaHash::for_label("orchestrate-lock-v1"),
+            ))
+            .expect("register previous Lock family");
+        engine
+            .assert(Assertion::new(
+                locks,
+                PreviousStoredLock {
+                    lock: PreviousLock(
+                        7,
+                        "retained".to_owned(),
+                        "flow-542442".to_owned(),
+                        vec!["/tmp/retained".to_owned()],
+                        "active before upgrade".to_owned(),
+                    ),
+                },
+            ))
+            .expect("write active v1 Lock");
+        let allocator: TableReference<PreviousStoredAllocator> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_ALLOCATOR_TABLE,
+                FamilyName::new("orchestrate-lock-id-allocator"),
+                SchemaHash::for_label("orchestrate-lock-id-allocator-v1"),
+            ))
+            .expect("register previous allocator family");
+        engine
+            .assert(Assertion::new(
+                allocator,
+                PreviousStoredAllocator { next_lock_id: 9 },
+            ))
+            .expect("write previous allocator");
+        drop(engine);
+
+        let defaults = Configure(
+            text("/tmp/default-ordinary.sock"),
+            text("/tmp/default-meta.sock"),
+        );
+        assert!(matches!(
+            OrchestrateStore::open(&store_path, defaults),
+            Err(StoreError::PreviousSignalMigrationRequired {
+                configuration_count: 1,
+                lock_count: 1
+            })
+        ));
+
+        OrchestrateStore::migrate_previous_signal(&store_path).expect("offline migration");
+        assert!(matches!(
+            OrchestrateStore::migrate_previous_signal(&store_path),
+            Err(StoreError::MigrationTargetNotEmpty {
+                configuration_count: 1,
+                lock_count: 1,
+                allocator_count: 1,
+            })
+        ));
+
+        let (mut reopened, configuration) = OrchestrateStore::open(
+            &store_path,
+            Configure(
+                text("/tmp/default-ordinary.sock"),
+                text("/tmp/default-meta.sock"),
+            ),
+        )
+        .expect("restart daemon against migrated store");
+        assert_eq!(configuration.0.as_ref(), "/tmp/ordinary.sock");
+        assert_eq!(configuration.1.as_ref(), "/tmp/meta.sock");
+        assert_eq!(
+            reopened
+                .observe(ObserveSelection::Locks)
+                .expect("observe retained Lock after restart"),
+            Observation::Locks(vec![Lock(
+                7,
+                text("retained"),
+                text("flow-542442"),
+                vec![text("/tmp/retained")],
+                text("active before upgrade"),
+            )])
+        );
+        let lock = reopened
+            .lock(LockRequest(
+                text("next"),
+                text("flow"),
+                vec![text("/tmp/next")],
+                text("reason"),
+            ))
+            .expect("acquire after migration");
+        assert!(matches!(
+            lock,
+            OrdinaryOutcome::Response(OrdinaryResponse::Locked(Lock(9, ..)))
         ));
     }
 }

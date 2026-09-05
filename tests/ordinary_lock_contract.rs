@@ -6,7 +6,7 @@ use meta_signal_orchestrate::Configure;
 use orchestrate::{OrchestrateStore, ordinary::OrdinaryOutcome};
 use signal_orchestrate::{
     Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, ReleaseRejection,
-    Reply, Request,
+    Request, Response,
 };
 
 struct StoreFixture {
@@ -26,10 +26,10 @@ impl StoreFixture {
 
     fn lock_request(&self, name: &str, paths: &[&str]) -> LockRequest {
         LockRequest(
-            name.to_owned(),
-            "test-flow".to_owned(),
-            paths.iter().map(|path| (*path).to_owned()).collect(),
-            "behavioral proof".to_owned(),
+            text(name),
+            text("test-flow"),
+            paths.iter().map(|path| text(*path)).collect(),
+            text("behavioral proof"),
         )
     }
 
@@ -40,8 +40,8 @@ impl StoreFixture {
 
 fn configuration(directory: &tempfile::TempDir) -> Configure {
     Configure(
-        directory.path().join("ordinary.sock").display().to_string(),
-        directory.path().join("meta.sock").display().to_string(),
+        text(directory.path().join("ordinary.sock").display()),
+        text(directory.path().join("meta.sock").display()),
     )
 }
 
@@ -49,16 +49,15 @@ fn path(fixture: &StoreFixture, segment: &str) -> String {
     fixture.directory.path().join(segment).display().to_string()
 }
 
-fn reply(outcome: OrdinaryOutcome) -> Reply {
+fn reply(outcome: OrdinaryOutcome) -> Response {
     match outcome {
-        OrdinaryOutcome::Reply(reply) => reply,
-        OrdinaryOutcome::Refusal(refusal) => panic!("expected reply, found refusal {refusal:?}"),
+        OrdinaryOutcome::Response(response) => response,
     }
 }
 
 fn locked(outcome: OrdinaryOutcome) -> Lock {
     match reply(outcome) {
-        Reply::Locked(lock) => lock,
+        Response::Locked(lock) => lock,
         other => panic!("expected Locked reply, found {other:?}"),
     }
 }
@@ -72,16 +71,20 @@ fn locks_are_atomic_complete_and_released_by_durable_id() {
         fixture.lock_request("alpha", &[&first, &second]),
     )));
 
-    assert_eq!(acquired.1.as_str(), "alpha");
-    assert_eq!(acquired.2.as_str(), "test-flow");
+    assert_eq!(acquired.1.as_ref(), "alpha");
+    assert_eq!(acquired.2.as_ref(), "test-flow");
     assert_eq!(
-        acquired.3.iter().map(String::as_str).collect::<Vec<_>>(),
+        acquired
+            .3
+            .iter()
+            .map(|value| value.as_ref())
+            .collect::<Vec<_>>(),
         vec![first.as_str(), second.as_str()]
     );
-    assert_eq!(acquired.4.as_str(), "behavioral proof");
+    assert_eq!(acquired.4.as_ref(), "behavioral proof");
     assert_eq!(
         reply(fixture.request(Request::Release(acquired.0))),
-        Reply::Released(acquired),
+        Response::Released(acquired),
     );
 }
 
@@ -95,13 +98,13 @@ fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
         reply(fixture.request(Request::Lock(
             fixture.lock_request("alpha", &[&path(&fixture, "elsewhere")])
         ))),
-        Reply::LockRejected(LockRejection::DuplicateName(held.clone())),
+        Response::LockRejected(LockRejection::DuplicateName(held.clone())),
     );
     let requested = format!("{owned}/child");
     assert_eq!(
         reply(fixture.request(Request::Lock(fixture.lock_request("beta", &[&requested])))),
-        Reply::LockRejected(LockRejection::PathOverlap(LockOverlap(
-            requested.clone(),
+        Response::LockRejected(LockRejection::PathOverlap(LockOverlap(
+            text(requested.clone()),
             held,
         ))),
     );
@@ -110,13 +113,13 @@ fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
         reply(fixture.request(Request::Lock(
             fixture.lock_request("gamma", &[&independently_available, &owned])
         ))),
-        Reply::LockRejected(LockRejection::PathOverlap(_)),
+        Response::LockRejected(LockRejection::PathOverlap(_)),
     ));
     assert!(matches!(
         reply(fixture.request(Request::Lock(
             fixture.lock_request("delta", &[&independently_available])
         ))),
-        Reply::Locked(_),
+        Response::Locked(_),
     ));
 }
 
@@ -132,7 +135,7 @@ fn observe_locks_is_a_name_then_id_ordered_point_in_time_value() {
 
     assert_eq!(
         reply(fixture.request(Request::Observe(ObserveSelection::Locks))),
-        Reply::Observed(Observation::Locks(vec![alpha, beta])),
+        Response::Observed(Observation::Locks(vec![alpha, beta])),
     );
 }
 
@@ -159,7 +162,7 @@ fn released_ids_never_reach_a_later_lock_after_restart() {
                 .ordinary(Request::Release(first.0))
                 .expect("release first lock")
         ),
-        Reply::Released(first.clone()),
+        Response::Released(first.clone()),
     );
     drop(first_store);
 
@@ -182,17 +185,16 @@ fn released_ids_never_reach_a_later_lock_after_restart() {
                 .ordinary(Request::Release(first.0))
                 .expect("reject stale release")
         ),
-        Reply::ReleaseRejected(ReleaseRejection::UnknownLockId),
+        Response::ReleaseRejected(ReleaseRejection::UnknownLockId),
     );
 }
 
 fn lock_request(name: &str, flow: &str, path: String, reason: &str) -> LockRequest {
-    LockRequest(
-        name.to_owned(),
-        flow.to_owned(),
-        vec![path],
-        reason.to_owned(),
-    )
+    LockRequest(text(name), text(flow), vec![text(path)], text(reason))
+}
+
+fn text(value: impl ToString) -> protos::Text {
+    protos::Text::try_from(value.to_string()).expect("fixture text")
 }
 
 fn pathbuf(directory: &tempfile::TempDir, segment: &str) -> String {

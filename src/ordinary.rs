@@ -6,7 +6,7 @@
 //! transitions below, while transport only carries their generated Signal
 //! values.
 
-use signal_orchestrate::{Lock, LockRequest, Observation, ObserveSelection, Refusal, Reply};
+use signal_orchestrate::{Lock, LockRequest, Observation, ObserveSelection, Response};
 
 use crate::store::StoreError;
 
@@ -27,8 +27,7 @@ pub trait Releases {
 /// a transport-specific error mapping from becoming a second contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OrdinaryOutcome {
-    Reply(Reply),
-    Refusal(Refusal),
+    Response(Response),
 }
 
 /// Captures one complete point-in-time ordinary-state observation.

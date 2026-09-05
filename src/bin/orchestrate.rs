@@ -1,102 +1,42 @@
-//! Datomic edge client for the ordinary Orchestrate Nexus socket.
-
-use std::{
-    env,
-    io::{Read, Write},
-    os::unix::net::UnixStream,
-    process::ExitCode,
-};
-
-use datomic::Textualizable;
-use protos::{Actualizable, Printing, Protosizable};
-use signal_orchestrate::{Body, Frame, SIGNAL_VERSION, SignalFrameCodec};
-
-#[path = "../generated/client.rs"]
-mod client;
-
-const ETHOS_SOURCE: &str = include_str!("../../ethos/client.ethos");
+//! Datom edge client for the ordinary framed Orchestrate Signal.
+use datom_codec::{Actualizable, IncorporationBudget, Potential, Textualizable};
+use orchestrate::transport::OrdinarySignalTransport;
+use std::{env, process::ExitCode};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
-    match args.as_slice() {
-        [] => {
-            print!("{}", signal_orchestrate::ETHOS_SOURCE);
-            println!();
-            use ethos_zero::{Actualizing, Potential};
-            match Potential::from(ETHOS_SOURCE).actualize() {
-                Ok(concept) => {
-                    print!("{}", concept.protosize().print());
-                }
-                Err(_) => {
-                    print!("{}", ETHOS_SOURCE);
-                }
-            }
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    let [source] = arguments.as_slice() else {
+        eprintln!("orchestrate: accepts one Datom request");
+        return ExitCode::FAILURE;
+    };
+    let request = match Potential::<signal_orchestrate::Request>::from(source.clone())
+        .actualize(IncorporationBudget::try_from(10_000).expect("static budget"))
+    {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("orchestrate: invalid request: {error:?}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let socket = match env::var("ORCHESTRATE_SOCKET") {
+        Ok(path) => path,
+        Err(_) => {
+            eprintln!("orchestrate: ORCHESTRATE_SOCKET is required");
+            return ExitCode::FAILURE;
+        }
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+        .expect("Tokio runtime");
+    match runtime.block_on(OrdinarySignalTransport::new(socket).request(request)) {
+        Ok(response) => {
+            println!("{}", response.textualize());
             ExitCode::SUCCESS
         }
-        [arg] if !arg.starts_with('-') => match exchange(arg) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(failure) => {
-                eprintln!("{}", failure.textualize());
-                ExitCode::FAILURE
-            }
-        },
-        _ => {
-            eprintln!(
-                "{}",
-                client::ClientFailure::Unreadable(datomic::Situated(
-                    None,
-                    datomic::Fault::Corporal(
-                        vec![],
-                        datomic::Problem::Value("accepts one datom value and no flags".to_owned()),
-                    ),
-                ))
-                .textualize()
-            );
+        Err(error) => {
+            eprintln!("orchestrate: {error}");
             ExitCode::FAILURE
         }
-    }
-}
-
-fn unreachable(path: String, error: String) -> client::ClientFailure {
-    client::ClientFailure::Unreachable(client::ClientFailureUnreachable(path, error))
-}
-
-fn exchange(arg: &str) -> Result<(), client::ClientFailure> {
-    let request: signal_orchestrate::Request =
-        protos::Potential::<signal_orchestrate::Request, datomic::Datom>::from(arg.to_owned())
-            .actualize()
-            .map_err(|s| client::ClientFailure::Unreadable(datomic::Situated(s.0, s.1)))?;
-    let socket_path = env::var("ORCHESTRATE_SOCKET")
-        .map_err(|_| unreachable(String::new(), "ORCHESTRATE_SOCKET is required".to_owned()))?;
-    let mut stream = UnixStream::connect(&socket_path)
-        .map_err(|e| unreachable(socket_path.clone(), e.to_string()))?;
-    stream
-        .write_all(
-            &Frame(SIGNAL_VERSION, Body::Request(request))
-                .encode_length_prefixed()
-                .map_err(|e| unreachable(socket_path.clone(), format!("{e:?}")))?,
-        )
-        .map_err(|e| unreachable(socket_path.clone(), e.to_string()))?;
-    let mut prefix = [0; 4];
-    stream
-        .read_exact(&mut prefix)
-        .map_err(|e| unreachable(socket_path.clone(), e.to_string()))?;
-    let mut bytes = prefix.to_vec();
-    bytes.resize(4 + u32::from_le_bytes(prefix) as usize, 0);
-    stream
-        .read_exact(&mut bytes[4..])
-        .map_err(|e| unreachable(socket_path.clone(), e.to_string()))?;
-    let frame = Frame::decode_length_prefixed(&bytes)
-        .map_err(|e| unreachable(socket_path, format!("{e:?}")))?;
-    match frame.1 {
-        Body::Reply(reply) => {
-            println!("{}", reply.textualize());
-            Ok(())
-        }
-        Body::Refusal(refusal) => Err(client::ClientFailure::Refused(refusal)),
-        _ => Err(unreachable(
-            String::new(),
-            "Nexus returned a non-reply frame".to_owned(),
-        )),
     }
 }
