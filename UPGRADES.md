@@ -239,7 +239,12 @@ at runtime.
 
 Stop the daemon and preserve a backup copy before running the migration. Run
 `orchestrate-store-migrate <absolute-store-path>` once while the daemon is
-offline. It refuses a nonempty v2 target, so a repeated invocation cannot
-overwrite a completed migration. Start the new daemon only after it succeeds,
-then verify the retained configuration, active locks, and next allocated Lock
-identifier.
+offline. The Sema/redb store takes the native exclusive writable file lock, so
+the importer refuses a second concurrent owner instead of guessing from a PID
+or socket path. It validates v1 configuration and allocator rows before it
+registers any v2 table; a malformed v1 source therefore leaves no empty v2
+catalogue registrations. After source validation, the v2 record assertions and
+v1 retractions land in one atomic durable commit. A repeated invocation finds
+no longer a valid v1 source and refuses without changing the completed v2
+records. Start the new daemon only after it succeeds, then verify the retained
+configuration, active locks, and next allocated Lock identifier.

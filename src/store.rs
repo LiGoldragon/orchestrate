@@ -389,6 +389,28 @@ impl OrchestrateStore {
                 FamilyName::new("orchestrate-lock-id-allocator"),
                 SchemaHash::for_label("orchestrate-lock-id-allocator-v1"),
             ))?;
+        // Validate every source row before registering any v2 family. Table
+        // registration is durable catalog state in sema-engine, so a malformed
+        // v1 store must fail without empty v2 registrations.
+        let old_configuration = engine
+            .match_records(QueryPlan::all(old_configurations))?
+            .records()
+            .to_vec();
+        let old_lock_rows = engine
+            .match_records(QueryPlan::all(old_locks))?
+            .records()
+            .to_vec();
+        let old_allocator_rows = engine
+            .match_records(QueryPlan::all(old_allocator))?
+            .records()
+            .to_vec();
+        if old_configuration.len() != 1 || old_allocator_rows.len() != 1 {
+            return Err(StoreError::MigrationSourceInvariant {
+                configuration_count: old_configuration.len(),
+                allocator_count: old_allocator_rows.len(),
+            });
+        }
+
         let configurations: TableReference<StoredConfiguration> =
             engine.register_table(TableDescriptor::new(
                 CONFIGURATION_TABLE,
@@ -422,25 +444,6 @@ impl OrchestrateStore {
                 configuration_count: target_configuration_count,
                 lock_count: target_lock_count,
                 allocator_count: target_allocator_count,
-            });
-        }
-
-        let old_configuration = engine
-            .match_records(QueryPlan::all(old_configurations))?
-            .records()
-            .to_vec();
-        let old_lock_rows = engine
-            .match_records(QueryPlan::all(old_locks))?
-            .records()
-            .to_vec();
-        let old_allocator_rows = engine
-            .match_records(QueryPlan::all(old_allocator))?
-            .records()
-            .to_vec();
-        if old_configuration.len() != 1 || old_allocator_rows.len() != 1 {
-            return Err(StoreError::MigrationSourceInvariant {
-                configuration_count: old_configuration.len(),
-                allocator_count: old_allocator_rows.len(),
             });
         }
 
@@ -754,6 +757,82 @@ mod tests {
     }
 
     #[test]
+    fn migration_source_failure_preserves_v1_records() {
+        let directory = tempfile::tempdir().expect("temporary malformed v1 store");
+        let store_path = directory.path().join("malformed-v1.sema");
+        let mut engine = Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION))
+            .expect("open malformed v1 store");
+        let configurations: TableReference<PreviousStoredConfiguration> = engine
+            .register_table(TableDescriptor::new(
+                PREVIOUS_CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v1"),
+            ))
+            .expect("register previous configuration family");
+        engine
+            .assert(Assertion::new(
+                configurations,
+                PreviousStoredConfiguration {
+                    configuration: PreviousConfigure(
+                        "/tmp/ordinary.sock".to_owned(),
+                        "/tmp/meta.sock".to_owned(),
+                    ),
+                },
+            ))
+            .expect("write malformed v1 configuration");
+        drop(engine);
+
+        assert!(matches!(
+            OrchestrateStore::migrate_previous_signal(&store_path),
+            Err(StoreError::MigrationSourceInvariant {
+                configuration_count: 1,
+                allocator_count: 0,
+            })
+        ));
+        let mut reopened = Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION))
+            .expect("reopen rejected v1 store");
+        assert!(
+            !reopened.catalog().is_registered(&CONFIGURATION_TABLE)
+                && !reopened.catalog().is_registered(&LOCKS_TABLE)
+                && !reopened.catalog().is_registered(&ALLOCATOR_TABLE),
+            "failed source preflight must not leave empty v2 catalogue registrations"
+        );
+        let configurations: TableReference<PreviousStoredConfiguration> = reopened
+            .register_table(TableDescriptor::new(
+                PREVIOUS_CONFIGURATION_TABLE,
+                FamilyName::new("orchestrate-configuration"),
+                SchemaHash::for_label("orchestrate-configuration-v1"),
+            ))
+            .expect("read prior configuration family");
+        assert_eq!(
+            reopened
+                .match_records(QueryPlan::all(configurations))
+                .expect("read preserved v1 configuration")
+                .records()
+                .len(),
+            1,
+            "failed source preflight must preserve v1 records"
+        );
+    }
+
+    #[test]
+    fn store_refuses_a_second_open_owner() {
+        let directory = tempfile::tempdir().expect("temporary exclusive store");
+        let store_path = directory.path().join("exclusive.sema");
+        let defaults = Configure(
+            text(directory.path().join("ordinary.sock").display()),
+            text(directory.path().join("meta.sock").display()),
+        );
+        let first = OrchestrateStore::open(&store_path, defaults.clone())
+            .expect("open first durable store owner");
+        assert!(
+            OrchestrateStore::open(&store_path, defaults).is_err(),
+            "redb's native writable file lock must reject a second owner"
+        );
+        drop(first);
+    }
+
+    #[test]
     fn previous_signal_rows_require_an_explicit_migration() {
         let directory = tempfile::tempdir().expect("temporary previous store");
         let store_path = directory.path().join("previous.sema");
@@ -828,10 +907,9 @@ mod tests {
         OrchestrateStore::migrate_previous_signal(&store_path).expect("offline migration");
         assert!(matches!(
             OrchestrateStore::migrate_previous_signal(&store_path),
-            Err(StoreError::MigrationTargetNotEmpty {
-                configuration_count: 1,
-                lock_count: 1,
-                allocator_count: 1,
+            Err(StoreError::MigrationSourceInvariant {
+                configuration_count: 0,
+                allocator_count: 0,
             })
         ));
 
