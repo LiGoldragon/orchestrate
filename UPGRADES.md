@@ -224,7 +224,7 @@ Discard the old lane, worktree, claim, and lock-projection state. Do not migrate
 it. Remove the old durable store and its projected lock files before starting the
 fresh Nexus. Start with an empty default Sema store, then verify a PathLock
 registration and release through the ordinary client.
-# Signal frame and durable-record v2
+# Orchestrate 0.30.0: Signal frame and durable-record v2
 
 This release replaces the generated producer-owned frame with signal-frame's
 bound structural archives. Stop the Nexus before upgrading; this document does
