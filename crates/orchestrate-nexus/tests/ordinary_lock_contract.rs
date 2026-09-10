@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use meta_signal_orchestrate::Configure;
-use orchestrate_nexus::{HandlesOrdinary, OpensStore, OrchestrateStore, ordinary::OrdinaryOutcome};
+use orchestrate_nexus::{OrdinaryHandleable, Openable, OrchestrateStore, ordinary::OrdinaryOutcome};
 use signal_orchestrate::{
     Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, Query,
     ReleaseRejection, Response,

@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use meta_signal_orchestrate::Configure;
+use signal_orchestrate::OrchestrateNexusConfiguration;
 use thiserror::Error;
 
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
@@ -16,13 +16,13 @@ const META_SOCKET_FILE: &str = "meta-orchestrate.sock";
 /// The default durable store and socket configuration derived by the executable.
 pub struct DefaultConfiguration {
     store_path: PathBuf,
-    configuration: Configure,
+    configuration: OrchestrateNexusConfiguration,
 }
 
 pub trait ReadsDefaultConfiguration: Sized {
     fn from_process() -> Result<Self, DefaultConfigurationError>;
     fn store_path(&self) -> &Path;
-    fn configuration(&self) -> Configure;
+    fn configuration(&self) -> OrchestrateNexusConfiguration;
 }
 
 impl ReadsDefaultConfiguration for DefaultConfiguration {
@@ -44,7 +44,7 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
             .to_string();
         Ok(Self {
             store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
-            configuration: Configure {
+            configuration: OrchestrateNexusConfiguration {
                 ordinary_socket_path,
                 meta_socket_path,
             },
@@ -55,7 +55,7 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
         &self.store_path
     }
 
-    fn configuration(&self) -> Configure {
+    fn configuration(&self) -> OrchestrateNexusConfiguration {
         self.configuration.clone()
     }
 }

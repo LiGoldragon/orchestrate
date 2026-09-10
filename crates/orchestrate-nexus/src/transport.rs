@@ -23,7 +23,7 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::{HandlesMeta, HandlesOrdinary, OrchestrateStore, ordinary::OrdinaryOutcome};
+use crate::{MetaHandleable, OrdinaryHandleable, OrchestrateStore, ordinary::OrdinaryOutcome};
 
 const MAXIMUM_SIGNAL_BYTES: usize = 8 * 1024 * 1024;
 
@@ -34,11 +34,11 @@ pub struct TransportRuntime {
     store: Arc<Mutex<OrchestrateStore>>,
 }
 
-pub trait TransportBinding: Sized {
+pub trait Bindable: Sized {
     fn bind(configure: Configure, store: OrchestrateStore) -> Result<Self, TransportError>;
 }
 
-impl TransportBinding for TransportRuntime {
+impl Bindable for TransportRuntime {
     fn bind(configure: Configure, store: OrchestrateStore) -> Result<Self, TransportError> {
         let ordinary_path = Path::new(&configure.ordinary_socket_path);
         let meta_path = Path::new(&configure.meta_socket_path);
@@ -74,14 +74,14 @@ impl SocketPreparing for Path {
     }
 }
 
-pub trait TransportServing {
+pub trait Servable {
     fn serve_until(
         self,
         shutdown: oneshot::Receiver<()>,
     ) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
 }
 
-impl TransportServing for TransportRuntime {
+impl Servable for TransportRuntime {
     #[allow(clippy::manual_async_fn)]
     fn serve_until(
         self,
@@ -127,13 +127,13 @@ struct SignalPayload {
     bytes: Vec<u8>,
 }
 
-trait PayloadReading {
+trait Readable {
     async fn read_from(stream: &mut UnixStream) -> Result<Self, TransportError>
     where
         Self: Sized;
 }
 
-impl PayloadReading for SignalPayload {
+impl Readable for SignalPayload {
     async fn read_from(stream: &mut UnixStream) -> Result<Self, TransportError> {
         let mut prefix = [0; 4];
         stream.read_exact(&mut prefix).await?;
@@ -147,11 +147,11 @@ impl PayloadReading for SignalPayload {
     }
 }
 
-trait PayloadWriting {
+trait Writable {
     async fn write_to(&self, stream: &mut UnixStream) -> Result<(), TransportError>;
 }
 
-impl PayloadWriting for SignalPayload {
+impl Writable for SignalPayload {
     async fn write_to(&self, stream: &mut UnixStream) -> Result<(), TransportError> {
         if self.bytes.len() > MAXIMUM_SIGNAL_BYTES {
             return Err(TransportError::FrameTooLarge(self.bytes.len()));
@@ -169,11 +169,11 @@ struct OrdinarySocket {
     stream: UnixStream,
 }
 
-trait OrdinaryServing {
+trait OrdinaryServable {
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError>;
 }
 
-impl OrdinaryServing for OrdinarySocket {
+impl OrdinaryServable for OrdinarySocket {
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let payload = SignalPayload::read_from(&mut self.stream).await?;
         let query = OrdinarySignal::<OrdinaryQuery>::from(payload.bytes)
@@ -190,11 +190,11 @@ struct MetaSocket {
     stream: UnixStream,
 }
 
-trait MetaServing {
+trait MetaServable {
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError>;
 }
 
-impl MetaServing for MetaSocket {
+impl MetaServable for MetaSocket {
     async fn serve(&mut self, store: Arc<Mutex<OrchestrateStore>>) -> Result<(), TransportError> {
         let payload = SignalPayload::read_from(&mut self.stream).await?;
         let query = MetaSignal::<MetaQuery>::from(payload.bytes)

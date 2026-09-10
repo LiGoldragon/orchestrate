@@ -1,14 +1,16 @@
 //! Durable Lock state owned by the Orchestrate Nexus.
 
 use crate::ordinary::{Locks, Observes, OrdinaryOutcome, Releases};
-use meta_signal_orchestrate::{Configure, Query as MetaQuery, Response as MetaResponse};
+use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
+use nexus::{Configurable, ConfigurationState, ConfigurationTransitionError};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     Assertion, Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, Retraction,
     SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
 };
 use signal_orchestrate::{
-    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
+    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockOverlap,
+    LockRejection, LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,
     Query as OrdinaryQuery, ReleaseRejection, Response as OrdinaryResponse,
 };
 use std::{
@@ -20,6 +22,7 @@ use thiserror::Error;
 
 const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
 const CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration_v2");
+const LIFECYCLE_TABLE: TableName = TableName::new("orchestrate_configuration_lifecycle_v1");
 const LOCKS_TABLE: TableName = TableName::new("locks_v2");
 const ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator_v2");
 const PREVIOUS_CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration");
@@ -27,6 +30,7 @@ const PREVIOUS_LOCKS_TABLE: TableName = TableName::new("locks");
 const PREVIOUS_ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator");
 const LEGACY_TABLE: TableName = TableName::new("active_path_locks");
 const CONFIGURATION_KEY: &str = "configuration";
+const LIFECYCLE_KEY: &str = "configuration-lifecycle";
 const ALLOCATOR_KEY: &str = "next";
 
 #[derive(Debug, Error)]
@@ -35,6 +39,10 @@ pub enum StoreError {
     Engine(#[from] sema_engine::Error),
     #[error("the durable store has {count} configuration rows")]
     ConfigurationInvariant { count: usize },
+    #[error("the durable store has {count} configuration lifecycle rows")]
+    ConfigurationLifecycleInvariant { count: usize },
+    #[error("configuration lifecycle migration is required for the existing configuration")]
+    ConfigurationLifecycleMigrationRequired,
     #[error("the durable store has {count} Lock ID allocator rows")]
     LockIdAllocatorInvariant { count: usize },
     #[error(
@@ -49,12 +57,13 @@ pub enum StoreError {
         lock_count: usize,
     },
     #[error(
-        "the v2 migration target is not empty: {configuration_count} configuration, {lock_count} Lock, and {allocator_count} allocator rows"
+        "the migration target is not empty: {configuration_count} configuration, {lock_count} Lock, {allocator_count} allocator, and {lifecycle_count} lifecycle rows"
     )]
     MigrationTargetNotEmpty {
         configuration_count: usize,
         lock_count: usize,
         allocator_count: usize,
+        lifecycle_count: usize,
     },
     #[error(
         "the v1 migration source has {configuration_count} configuration and {allocator_count} allocator rows; expected one of each"
@@ -78,9 +87,18 @@ pub enum StoreError {
 }
 
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
-struct StoredConfiguration {
+pub struct StoredConfiguration {
     ordinary_socket: String,
     meta_socket: String,
+}
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
+struct StoredLifecycle {
+    meta_configure_occurred: bool,
+}
+impl EngineRecord for StoredLifecycle {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(LIFECYCLE_KEY)
+    }
 }
 impl EngineRecord for StoredConfiguration {
     fn record_key(&self) -> RecordKey {
@@ -198,19 +216,19 @@ impl NormalizesLockRequests for NormalizedLockRequest {
 }
 
 trait StoresPublicConfiguration: Sized {
-    fn from_public(value: &Configure) -> Self;
-    fn into_public(self) -> Configure;
+    fn from_public(value: &OrchestrateNexusConfiguration) -> Self;
+    fn into_public(self) -> OrchestrateNexusConfiguration;
 }
 
 impl StoresPublicConfiguration for StoredConfiguration {
-    fn from_public(value: &Configure) -> Self {
+    fn from_public(value: &OrchestrateNexusConfiguration) -> Self {
         Self {
             ordinary_socket: value.ordinary_socket_path.clone(),
             meta_socket: value.meta_socket_path.clone(),
         }
     }
-    fn into_public(self) -> Configure {
-        Configure {
+    fn into_public(self) -> OrchestrateNexusConfiguration {
+        OrchestrateNexusConfiguration {
             ordinary_socket_path: self.ordinary_socket,
             meta_socket_path: self.meta_socket,
         }
@@ -333,8 +351,9 @@ impl EngineRecord for LegacyStoredLock {
 
 pub struct OrchestrateStore {
     engine: Engine,
-    configuration: Configure,
+    configuration: ConfigurationState<OrchestrateNexusConfiguration>,
     configurations: TableReference<StoredConfiguration>,
+    lifecycle: TableReference<StoredLifecycle>,
     locks: TableReference<StoredLock>,
     allocator: TableReference<StoredAllocator>,
 }
@@ -349,12 +368,12 @@ pub struct LegacyStorePreflight {
 }
 
 /// Inspects a legacy store before activation of the breaking Lock contract.
-pub trait PreflightsLegacyStore: Sized {
+pub trait LegacyStorePreflightInspectable: Sized {
     fn inspect(store_path: &Path) -> Result<Self, StoreError>;
     fn active_lock_count(&self) -> usize;
 }
 
-impl PreflightsLegacyStore for LegacyStorePreflight {
+impl LegacyStorePreflightInspectable for LegacyStorePreflight {
     fn inspect(store_path: &Path) -> Result<Self, StoreError> {
         if !store_path.exists() {
             return Ok(Self {
@@ -384,11 +403,11 @@ impl PreflightsLegacyStore for LegacyStorePreflight {
     }
 }
 
-pub trait MigratesPreviousSignal {
+pub trait PreviousSignalMigratable {
     fn migrate_previous_signal(store_path: &Path) -> Result<(), StoreError>;
 }
 
-impl MigratesPreviousSignal for OrchestrateStore {
+impl PreviousSignalMigratable for OrchestrateStore {
     /// Offline, one-time import of the retired v1 Signal records.
     ///
     /// The daemon must be stopped. This method is the only legacy reader; the
@@ -455,6 +474,12 @@ impl MigratesPreviousSignal for OrchestrateStore {
                 FamilyName::new("orchestrate-lock-id-allocator"),
                 SchemaHash::for_label("orchestrate-lock-id-allocator-v2"),
             ))?;
+        let lifecycle: TableReference<StoredLifecycle> =
+            engine.register_table(TableDescriptor::new(
+                LIFECYCLE_TABLE,
+                FamilyName::new("orchestrate-configuration-lifecycle"),
+                SchemaHash::for_label("orchestrate-configuration-lifecycle-v1"),
+            ))?;
 
         let target_configuration_count = engine
             .match_records(QueryPlan::all(configurations))?
@@ -465,12 +490,17 @@ impl MigratesPreviousSignal for OrchestrateStore {
             .match_records(QueryPlan::all(allocator))?
             .records()
             .len();
-        if target_configuration_count != 0 || target_lock_count != 0 || target_allocator_count != 0
+        let target_lifecycle_count = engine
+            .match_records(QueryPlan::all(lifecycle))?
+            .records()
+            .len();
+        if target_configuration_count != 0 || target_lock_count != 0 || target_allocator_count != 0 || target_lifecycle_count != 0
         {
             return Err(StoreError::MigrationTargetNotEmpty {
                 configuration_count: target_configuration_count,
                 lock_count: target_lock_count,
                 allocator_count: target_allocator_count,
+                lifecycle_count: target_lifecycle_count,
             });
         }
 
@@ -502,6 +532,10 @@ impl MigratesPreviousSignal for OrchestrateStore {
                 next_lock_id: old_allocator_rows[0].next_lock_id,
             },
         );
+        migration = migration.assert(
+            lifecycle,
+            StoredLifecycle { meta_configure_occurred: false },
+        );
         for row in old_configuration {
             migration = migration.retract(old_configurations, row.record_key());
         }
@@ -514,12 +548,12 @@ impl MigratesPreviousSignal for OrchestrateStore {
     }
 }
 
-pub trait OpensStore: Sized {
-    fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError>;
+pub trait Openable: Sized {
+    fn open(store_path: &Path, defaults: OrchestrateNexusConfiguration) -> Result<(Self, OrchestrateNexusConfiguration), StoreError>;
 }
 
-impl OpensStore for OrchestrateStore {
-    fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError> {
+impl Openable for OrchestrateStore {
+    fn open(store_path: &Path, defaults: OrchestrateNexusConfiguration) -> Result<(Self, OrchestrateNexusConfiguration), StoreError> {
         fs::create_dir_all(
             store_path
                 .parent()
@@ -560,6 +594,11 @@ impl OpensStore for OrchestrateStore {
             FamilyName::new("orchestrate-configuration"),
             SchemaHash::for_label("orchestrate-configuration-v2"),
         ))?;
+        let lifecycle = engine.register_table(TableDescriptor::new(
+            LIFECYCLE_TABLE,
+            FamilyName::new("orchestrate-configuration-lifecycle"),
+            SchemaHash::for_label("orchestrate-configuration-lifecycle-v1"),
+        ))?;
         let legacy: TableReference<LegacyStoredLock> =
             engine.register_table(TableDescriptor::new(
                 LEGACY_TABLE,
@@ -590,17 +629,22 @@ impl OpensStore for OrchestrateStore {
             .records()
         {
             [] => {
-                engine.assert(Assertion::new(
-                    configurations,
-                    StoredConfiguration::from_public(&defaults),
-                ))?;
-                engine
-                    .match_records(QueryPlan::all(configurations))?
-                    .records()[0]
-                    .clone()
-                    .into_public()
+                engine.commit_atomic(engine.begin_atomic_commit()
+                    .assert(configurations, StoredConfiguration::from_public(&defaults))
+                    .assert(lifecycle, StoredLifecycle { meta_configure_occurred: false }))?;
+                ConfigurationState::from_default(defaults.clone())
             }
-            [stored] => stored.clone().into_public(),
+            [stored] => {
+                let marker = match engine.match_records(QueryPlan::all(lifecycle))?.records() {
+                    [marker] => marker.meta_configure_occurred,
+                    [] => return Err(StoreError::ConfigurationLifecycleMigrationRequired),
+                    rows => return Err(StoreError::ConfigurationLifecycleInvariant { count: rows.len() }),
+                };
+                ConfigurationState {
+                    desired_configuration: stored.clone().into_public(),
+                    meta_configure_occurred: marker,
+                }
+            }
             rows => return Err(StoreError::ConfigurationInvariant { count: rows.len() }),
         };
         match engine.match_records(QueryPlan::all(allocator))?.records() {
@@ -618,21 +662,39 @@ impl OpensStore for OrchestrateStore {
                 engine,
                 configuration: configuration.clone(),
                 configurations,
+                lifecycle,
                 locks,
                 allocator,
             },
-            configuration,
+            configuration.desired_configuration().clone(),
         ))
     }
 }
 
-pub trait HandlesOrdinary {
+pub trait OrdinaryHandleable {
     fn ordinary(&mut self, request: OrdinaryQuery) -> Result<OrdinaryOutcome, StoreError>;
 }
 
-impl HandlesOrdinary for OrchestrateStore {
+impl OrdinaryHandleable for OrchestrateStore {
     fn ordinary(&mut self, request: OrdinaryQuery) -> Result<OrdinaryOutcome, StoreError> {
         match request {
+            OrdinaryQuery::Configure(configuration) => {
+                match self.configuration.ordinary_configure_if_unset(configuration.clone()) {
+                    Ok(()) => {
+                        self.persist_configuration()?;
+                        Ok(OrdinaryOutcome::Response(OrdinaryResponse::ConfigurationAccepted(
+                            self.configuration_receipt(),
+                        )))
+                    }
+                    Err(ConfigurationTransitionError::OrdinaryConfigureClosed) => Ok(
+                        OrdinaryOutcome::Response(OrdinaryResponse::ConfigurationRefused(
+                            ConfigurationRejection {
+                                configuration_rejection_reason: ConfigurationRejectionReason::MetaConfigureOccurred,
+                            },
+                        )),
+                    ),
+                }
+            }
             OrdinaryQuery::Lock(request) => self.lock(request),
             OrdinaryQuery::Release(id) => self.release(id),
             OrdinaryQuery::Observe(selection) => Ok(OrdinaryOutcome::Response(
@@ -642,27 +704,46 @@ impl HandlesOrdinary for OrchestrateStore {
     }
 }
 
-pub trait HandlesMeta {
+pub trait MetaHandleable {
     fn meta(&mut self, request: MetaQuery) -> Result<MetaResponse, StoreError>;
 }
 
-impl HandlesMeta for OrchestrateStore {
+impl MetaHandleable for OrchestrateStore {
     fn meta(&mut self, request: MetaQuery) -> Result<MetaResponse, StoreError> {
         match request {
             MetaQuery::Configure(configure) => {
-                if configure != self.configuration {
-                    self.engine.retract(Retraction::new(
-                        self.configurations,
-                        RecordKey::new(CONFIGURATION_KEY),
-                    ))?;
-                    self.engine.assert(Assertion::new(
-                        self.configurations,
-                        StoredConfiguration::from_public(&configure),
-                    ))?;
-                    self.configuration = configure.clone();
-                }
-                Ok(MetaResponse::Configured(configure))
+                self.configuration.meta_configure(configure);
+                self.persist_configuration()?;
+                Ok(MetaResponse::Configured(self.configuration_receipt()))
             }
+            MetaQuery::ReverseMetaConfiguration => {
+                self.configuration.meta_reverse();
+                self.persist_configuration()?;
+                Ok(MetaResponse::OrdinaryConfigurationReopened(self.configuration_receipt()))
+            }
+        }
+    }
+}
+
+trait ConfigurationPersistable {
+    fn persist_configuration(&mut self) -> Result<(), StoreError>;
+    fn configuration_receipt(&self) -> ConfigurationReceipt;
+}
+
+impl ConfigurationPersistable for OrchestrateStore {
+    fn persist_configuration(&mut self) -> Result<(), StoreError> {
+        self.engine.commit_atomic(
+            self.engine.begin_atomic_commit()
+                .mutate(self.configurations, StoredConfiguration::from_public(self.configuration.desired_configuration()))
+                .mutate(self.lifecycle, StoredLifecycle { meta_configure_occurred: self.configuration.meta_configure_occurred() }),
+        )?;
+        Ok(())
+    }
+
+    fn configuration_receipt(&self) -> ConfigurationReceipt {
+        ConfigurationReceipt {
+            orchestrate_nexus_configuration: self.configuration.desired_configuration().clone(),
+            meta_configure_done: self.configuration.meta_configure_occurred(),
         }
     }
 }
@@ -800,7 +881,7 @@ mod tests {
     fn preflight_does_not_create_a_missing_store() {
         let directory = tempfile::tempdir().expect("temporary preflight directory");
         let store_path = directory.path().join("missing.sema");
-        let preflight = <LegacyStorePreflight as PreflightsLegacyStore>::inspect(&store_path)
+        let preflight = <LegacyStorePreflight as LegacyStorePreflightInspectable>::inspect(&store_path)
             .expect("inspect missing store");
         assert_eq!(preflight.active_lock_count(), 0);
         assert!(!store_path.exists(), "read-only preflight creates no store");
@@ -834,7 +915,7 @@ mod tests {
             .expect("write legacy fixture");
         drop(engine);
 
-        let preflight = <LegacyStorePreflight as PreflightsLegacyStore>::inspect(&store_path)
+        let preflight = <LegacyStorePreflight as LegacyStorePreflightInspectable>::inspect(&store_path)
             .expect("inspect legacy store");
         assert_eq!(preflight.active_lock_count(), 1);
 

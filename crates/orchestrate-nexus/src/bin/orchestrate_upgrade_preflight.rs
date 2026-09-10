@@ -1,14 +1,14 @@
 use std::process::ExitCode;
 
 use orchestrate_nexus::{
-    DefaultConfiguration, LegacyStorePreflight, PreflightsLegacyStore, ReadsDefaultConfiguration,
+    DefaultConfiguration, LegacyStorePreflight, LegacyStorePreflightInspectable, ReadsDefaultConfiguration,
 };
 
 fn main() -> ExitCode {
     match DefaultConfiguration::from_process()
         .map_err(|error| error.to_string())
         .and_then(|defaults| {
-            <LegacyStorePreflight as PreflightsLegacyStore>::inspect(defaults.store_path())
+            <LegacyStorePreflight as LegacyStorePreflightInspectable>::inspect(defaults.store_path())
                 .map_err(|error| error.to_string())
         }) {
         Ok(preflight) => {

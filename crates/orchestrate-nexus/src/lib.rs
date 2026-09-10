@@ -5,6 +5,6 @@ pub mod transport;
 
 pub use defaults::{DefaultConfiguration, ReadsDefaultConfiguration};
 pub use store::{
-    HandlesMeta, HandlesOrdinary, LegacyStorePreflight, MigratesPreviousSignal, OpensStore,
-    OrchestrateStore, PreflightsLegacyStore,
+    MetaHandleable, OrdinaryHandleable, LegacyStorePreflight, PreviousSignalMigratable, Openable,
+    OrchestrateStore, LegacyStorePreflightInspectable,
 };

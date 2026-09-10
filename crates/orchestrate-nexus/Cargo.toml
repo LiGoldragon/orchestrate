@@ -25,6 +25,8 @@ path = "src/bin/orchestrate_upgrade_preflight.rs"
 
 [dependencies]
 meta-signal-orchestrate.workspace = true
+kameo.workspace = true
+nexus.workspace = true
 rkyv.workspace = true
 sema-engine.workspace = true
 signal-orchestrate.workspace = true

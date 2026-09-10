@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 use orchestrate_nexus::{
-    DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
-    transport::{TransportBinding, TransportRuntime, TransportServing},
+    DefaultConfiguration, Openable, OrchestrateStore, ReadsDefaultConfiguration,
+    transport::{Bindable, TransportRuntime, Servable},
 };
 
 fn main() -> ExitCode {
