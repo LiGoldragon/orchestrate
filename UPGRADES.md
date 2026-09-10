@@ -1,5 +1,30 @@
 # Upgrades
 
+## 0.30.0 to 0.31.0 -- separate Nexus and Datom clients
+
+This is a coordinated socket and durable-archive cutover. The workspace now
+contains the Datom-free `orchestrate-nexus` daemon, the ordinary `orchestrate`
+client, and the privileged `orchestrate-meta` client. The clients actualize
+the generated `Query` roots through Datom; the daemon exchanges the generated
+`Query` and `Response` roots as length-prefixed portable rkyv bytes. There is
+no routed wire envelope or old-contract compatibility path.
+
+The named generated records change the archives stored by Sema. Before
+installing 0.31.0, stop the old Nexus, copy the latest
+`orchestrate-nexus.sema` into isolated state, and run
+`orchestrate-store-migrate` against that copy. The migration reads the exact
+0.30 tuple-shaped `Configure`, `Lock`, and allocator records and writes the
+0.31 named records while preserving configuration, every lock field, and the
+next monotonic ID. Validate the migrated copy by starting the replacement with
+isolated `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`, exercising both clients, and
+restarting it before installing the new package. If migration or validation
+fails, leave the old store in place and restart the old Nexus.
+
+The installed clients and Nexus must come from the same 0.31.0 package. Point
+`ORCHESTRATE_SOCKET` and `ORCHESTRATE_META_SOCKET` at the generated unit's
+ordinary and privileged sockets. After activation, verify `Observe.Locks`, a
+Lock and Release cycle, and privileged `Configure` through `orchestrate-meta`.
+
 ## 0.29.1 to 0.29.2 -- Import datomic::Situated<datomic::Fault> from datomic
 
 ### What changed

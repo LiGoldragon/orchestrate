@@ -1,5 +1,5 @@
 //! Explicit offline importer for the retired Signal durable representation.
-use orchestrate::OrchestrateStore;
+use orchestrate_nexus::{MigratesPreviousSignal, OrchestrateStore};
 use std::{env, path::Path, process::ExitCode};
 
 fn main() -> ExitCode {

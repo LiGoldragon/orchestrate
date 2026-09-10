@@ -1,6 +1,9 @@
 use std::process::ExitCode;
 
-use orchestrate::{DefaultConfiguration, OrchestrateStore, transport};
+use orchestrate_nexus::{
+    DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
+    transport::{TransportBinding, TransportRuntime, TransportServing},
+};
 
 fn main() -> ExitCode {
     match DefaultConfiguration::from_process()
@@ -13,7 +16,13 @@ fn main() -> ExitCode {
                 .enable_all()
                 .build()
                 .map_err(|error| error.to_string())?
-                .block_on(transport::run(configuration, store))
+                .block_on(async move {
+                    let transport = TransportRuntime::bind(configuration, store)?;
+                    println!("orchestrate-nexus ready");
+                    let (shutdown_sender, shutdown) = tokio::sync::oneshot::channel();
+                    let _shutdown_sender = shutdown_sender;
+                    transport.serve_until(shutdown).await
+                })
                 .map_err(|error| error.to_string())
         }) {
         Ok(()) => ExitCode::SUCCESS,

@@ -19,9 +19,15 @@ pub struct DefaultConfiguration {
     configuration: Configure,
 }
 
-impl DefaultConfiguration {
+pub trait ReadsDefaultConfiguration: Sized {
+    fn from_process() -> Result<Self, DefaultConfigurationError>;
+    fn store_path(&self) -> &Path;
+    fn configuration(&self) -> Configure;
+}
+
+impl ReadsDefaultConfiguration for DefaultConfiguration {
     /// Reads the per-user XDG roots and rejects every startup argument.
-    pub fn from_process() -> Result<Self, DefaultConfigurationError> {
+    fn from_process() -> Result<Self, DefaultConfigurationError> {
         if env::args_os().nth(1).is_some() {
             return Err(DefaultConfigurationError::StartupArguments);
         }
@@ -38,18 +44,33 @@ impl DefaultConfiguration {
             .to_string();
         Ok(Self {
             store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
-            configuration: Configure(text(ordinary_socket_path), text(meta_socket_path)),
+            configuration: Configure {
+                ordinary_socket_path,
+                meta_socket_path,
+            },
         })
     }
 
-    pub fn store_path(&self) -> &Path {
+    fn store_path(&self) -> &Path {
         &self.store_path
     }
 
-    pub fn configuration(&self) -> Configure {
+    fn configuration(&self) -> Configure {
         self.configuration.clone()
     }
+}
 
+trait LocatesXdgRoots {
+    fn state_home() -> Result<PathBuf, DefaultConfigurationError>;
+    fn runtime_directory() -> Result<PathBuf, DefaultConfigurationError>;
+    fn home_directory() -> Result<PathBuf, DefaultConfigurationError>;
+    fn absolute_path(
+        variable: &'static str,
+        path: PathBuf,
+    ) -> Result<PathBuf, DefaultConfigurationError>;
+}
+
+impl LocatesXdgRoots for DefaultConfiguration {
     fn state_home() -> Result<PathBuf, DefaultConfigurationError> {
         match env::var_os("XDG_STATE_HOME") {
             Some(path) => Self::absolute_path("XDG_STATE_HOME", PathBuf::from(path)),
@@ -81,10 +102,6 @@ impl DefaultConfiguration {
             Err(DefaultConfigurationError::RelativePath { variable, path })
         }
     }
-}
-
-fn text(value: String) -> protos::Text {
-    protos::Text::try_from(value).expect("XDG socket path is valid text")
 }
 
 #[derive(Debug, Error)]

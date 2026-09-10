@@ -1,0 +1,38 @@
+[package]
+name = "orchestrate-nexus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Long-running Orchestrate Nexus and durable Lock state."
+
+[lib]
+name = "orchestrate_nexus"
+
+[[bin]]
+name = "orchestrate-nexus"
+path = "src/main.rs"
+
+[[bin]]
+name = "orchestrate-store-migrate"
+path = "src/bin/orchestrate_store_migrate.rs"
+
+[[bin]]
+name = "orchestrate-upgrade-preflight"
+path = "src/bin/orchestrate_upgrade_preflight.rs"
+
+[dependencies]
+meta-signal-orchestrate.workspace = true
+rkyv.workspace = true
+sema-engine.workspace = true
+signal-orchestrate.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

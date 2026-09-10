@@ -1,0 +1,29 @@
+[package]
+name = "orchestrate-meta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Datom client for the privileged Orchestrate Signal."
+build = "build.rs"
+
+[[bin]]
+name = "orchestrate-meta"
+path = "src/main.rs"
+
+[dependencies]
+datom-codec.workspace = true
+meta-signal-orchestrate = { workspace = true, features = ["datom"] }
+protos.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+ethos-zero.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

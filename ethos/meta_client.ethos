@@ -1,9 +1,0 @@
-; Datom-boundary failures for the privileged Orchestrate client.
-Library
-[ datom_codec:Error
-  meta_signal_orchestrate:Refusal ]
-[ ClientFailure.[ Unreadable.Error
-                  Unreachable.{ String String }
-                  Refused.Refusal ] ]
-[]
-[]

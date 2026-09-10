@@ -1,0 +1,29 @@
+[package]
+name = "orchestrate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Datom client for the ordinary Orchestrate Signal."
+build = "build.rs"
+
+[[bin]]
+name = "orchestrate"
+path = "src/main.rs"
+
+[dependencies]
+datom-codec.workspace = true
+protos.workspace = true
+signal-orchestrate = { workspace = true, features = ["datom"] }
+thiserror.workspace = true
+
+[build-dependencies]
+ethos-zero.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

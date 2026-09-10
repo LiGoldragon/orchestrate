@@ -1,59 +1,31 @@
-[package]
-name         = "orchestrate"
-version      = "0.30.0"
-edition      = "2024"
+[workspace]
+members = [
+  "crates/orchestrate-nexus",
+  "crates/orchestrate",
+  "crates/orchestrate-meta",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.31.0"
+edition = "2024"
 rust-version = "1.89"
-license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/LiGoldragon/orchestrate"
-description  = "Typed orchestration state for Persona agents."
-publish      = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/LiGoldragon/orchestrate"
+publish = false
 
-[lib]
-name = "orchestrate"
-path = "src/lib.rs"
-
-[[bin]]
-name = "orchestrate-nexus"
-path = "src/main.rs"
-
-[[bin]]
-name = "orchestrate"
-path = "src/bin/orchestrate.rs"
-required-features = ["datom"]
-
-[[bin]]
-name = "meta-orchestrate"
-path = "src/bin/meta_orchestrate.rs"
-required-features = ["datom"]
-
-[[bin]]
-name = "orchestrate-store-migrate"
-path = "src/bin/orchestrate_store_migrate.rs"
-
-[[bin]]
-name = "orchestrate-upgrade-preflight"
-path = "src/bin/orchestrate_upgrade_preflight.rs"
-
-[features]
-default = []
-datom = ["dep:datom-codec", "signal-orchestrate/datom", "meta-signal-orchestrate/datom"]
-
-[dependencies]
-datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "2dad91afce6237d772767bd4ab19f31276e6999e", optional = true }
-ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "409ea065a714ba3ad6946d50f3f5d0b1ddbccbcb" }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "8ccb5c2d07628f3fed0158eae12b5834786f0791", default-features = false }
+[workspace.dependencies]
+datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "2dad91afce6237d772767bd4ab19f31276e6999e" }
+ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "daf007296a19ad2f9c8a1e67e102b2e3f09db327" }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "7d81bd96b8966988a6cd1fea8ba50888ba92e85a", default-features = false }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "aac95b0d08a4c7eb7f73c8ea18309f9e2e89315f" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
-signal-frame = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "80f70d929ae6d72707052f097be2264872913983", default-features = false }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "5c28bbf7ec4cb4d58c26a24e82948a7a9218794b", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "0efc9fdada29e72cad839b2941370afadaf880fb", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
-[dev-dependencies]
-tempfile = "3"
-
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "forbid"
 unused = { level = "warn", priority = -1 }
 dead_code = "warn"

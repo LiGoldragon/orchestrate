@@ -34,7 +34,7 @@
           inherit src;
           strictDeps = true;
         };
-        packageArgs = commonArgs;
+        packageArgs = commonArgs // { cargoExtraArgs = "--workspace"; };
         cargoArtifacts = craneLib.buildDepsOnly packageArgs;
       in
       {
@@ -50,29 +50,42 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--all-targets";
+              cargoExtraArgs = "--workspace --all-targets";
             }
           );
-          test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
+          test = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "--workspace --all-targets";
+            }
+          );
           live-nexus = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test live_nexus";
+              cargoTestExtraArgs = "-p orchestrate-nexus --test live_nexus";
             }
           );
           ordinary-lock-contract = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test ordinary_lock_contract";
+              cargoTestExtraArgs = "-p orchestrate-nexus --test ordinary_lock_contract";
             }
           );
-          datom-cli = craneLib.cargoTest (
+          ordinary-client = craneLib.cargoTest (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoTestExtraArgs = "--test live_nexus";
+              cargoTestExtraArgs = "-p orchestrate --test client";
+            }
+          );
+          meta-client = craneLib.cargoTest (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoTestExtraArgs = "-p orchestrate-meta --test client";
             }
           );
           test-doc = craneLib.cargoTest (
@@ -94,7 +107,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoClippyExtraArgs = "--all-targets -- -D warnings";
+              cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
             }
           );
         };
@@ -108,7 +121,7 @@
         };
         apps.meta = flake-utils.lib.mkApp {
           drv = self.packages.${system}.default;
-          name = "meta-orchestrate";
+          name = "orchestrate-meta";
         };
         devShells.default = pkgs.mkShell {
           name = "orchestrate";

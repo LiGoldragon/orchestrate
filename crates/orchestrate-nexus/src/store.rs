@@ -1,15 +1,15 @@
-//! Orchestrate Nexus-owned durable Lock state.
+//! Durable Lock state owned by the Orchestrate Nexus.
 
 use crate::ordinary::{Locks, Observes, OrdinaryOutcome, Releases};
-use meta_signal_orchestrate::{Configure, Request as MetaRequest, Response as MetaResponse};
+use meta_signal_orchestrate::{Configure, Query as MetaQuery, Response as MetaResponse};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     Assertion, Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, Retraction,
     SchemaHash, SchemaVersion, TableDescriptor, TableName, TableReference,
 };
 use signal_orchestrate::{
-    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection, ReleaseRejection,
-    Request as OrdinaryRequest, Response as OrdinaryResponse,
+    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
+    Query as OrdinaryQuery, ReleaseRejection, Response as OrdinaryResponse,
 };
 use std::{
     collections::BTreeSet,
@@ -42,7 +42,7 @@ pub enum StoreError {
     )]
     LegacyActiveLocks { count: usize },
     #[error(
-        "the previous Signal durable representation has {configuration_count} configuration and {lock_count} Lock rows; run the explicit one-time migration before activating the framed contract"
+        "the previous Signal durable representation has {configuration_count} configuration and {lock_count} Lock rows; run the explicit one-time migration before activating the named contract"
     )]
     PreviousSignalMigrationRequired {
         configuration_count: usize,
@@ -149,15 +149,22 @@ struct NormalizedLockRequest {
     request: LockRequest,
 }
 
-impl NormalizedLockRequest {
+trait NormalizesLockRequests: Sized {
+    fn from_request(request: LockRequest) -> Result<Self, StoreError>;
+    fn duplicates_name_of(&self, lock: &Lock) -> bool;
+    fn overlapping_path_of(&self, lock: &Lock) -> Option<String>;
+    fn into_lock(self, lock_id: i64) -> Lock;
+}
+
+impl NormalizesLockRequests for NormalizedLockRequest {
     fn from_request(mut request: LockRequest) -> Result<Self, StoreError> {
-        if request.2.is_empty() {
+        if request.lock_path_vector.is_empty() {
             return Err(StoreError::EmptyPathSet);
         }
         let mut paths = BTreeSet::new();
-        for path in &mut request.2 {
-            let normalized = NormalizedLockPath::from_source(path.as_ref())?.0;
-            *path = text(normalized.clone());
+        for path in &mut request.lock_path_vector {
+            let normalized = NormalizedLockPath::from_source(path)?.0;
+            *path = normalized.clone();
             if !paths.insert(normalized.clone()) {
                 return Err(StoreError::DuplicateNormalizedPath { path: normalized });
             }
@@ -166,71 +173,87 @@ impl NormalizedLockRequest {
     }
 
     fn duplicates_name_of(&self, lock: &Lock) -> bool {
-        self.request.0 == lock.1
+        self.request.lock_name == lock.lock_name
     }
 
     fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
-        self.request.2.iter().find_map(|requested| {
-            lock.3.iter().find_map(|held| {
-                NormalizedLockPath::from_normalized(requested.as_ref())
-                    .overlaps(&NormalizedLockPath::from_normalized(held.as_ref()))
-                    .then(|| requested.to_string())
+        self.request.lock_path_vector.iter().find_map(|requested| {
+            lock.lock_path_vector.iter().find_map(|held| {
+                NormalizedLockPath::from_normalized(requested)
+                    .overlaps(&NormalizedLockPath::from_normalized(held))
+                    .then(|| requested.clone())
             })
         })
     }
 
     fn into_lock(self, lock_id: i64) -> Lock {
-        Lock(
+        Lock {
             lock_id,
-            self.request.0,
-            self.request.1,
-            self.request.2,
-            self.request.3,
-        )
+            lock_name: self.request.lock_name,
+            flow_id: self.request.flow_id,
+            lock_path_vector: self.request.lock_path_vector,
+            lock_reason: self.request.lock_reason,
+        }
     }
 }
 
-fn text(value: impl ToString) -> protos::Text {
-    protos::Text::try_from(value.to_string()).expect("stored public text remains valid")
+trait StoresPublicConfiguration: Sized {
+    fn from_public(value: &Configure) -> Self;
+    fn into_public(self) -> Configure;
 }
 
-impl StoredConfiguration {
+impl StoresPublicConfiguration for StoredConfiguration {
     fn from_public(value: &Configure) -> Self {
         Self {
-            ordinary_socket: value.0.to_string(),
-            meta_socket: value.1.to_string(),
+            ordinary_socket: value.ordinary_socket_path.clone(),
+            meta_socket: value.meta_socket_path.clone(),
         }
     }
     fn into_public(self) -> Configure {
-        Configure(text(self.ordinary_socket), text(self.meta_socket))
+        Configure {
+            ordinary_socket_path: self.ordinary_socket,
+            meta_socket_path: self.meta_socket,
+        }
     }
 }
 
-impl StoredLock {
+trait StoresPublicLock: Sized {
+    fn from_public(value: &Lock) -> Self;
+    fn into_public(self) -> Lock;
+}
+
+impl StoresPublicLock for StoredLock {
     fn from_public(value: &Lock) -> Self {
         Self {
-            lock_id: value.0,
-            lock_name: value.1.to_string(),
-            flow_id: value.2.to_string(),
-            paths: value.3.iter().map(ToString::to_string).collect(),
-            reason: value.4.to_string(),
+            lock_id: value.lock_id,
+            lock_name: value.lock_name.clone(),
+            flow_id: value.flow_id.clone(),
+            paths: value.lock_path_vector.clone(),
+            reason: value.lock_reason.clone(),
         }
     }
     fn into_public(self) -> Lock {
-        Lock(
-            self.lock_id,
-            text(self.lock_name),
-            text(self.flow_id),
-            self.paths.into_iter().map(text).collect(),
-            text(self.reason),
-        )
+        Lock {
+            lock_id: self.lock_id,
+            lock_name: self.lock_name,
+            flow_id: self.flow_id,
+            lock_path_vector: self.paths,
+            lock_reason: self.reason,
+        }
     }
 }
 
 /// A lexically normalized absolute Unix path used during Lock acquisition.
 struct NormalizedLockPath(String);
 
-impl NormalizedLockPath {
+trait NormalizesLockPaths: Sized {
+    fn from_source(path: &str) -> Result<Self, StoreError>;
+    fn from_normalized(path: &str) -> Self;
+    fn overlaps(&self, other: &Self) -> bool;
+    fn is_ancestor_of(&self, descendant: &Self) -> bool;
+}
+
+impl NormalizesLockPaths for NormalizedLockPath {
     fn from_source(path: &str) -> Result<Self, StoreError> {
         let parsed = Path::new(path);
         if !parsed.is_absolute() {
@@ -361,12 +384,16 @@ impl PreflightsLegacyStore for LegacyStorePreflight {
     }
 }
 
-impl OrchestrateStore {
+pub trait MigratesPreviousSignal {
+    fn migrate_previous_signal(store_path: &Path) -> Result<(), StoreError>;
+}
+
+impl MigratesPreviousSignal for OrchestrateStore {
     /// Offline, one-time import of the retired v1 Signal records.
     ///
     /// The daemon must be stopped. This method is the only legacy reader; the
     /// runtime open path never invokes it.
-    pub fn migrate_previous_signal(store_path: &Path) -> Result<(), StoreError> {
+    fn migrate_previous_signal(store_path: &Path) -> Result<(), StoreError> {
         let mut engine = Engine::open(EngineOpen::new(
             store_path.display().to_string(),
             SCHEMA_VERSION,
@@ -485,7 +512,14 @@ impl OrchestrateStore {
         engine.commit_atomic(migration)?;
         Ok(())
     }
-    pub fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError> {
+}
+
+pub trait OpensStore: Sized {
+    fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError>;
+}
+
+impl OpensStore for OrchestrateStore {
+    fn open(store_path: &Path, defaults: Configure) -> Result<(Self, Configure), StoreError> {
         fs::create_dir_all(
             store_path
                 .parent()
@@ -590,18 +624,32 @@ impl OrchestrateStore {
             configuration,
         ))
     }
-    pub fn ordinary(&mut self, request: OrdinaryRequest) -> Result<OrdinaryOutcome, StoreError> {
+}
+
+pub trait HandlesOrdinary {
+    fn ordinary(&mut self, request: OrdinaryQuery) -> Result<OrdinaryOutcome, StoreError>;
+}
+
+impl HandlesOrdinary for OrchestrateStore {
+    fn ordinary(&mut self, request: OrdinaryQuery) -> Result<OrdinaryOutcome, StoreError> {
         match request {
-            OrdinaryRequest::Lock(request) => self.lock(request),
-            OrdinaryRequest::Release(id) => self.release(id),
-            OrdinaryRequest::Observe(selection) => Ok(OrdinaryOutcome::Response(
+            OrdinaryQuery::Lock(request) => self.lock(request),
+            OrdinaryQuery::Release(id) => self.release(id),
+            OrdinaryQuery::Observe(selection) => Ok(OrdinaryOutcome::Response(
                 OrdinaryResponse::Observed(self.observe(selection)?),
             )),
         }
     }
-    pub fn meta(&mut self, request: MetaRequest) -> Result<MetaResponse, StoreError> {
+}
+
+pub trait HandlesMeta {
+    fn meta(&mut self, request: MetaQuery) -> Result<MetaResponse, StoreError>;
+}
+
+impl HandlesMeta for OrchestrateStore {
+    fn meta(&mut self, request: MetaQuery) -> Result<MetaResponse, StoreError> {
         match request {
-            MetaRequest::Configure(configure) => {
+            MetaQuery::Configure(configure) => {
                 if configure != self.configuration {
                     self.engine.retract(Retraction::new(
                         self.configurations,
@@ -617,6 +665,13 @@ impl OrchestrateStore {
             }
         }
     }
+}
+
+trait ReadsCurrentLocks {
+    fn current_locks(&self) -> Result<Vec<Lock>, StoreError>;
+}
+
+impl ReadsCurrentLocks for OrchestrateStore {
     fn current_locks(&self) -> Result<Vec<Lock>, StoreError> {
         let mut locks: Vec<_> = self
             .engine
@@ -626,10 +681,9 @@ impl OrchestrateStore {
             .map(|stored| stored.clone().into_public())
             .collect();
         locks.sort_by(|left, right| {
-            left.1
-                .as_ref()
-                .cmp(right.1.as_ref())
-                .then_with(|| left.0.cmp(&right.0))
+            left.lock_name
+                .cmp(&right.lock_name)
+                .then_with(|| left.lock_id.cmp(&right.lock_id))
         });
         Ok(locks)
     }
@@ -645,7 +699,10 @@ impl Locks for OrchestrateStore {
             }
             if let Some(path) = request.overlapping_path_of(&holder) {
                 return Ok(OrdinaryOutcome::Response(OrdinaryResponse::LockRejected(
-                    LockRejection::PathOverlap(LockOverlap(text(path), holder)),
+                    LockRejection::PathOverlap(LockOverlap {
+                        lock_path: path,
+                        lock: holder,
+                    }),
                 )));
             }
         }
@@ -704,6 +761,41 @@ impl Observes for OrchestrateStore {
 mod tests {
     use super::*;
 
+    // Audited mirrors of Orchestrate 0.29.2's persisted tuple records. The
+    // migration reads these bytes through the independently declared
+    // Previous* types above, so the witness fails if their rkyv layouts drift.
+    #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+    struct HistoricalConfigure(String, String);
+    #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+    struct HistoricalStoredConfiguration {
+        configuration: HistoricalConfigure,
+    }
+    impl EngineRecord for HistoricalStoredConfiguration {
+        fn record_key(&self) -> RecordKey {
+            RecordKey::new(CONFIGURATION_KEY)
+        }
+    }
+    #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+    struct HistoricalLock(i64, String, String, Vec<String>, String);
+    #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+    struct HistoricalStoredLock {
+        lock: HistoricalLock,
+    }
+    impl EngineRecord for HistoricalStoredLock {
+        fn record_key(&self) -> RecordKey {
+            RecordKey::new(self.lock.0.to_string())
+        }
+    }
+    #[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
+    struct HistoricalStoredAllocator {
+        next_lock_id: i64,
+    }
+    impl EngineRecord for HistoricalStoredAllocator {
+        fn record_key(&self) -> RecordKey {
+            RecordKey::new(ALLOCATOR_KEY)
+        }
+    }
+
     #[test]
     fn preflight_does_not_create_a_missing_store() {
         let directory = tempfile::tempdir().expect("temporary preflight directory");
@@ -746,10 +838,10 @@ mod tests {
             .expect("inspect legacy store");
         assert_eq!(preflight.active_lock_count(), 1);
 
-        let defaults = Configure(
-            text(directory.path().join("ordinary.sock").display()),
-            text(directory.path().join("meta.sock").display()),
-        );
+        let defaults = Configure {
+            ordinary_socket_path: directory.path().join("ordinary.sock").display().to_string(),
+            meta_socket_path: directory.path().join("meta.sock").display().to_string(),
+        };
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),
             Err(StoreError::LegacyActiveLocks { count: 1 })
@@ -762,7 +854,7 @@ mod tests {
         let store_path = directory.path().join("malformed-v1.sema");
         let mut engine = Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION))
             .expect("open malformed v1 store");
-        let configurations: TableReference<PreviousStoredConfiguration> = engine
+        let configurations: TableReference<HistoricalStoredConfiguration> = engine
             .register_table(TableDescriptor::new(
                 PREVIOUS_CONFIGURATION_TABLE,
                 FamilyName::new("orchestrate-configuration"),
@@ -772,8 +864,8 @@ mod tests {
         engine
             .assert(Assertion::new(
                 configurations,
-                PreviousStoredConfiguration {
-                    configuration: PreviousConfigure(
+                HistoricalStoredConfiguration {
+                    configuration: HistoricalConfigure(
                         "/tmp/ordinary.sock".to_owned(),
                         "/tmp/meta.sock".to_owned(),
                     ),
@@ -819,10 +911,10 @@ mod tests {
     fn store_refuses_a_second_open_owner() {
         let directory = tempfile::tempdir().expect("temporary exclusive store");
         let store_path = directory.path().join("exclusive.sema");
-        let defaults = Configure(
-            text(directory.path().join("ordinary.sock").display()),
-            text(directory.path().join("meta.sock").display()),
-        );
+        let defaults = Configure {
+            ordinary_socket_path: directory.path().join("ordinary.sock").display().to_string(),
+            meta_socket_path: directory.path().join("meta.sock").display().to_string(),
+        };
         let first = OrchestrateStore::open(&store_path, defaults.clone())
             .expect("open first durable store owner");
         assert!(
@@ -838,7 +930,7 @@ mod tests {
         let store_path = directory.path().join("previous.sema");
         let mut engine = Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION))
             .expect("open previous store");
-        let configurations: TableReference<PreviousStoredConfiguration> = engine
+        let configurations: TableReference<HistoricalStoredConfiguration> = engine
             .register_table(TableDescriptor::new(
                 PREVIOUS_CONFIGURATION_TABLE,
                 FamilyName::new("orchestrate-configuration"),
@@ -848,15 +940,15 @@ mod tests {
         engine
             .assert(Assertion::new(
                 configurations,
-                PreviousStoredConfiguration {
-                    configuration: PreviousConfigure(
+                HistoricalStoredConfiguration {
+                    configuration: HistoricalConfigure(
                         "/tmp/ordinary.sock".to_owned(),
                         "/tmp/meta.sock".to_owned(),
                     ),
                 },
             ))
             .expect("write previous row");
-        let locks: TableReference<PreviousStoredLock> = engine
+        let locks: TableReference<HistoricalStoredLock> = engine
             .register_table(TableDescriptor::new(
                 PREVIOUS_LOCKS_TABLE,
                 FamilyName::new("orchestrate-lock"),
@@ -866,8 +958,8 @@ mod tests {
         engine
             .assert(Assertion::new(
                 locks,
-                PreviousStoredLock {
-                    lock: PreviousLock(
+                HistoricalStoredLock {
+                    lock: HistoricalLock(
                         7,
                         "retained".to_owned(),
                         "flow-542442".to_owned(),
@@ -877,7 +969,21 @@ mod tests {
                 },
             ))
             .expect("write active v1 Lock");
-        let allocator: TableReference<PreviousStoredAllocator> = engine
+        engine
+            .assert(Assertion::new(
+                locks,
+                HistoricalStoredLock {
+                    lock: HistoricalLock(
+                        8,
+                        "second".to_owned(),
+                        "flow-second".to_owned(),
+                        vec!["/tmp/second-a".to_owned(), "/tmp/second-b".to_owned()],
+                        "second active lock".to_owned(),
+                    ),
+                },
+            ))
+            .expect("write second active v1 Lock");
+        let allocator: TableReference<HistoricalStoredAllocator> = engine
             .register_table(TableDescriptor::new(
                 PREVIOUS_ALLOCATOR_TABLE,
                 FamilyName::new("orchestrate-lock-id-allocator"),
@@ -887,20 +993,20 @@ mod tests {
         engine
             .assert(Assertion::new(
                 allocator,
-                PreviousStoredAllocator { next_lock_id: 9 },
+                HistoricalStoredAllocator { next_lock_id: 9 },
             ))
             .expect("write previous allocator");
         drop(engine);
 
-        let defaults = Configure(
-            text("/tmp/default-ordinary.sock"),
-            text("/tmp/default-meta.sock"),
-        );
+        let defaults = Configure {
+            ordinary_socket_path: "/tmp/default-ordinary.sock".to_owned(),
+            meta_socket_path: "/tmp/default-meta.sock".to_owned(),
+        };
         assert!(matches!(
             OrchestrateStore::open(&store_path, defaults),
             Err(StoreError::PreviousSignalMigrationRequired {
                 configuration_count: 1,
-                lock_count: 1
+                lock_count: 2
             })
         ));
 
@@ -915,37 +1021,46 @@ mod tests {
 
         let (mut reopened, configuration) = OrchestrateStore::open(
             &store_path,
-            Configure(
-                text("/tmp/default-ordinary.sock"),
-                text("/tmp/default-meta.sock"),
-            ),
+            Configure {
+                ordinary_socket_path: "/tmp/default-ordinary.sock".to_owned(),
+                meta_socket_path: "/tmp/default-meta.sock".to_owned(),
+            },
         )
         .expect("restart daemon against migrated store");
-        assert_eq!(configuration.0.as_ref(), "/tmp/ordinary.sock");
-        assert_eq!(configuration.1.as_ref(), "/tmp/meta.sock");
+        assert_eq!(configuration.ordinary_socket_path, "/tmp/ordinary.sock");
+        assert_eq!(configuration.meta_socket_path, "/tmp/meta.sock");
         assert_eq!(
             reopened
                 .observe(ObserveSelection::Locks)
                 .expect("observe retained Lock after restart"),
-            Observation::Locks(vec![Lock(
-                7,
-                text("retained"),
-                text("flow-542442"),
-                vec![text("/tmp/retained")],
-                text("active before upgrade"),
-            )])
+            Observation::Locks(vec![
+                Lock {
+                    lock_id: 7,
+                    lock_name: "retained".to_owned(),
+                    flow_id: "flow-542442".to_owned(),
+                    lock_path_vector: vec!["/tmp/retained".to_owned()],
+                    lock_reason: "active before upgrade".to_owned(),
+                },
+                Lock {
+                    lock_id: 8,
+                    lock_name: "second".to_owned(),
+                    flow_id: "flow-second".to_owned(),
+                    lock_path_vector: vec!["/tmp/second-a".to_owned(), "/tmp/second-b".to_owned(),],
+                    lock_reason: "second active lock".to_owned(),
+                },
+            ])
         );
         let lock = reopened
-            .lock(LockRequest(
-                text("next"),
-                text("flow"),
-                vec![text("/tmp/next")],
-                text("reason"),
-            ))
+            .lock(LockRequest {
+                lock_name: "next".to_owned(),
+                flow_id: "flow".to_owned(),
+                lock_path_vector: vec!["/tmp/next".to_owned()],
+                lock_reason: "reason".to_owned(),
+            })
             .expect("acquire after migration");
         assert!(matches!(
             lock,
-            OrdinaryOutcome::Response(OrdinaryResponse::Locked(Lock(9, ..)))
+            OrdinaryOutcome::Response(OrdinaryResponse::Locked(Lock { lock_id: 9, .. }))
         ));
     }
 }

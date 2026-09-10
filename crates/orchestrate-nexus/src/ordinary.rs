@@ -25,7 +25,7 @@ pub trait Releases {
 /// The generated contract intentionally separates successful replies from
 /// domain refusals.  Keeping that distinction at the store boundary prevents
 /// a transport-specific error mapping from becoming a second contract.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OrdinaryOutcome {
     Response(Response),
 }
@@ -42,6 +42,6 @@ pub trait IdentifiesLock {
 
 impl IdentifiesLock for Lock {
     fn lock_id(&self) -> &i64 {
-        &self.0
+        &self.lock_id
     }
 }

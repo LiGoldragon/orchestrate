@@ -3,7 +3,7 @@
 ## Purpose
 
 Orchestrate Nexus is the durable owner of Lock coordination. The
-`orchestrate` and `meta-orchestrate` CLIs are its ordinary and
+`orchestrate` and `orchestrate-meta` CLIs are its ordinary and
 privileged datom boundaries.
 
 ## Local rules
@@ -32,7 +32,7 @@ curly quotes \u{201C} \u{201D}. A word without them is bare.
 ## Ordinary operations
 
 ```
-orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] "reason" }'
+orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] «reason with spaces» }'
 orchestrate 'Observe.Locks'
 orchestrate 'Release.442'
 ```
@@ -46,7 +46,7 @@ carries locks.
 ## Meta operations
 
 ```
-meta-orchestrate 'Configure.{ /o.sock /m.sock }'
+orchestrate-meta 'Configure.{ «/o.sock» «/m.sock» }'
 ```
 
 ## Faults
@@ -55,7 +55,6 @@ A client fault prints one datom value on stderr and exits 1:
 
 - `Unreadable.{ ... }` -- argument failed actualization.
 - `Unreachable.{ ... }` -- socket unreachable.
-- `Refused.{ ... }` -- wire-level refusal.
 
 ## Code shape
 
@@ -65,8 +64,9 @@ function. The ordinary ontology is three traits on `OrchestrateStore`:
 
 ## Wire
 
-Binary rkyv frames: `Frame.{ Version Body }`. Version is the signal
-contract's semver. The Signal's version is the wire version.
+Each connection carries a little-endian `u32` length and one typed portable
+rkyv Signal. The contract crates own archive and restoration; runtime owns
+only the length prefix.
 
 ## Contract changes
 

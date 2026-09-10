@@ -1,134 +1,71 @@
 # Orchestrate
 
-Orchestrate is a durable Lock Nexus. It owns coordination locks --
-who holds which paths, under which flow, for what reason -- in a
-single Sema store served over two Unix-domain sockets.
+Orchestrate is a durable Lock Nexus. It owns coordination locks in one Sema
+store and serves two typed Unix sockets.
 
-## The Nexus and its sockets
+## Packages
 
-`orchestrate-nexus` is the long-running Nexus. It opens two sockets:
+The repository is a Cargo workspace with one package for each process:
 
-- **Ordinary** (`orchestrate.sock`) -- Lock, Release, Observe.
-- **Meta** (`meta-orchestrate.sock`) -- Configure (privileged).
+| Package | Binary | Role |
+|---|---|---|
+| `orchestrate-nexus` | `orchestrate-nexus` | zero-argument Nexus, store, and two sockets |
+| `orchestrate` | `orchestrate` | ordinary Datom client |
+| `orchestrate-meta` | `orchestrate-meta` | privileged Datom client |
 
-The Nexus starts with zero arguments. It derives per-user locations
-from XDG roots and persists them in its Sema store. A populated store
-resumes its configuration on the next start.
+The Nexus packages both Signal contracts without Datom. Each client enables
+Datom only for the contract it textualizes.
 
-## The CLIs
+## Clients
 
-`orchestrate` and `meta-orchestrate` are datom-converting edges. Each
-takes exactly one inline datom value and no flags:
+Each client takes exactly one inline Datom query and no flags:
 
-```
-orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] "why I hold it" }'
+```sh
+orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] «why I hold it» }'
 orchestrate 'Observe.Locks'
 orchestrate 'Release.442'
-meta-orchestrate 'Configure.{ /o.sock /m.sock }'
+orchestrate-meta 'Configure.{ «/run/user/1001/orchestrate-nexus/orchestrate.sock» «/run/user/1001/orchestrate-nexus/meta-orchestrate.sock» }'
 ```
 
-A string containing a space or a delimiter character is written in
-curly quotes \u{201C} \u{201D}. A word without them is bare.
+`ORCHESTRATE_SOCKET` selects the ordinary socket and
+`ORCHESTRATE_META_SOCKET` selects the privileged socket. The installed
+wrappers supply them. With no argument, a client prints its Signal Ethos and
+its client-failure Ethos.
 
-With no argument, each CLI prints its signal contract (the ethos
-source) and its client failure vocabulary, then exits 0.
+The ordinary replies are `Locked`, `Released`, `Observed`, `LockRejected`,
+and `ReleaseRejected`. The meta replies are `Configured` and
+`ConfigurationRejected`. Local client failures are Datom values:
+`Unreadable` for a query that cannot actualize and `Unreachable` for a failed
+Signal exchange.
 
-## Requests and replies
+## Wire and store
 
-Every request is one datom value. Every reply is one datom value on
-stdout with exit 0.
+Each connection carries one Query and one Response. The transport writes a
+little-endian `u32` byte length followed by the contract crate's portable rkyv
+Signal bytes. `signal-orchestrate` and `meta-signal-orchestrate` own the typed
+archive and restoration operations. The Nexus validates the Query archive
+before dispatching it to the store.
 
-### Ordinary socket
+The store is
+`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema`, falling back to
+`$HOME/.local/state/orchestrate-nexus/orchestrate-nexus.sema`. It persists
+configuration, every active Lock, and the next monotonic Lock ID.
 
-| Request | Reply | Rejection |
-|---|---|---|
-| `Lock.{ MyLock 6329f1 [ /abs/path ] "why I hold it" }` | `Locked.{ 442 MyLock 6329f1 [ /abs/path ] "why I hold it" }` | `LockRejected.DuplicateName.{ ... }` or `LockRejected.PathOverlap.{ ... }` |
-| `Release.442` | `Released.{ 442 MyLock 6329f1 [ /abs/path ] "why I hold it" }` | `ReleaseRejected.UnknownLockId` |
-| `Observe.Locks` | `Observed.Locks.[]` or `Observed.Locks.[ { 442 MyLock 6329f1 [ /abs/path ] "why I hold it" } ]` | -- |
+`orchestrate-store-migrate <absolute-store-path>` is the offline one-shot
+importer for the previous tuple-record families. It validates the old
+configuration and allocator, copies configuration, every Lock field, and the
+allocator into the current families in one atomic commit, then retracts the
+old rows. The Nexus refuses an unmigrated store.
 
-### Meta socket
+## Verification
 
-| Request | Reply | Rejection |
-|---|---|---|
-| `Configure.{ /o.sock /m.sock }` | `Configured.{ /o.sock /m.sock }` | `ConfigurationRejected.{ ... }` |
-
-## Faults
-
-A client fault prints one datom value on stderr and exits 1:
-
-```
-Unreadable.{ Some.{ 5 13 } Structural.{ { 5 13 } Unclosed.Braced } }
-Unreachable.{ /no/such.sock \u{201C}No such file or directory (os error 2)\u{201D} }
-Refused.VersionMismatch.{ { 1 0 0 } { 0 9 0 } }
-```
-
-`Unreadable` -- the argument could not be actualized as a request.
-`Unreachable` -- the socket path or the Nexus is not reachable.
-`Refused` -- the Nexus sent a wire-level refusal.
-
-## Wire
-
-The wire is binary rkyv. A frame is `Frame.{ Version Body }` where
-Version is the Signal contract's semver triple (e.g. `{ 1 0 0 }`)
-and Body is a Request, Reply, or Refusal. Frames are
-length-prefixed on the socket. The Signal's version is the wire
-version. A version mismatch produces a `Refusal`, not a silent
-failure.
-
-## The three repositories
-
-| Repository | Role |
-|---|---|
-| `orchestrate` | The Nexus, its store, its transport, and the two CLIs. |
-| `signal-orchestrate` | The ordinary wire contract: request, reply, and refusal vocabulary. |
-| `meta-signal-orchestrate` | The meta wire contract: configuration vocabulary. |
-
-A contract change flows: edit the ethos source in the signal crate,
-regenerate through ethos-zero, run the freshness test
-(`tests/regeneration.rs`), then pin the new signal crate rev in
-orchestrate's `Cargo.toml`.
-
-## Store
-
-The Sema store persists at
-`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema` (or
-`$HOME/.local/state/orchestrate-nexus/orchestrate-nexus.sema`). It
-holds the Configure value, every active Lock, and the Lock ID
-allocator. Lock IDs are durable and never reused.
-
-## Build, test, deploy
-
-Build:
-
-```
-nix build
+```sh
+cargo test --workspace --all-targets
+nix flake check -L
 ```
 
-Test:
+The durable gates cover both clients' Datom conversion, both live typed
+sockets, restart persistence, Lock behavior, malformed archive rejection,
+and exact-layout synthetic migration from the old tuple records.
 
-```
-cargo test
-```
-
-The test suite starts real Nexus processes under isolated XDG roots.
-It covers default-store creation, meta configuration persistence,
-restart-resume, atomic Lock behavior, typed conflict replies, durable
-ID release, canonical observation ordering, malformed-frame rejection,
-and CLI fault output.
-
-Deploy (CriomOS):
-
-1. Bump the `orchestrate` flake input in CriomOS-home to the new rev.
-2. Rebuild: `nixos-rebuild switch --flake ...`
-3. Restart: `systemctl --user restart orchestrate-nexus`
-
-Verify after deployment:
-
-```
-orchestrate 'Observe.Locks'
-```
-
-The reply must use spaced delimiters and curly-quoted reasons.
-The CriomOS-home check `checks/orchestrate-service-path` asserts this.
-
-Upgrade history is in [`UPGRADES.md`](UPGRADES.md).
+Upgrade details are in [UPGRADES.md](UPGRADES.md).
