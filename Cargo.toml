@@ -19,10 +19,12 @@ path = "src/main.rs"
 [[bin]]
 name = "orchestrate"
 path = "src/bin/orchestrate.rs"
+required-features = ["datom"]
 
 [[bin]]
 name = "meta-orchestrate"
 path = "src/bin/meta_orchestrate.rs"
+required-features = ["datom"]
 
 [[bin]]
 name = "orchestrate-store-migrate"
@@ -32,11 +34,15 @@ path = "src/bin/orchestrate_store_migrate.rs"
 name = "orchestrate-upgrade-preflight"
 path = "src/bin/orchestrate_upgrade_preflight.rs"
 
+[features]
+default = []
+datom = ["dep:datom-codec", "signal-orchestrate/datom", "meta-signal-orchestrate/datom"]
+
 [dependencies]
-datom-codec = { git = "https://github.com/LiGoldragon/datom-codec", rev = "41a3c073d5c5cdcb3ebb1a5c842e8c068145fdb2" }
-ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "a0c0548a73f1b6350d4267416b4109304888d67e" }
+datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "2dad91afce6237d772767bd4ab19f31276e6999e", optional = true }
+ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "409ea065a714ba3ad6946d50f3f5d0b1ddbccbcb" }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "8ccb5c2d07628f3fed0158eae12b5834786f0791", default-features = false }
-protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "2d999f173334" }
+protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "aac95b0d08a4c7eb7f73c8ea18309f9e2e89315f" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "7158e5503f37fd2fbca1d707f134e38a3fda1176" }
 signal-frame = { git = "https://github.com/LiGoldragon/signal-frame.git", rev = "80f70d929ae6d72707052f097be2264872913983", default-features = false }

@@ -1,9 +1,9 @@
-; Meta-orchestrate CLI client failure vocabulary.
-
-Library.{ 0 29 0 }
-[ protos:[ Extent ]
-  datomic:[ Situated Fault ]
+; Datom-boundary failures for the privileged Orchestrate client.
+Library
+[ datom_codec:Error
   meta_signal_orchestrate:Refusal ]
-[ ClientFailure.[ Unreadable.Situated<Fault> Unreachable.{ Text Text } Refused.Refusal ] ]
+[ ClientFailure.[ Unreadable.Error
+                  Unreachable.{ String String }
+                  Refused.Refusal ] ]
 []
 []
