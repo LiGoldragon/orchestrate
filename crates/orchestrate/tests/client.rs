@@ -1,15 +1,19 @@
 //! Process-level proof for the ordinary Datom client boundary.
+//!
+//! The fixture server frames with `signal`, the same crate the client frames
+//! with. Before this, client and fixture both hand-rolled a little-endian
+//! prefix and agreed with each other while disagreeing with every other
+//! component; framing through the shared crate is what makes that
+//! impossible rather than merely unobserved.
 
 use std::{
-    io::{Read, Write},
     os::unix::net::UnixListener,
     path::PathBuf,
     process::{Command, Output},
 };
 
-use signal_orchestrate::{
-    ByteViewable, Observation, ObserveSelection, Query, Response, Restorable, Signal, Signalizable,
-};
+use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal_orchestrate::{Observation, ObserveSelection, Query, Response};
 
 struct ClientHarness {
     _directory: tempfile::TempDir,
@@ -45,19 +49,15 @@ impl CreatesClientHarness for ClientHarness {
         let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
-            let mut prefix = [0; 4];
-            stream.read_exact(&mut prefix).expect("read query length");
-            let mut bytes = vec![0; u32::from_le_bytes(prefix) as usize];
-            stream.read_exact(&mut bytes).expect("read query");
-            let query = Signal::<Query>::from(bytes)
+            let capacity = FrameCapacity::default();
+            let body = stream.read_frame(capacity).expect("read query frame");
+            let query = Signal::<Query>::from(Vec::from(body))
                 .restore()
                 .expect("restore ordinary query");
             let signal = response.signalize().expect("archive ordinary response");
-            let length = u32::try_from(signal.bytes().len()).expect("fixture response length");
             stream
-                .write_all(&length.to_le_bytes())
-                .expect("write response length");
-            stream.write_all(signal.bytes()).expect("write response");
+                .write_frame(&signal, capacity)
+                .expect("write response frame");
             query
         })
     }

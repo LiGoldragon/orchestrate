@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use orchestrate_nexus::{
     DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
-    transport::{TransportBinding, TransportRuntime, TransportServing},
+    transport::{Binding, Serving, TransportRuntime},
 };
 
 fn main() -> ExitCode {

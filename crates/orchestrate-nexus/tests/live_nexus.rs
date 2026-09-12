@@ -1,24 +1,24 @@
-//! Live two-socket proof for typed Signal frames and durable state.
+//! Live two-socket proof: shared framing, socket authority, durable state,
+//! and Observe as a subscription.
+//!
+//! Every frame here is written and read with `signal`, the crate the Nexus
+//! itself frames with. A test that hand-rolled the prefix could agree with a
+//! Nexus that hand-rolled the same mistake; this one cannot.
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
-    os::unix::net::UnixStream,
+    io::{BufRead, BufReader},
+    os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
 };
 
-use meta_signal_orchestrate::{
-    ByteViewable as MetaByteViewable, Configure, Query as MetaQuery, Response as MetaResponse,
-    Restorable as MetaRestorable, Signal as MetaSignal, Signalizable as MetaSignalizable,
-};
+use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
+use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
 use signal_orchestrate::{
-    ByteViewable as OrdinaryByteViewable, LockRequest, Observation, ObserveSelection,
-    Query as OrdinaryQuery, Response as OrdinaryResponse, Restorable as OrdinaryRestorable,
-    Signal as OrdinarySignal, Signalizable as OrdinarySignalizable,
+    ConfigurationReceipt, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Query as OrdinaryQuery, Response as OrdinaryResponse,
 };
-
-const MAXIMUM_SIGNAL_BYTES: usize = 8 * 1024 * 1024;
 
 struct IsolatedXdg {
     state_home: PathBuf,
@@ -110,17 +110,63 @@ impl Drop for LiveNexus {
     }
 }
 
+/// One connection to one socket, framed with the shared Signal frame.
+struct Connection {
+    stream: UnixStream,
+}
+
+trait Connects: Sized {
+    fn to(socket_path: &Path) -> Self;
+    fn ask<Q: Signalizable>(&mut self, query: &Q) -> &mut Self;
+    fn hear<R>(&mut self) -> R
+    where
+        R: rkyv::Archive,
+        Signal<R>: Restorable<R>;
+}
+
+impl Connects for Connection {
+    fn to(socket_path: &Path) -> Self {
+        let stream = UnixStream::connect(socket_path).expect("connect Signal socket");
+        // Bounded so that a frame the Nexus never sends fails this test
+        // rather than hanging the harness.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("bound the wait for a frame");
+        Self { stream }
+    }
+
+    fn ask<Q: Signalizable>(&mut self, query: &Q) -> &mut Self {
+        let signal = query.signalize().expect("archive query");
+        self.stream
+            .write_frame(&signal, FrameCapacity::default())
+            .expect("write query frame");
+        self
+    }
+
+    fn hear<R>(&mut self) -> R
+    where
+        R: rkyv::Archive,
+        Signal<R>: Restorable<R>,
+    {
+        let body = self
+            .stream
+            .read_frame(FrameCapacity::default())
+            .expect("read response frame");
+        Signal::<R>::from(Vec::from(body))
+            .restore()
+            .expect("restore response")
+    }
+}
+
 trait ExchangesOrdinary {
     fn ordinary(&self, query: &OrdinaryQuery) -> OrdinaryResponse;
 }
 
 impl ExchangesOrdinary for LiveNexus {
     fn ordinary(&self, query: &OrdinaryQuery) -> OrdinaryResponse {
-        let signal = query.signalize().expect("archive ordinary query");
-        let bytes = self.exchange(&self.roots.ordinary_socket(), signal.bytes());
-        OrdinarySignal::<OrdinaryResponse>::from(bytes)
-            .restore()
-            .expect("restore ordinary response")
+        Connection::to(&self.roots.ordinary_socket())
+            .ask(query)
+            .hear()
     }
 }
 
@@ -130,37 +176,21 @@ trait ExchangesMeta {
 
 impl ExchangesMeta for LiveNexus {
     fn meta(&self, query: &MetaQuery) -> MetaResponse {
-        let signal = query.signalize().expect("archive meta query");
-        let bytes = self.exchange(&self.roots.meta_socket(), signal.bytes());
-        MetaSignal::<MetaResponse>::from(bytes)
-            .restore()
-            .expect("restore meta response")
+        Connection::to(&self.roots.meta_socket()).ask(query).hear()
     }
 }
 
-trait ExchangesBytes {
-    fn exchange(&self, socket_path: &Path, payload: &[u8]) -> Vec<u8>;
+trait DescribesSocket {
+    fn mode(&self) -> u32;
 }
 
-impl ExchangesBytes for LiveNexus {
-    fn exchange(&self, socket_path: &Path, payload: &[u8]) -> Vec<u8> {
-        assert!(payload.len() <= MAXIMUM_SIGNAL_BYTES);
-        let mut stream = UnixStream::connect(socket_path).expect("connect Signal socket");
-        let length = u32::try_from(payload.len()).expect("bounded fixture Signal");
-        stream
-            .write_all(&length.to_le_bytes())
-            .expect("write Signal length");
-        stream.write_all(payload).expect("write Signal");
-        stream.flush().expect("flush Signal");
-        let mut prefix = [0; 4];
-        stream
-            .read_exact(&mut prefix)
-            .expect("read response length");
-        let response_length = u32::from_le_bytes(prefix) as usize;
-        assert!(response_length <= MAXIMUM_SIGNAL_BYTES);
-        let mut response = vec![0; response_length];
-        stream.read_exact(&mut response).expect("read response");
-        response
+impl DescribesSocket for Path {
+    fn mode(&self) -> u32 {
+        std::fs::metadata(self)
+            .expect("socket metadata")
+            .permissions()
+            .mode()
+            & 0o777
     }
 }
 
@@ -184,13 +214,16 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
         nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![lock.clone()])),
     );
-    let configured = Configure {
+    let configured = OrchestrateNexusConfiguration {
         ordinary_socket_path: nexus.roots.ordinary_socket().display().to_string(),
         meta_socket_path: nexus.roots.meta_socket().display().to_string(),
     };
     assert_eq!(
         nexus.meta(&MetaQuery::Configure(configured.clone())),
-        MetaResponse::Configured(configured),
+        MetaResponse::Configured(ConfigurationReceipt {
+            orchestrate_nexus_configuration: configured,
+            meta_configure_done: true,
+        }),
     );
 
     let roots = IsolatedXdg {
@@ -209,6 +242,97 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
 }
 
 #[test]
+fn the_privileged_socket_is_bound_for_its_owner_alone() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+    assert_eq!(
+        nexus.roots.meta_socket().mode(),
+        0o600,
+        "the meta socket is the root of the Nexus and admits only its owner"
+    );
+    assert_eq!(nexus.roots.ordinary_socket().mode(), 0o660);
+}
+
+#[test]
+fn observe_delivers_the_state_on_open_and_every_later_change() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+
+    let mut subscriber = Connection::to(&nexus.roots.ordinary_socket());
+    subscriber.ask(&OrdinaryQuery::Observe(ObserveSelection::Locks));
+    assert_eq!(
+        subscriber.hear::<OrdinaryResponse>(),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "a subscriber receives the state on open"
+    );
+
+    let owned = temporary.path().join("owned").display().to_string();
+    let OrdinaryResponse::Locked(lock) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+        lock_name: "watched".to_owned(),
+        flow_id: "test-flow".to_owned(),
+        lock_path_vector: vec![owned],
+        lock_reason: "subscription proof".to_owned(),
+    })) else {
+        panic!("expected a Lock to be acquired");
+    };
+    assert_eq!(
+        subscriber.hear::<OrdinaryResponse>(),
+        OrdinaryResponse::Observed(Observation::Locks(vec![lock.clone()])),
+        "an acquisition reaches the open subscription without being asked for"
+    );
+
+    assert!(matches!(
+        nexus.ordinary(&OrdinaryQuery::Release(lock.lock_id)),
+        OrdinaryResponse::Released(_)
+    ));
+    assert_eq!(
+        subscriber.hear::<OrdinaryResponse>(),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "a release reaches it too"
+    );
+}
+
+#[test]
+fn a_little_endian_prefix_is_not_the_shared_frame() {
+    use std::io::{Read, Write};
+
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+    let query = OrdinaryQuery::Observe(ObserveSelection::Locks)
+        .signalize()
+        .expect("archive a perfectly good query");
+    let body = signal::ByteViewable::bytes(&query);
+
+    let mut stream = UnixStream::connect(nexus.roots.ordinary_socket()).expect("connect socket");
+    stream
+        .write_all(&(body.len() as u32).to_le_bytes())
+        .expect("write the prefix Orchestrate used to write");
+    stream.write_all(body).expect("write the query");
+    stream.flush().expect("flush");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("finish the query");
+    let mut response = Vec::new();
+    // The Nexus reads the prefix byte-swapped, finds a body far past the
+    // frame capacity, and drops the connection: the read ends empty or is
+    // reset outright. Either way no Signal frame comes back.
+    let read = stream.read_to_end(&mut response);
+    assert!(
+        response.is_empty(),
+        "the Nexus frames big-endian; a little-endian prefix is refused, not answered: {read:?}"
+    );
+
+    assert_eq!(
+        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "and the same query framed by the shared crate is answered"
+    );
+}
+
+#[test]
 fn nexus_rejects_arguments_without_opening_state() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
@@ -223,13 +347,17 @@ fn nexus_rejects_arguments_without_opening_state() {
 
 #[test]
 fn malformed_archive_never_reaches_the_store() {
+    use std::io::{Read, Write};
+
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
     let mut stream = UnixStream::connect(nexus.roots.ordinary_socket()).expect("connect socket");
+    // Hand-written on purpose: the point is a frame the shared crate would
+    // never produce, carrying a body that is not a valid archive.
     stream
-        .write_all(&(1_u32).to_le_bytes())
-        .expect("write invalid length");
+        .write_all(&1_u32.to_be_bytes())
+        .expect("write frame prefix");
     stream.write_all(&[0]).expect("write invalid archive");
     stream
         .shutdown(std::net::Shutdown::Write)

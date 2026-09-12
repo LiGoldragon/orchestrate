@@ -1,15 +1,20 @@
-//! Process-level proof for the privileged Datom client boundary.
+//! Process-level proof for the meta Datom client boundary.
+//!
+//! The fixture server frames with `signal`, the same crate the client frames
+//! with. Before this, client and fixture both hand-rolled a little-endian
+//! prefix and agreed with each other while disagreeing with every other
+//! component; framing through the shared crate is what makes that
+//! impossible rather than merely unobserved.
 
 use std::{
-    io::{Read, Write},
     os::unix::net::UnixListener,
     path::PathBuf,
     process::{Command, Output},
 };
 
-use meta_signal_orchestrate::{
-    ByteViewable, Configure, Query, Response, Restorable, Signal, Signalizable,
-};
+use meta_signal_orchestrate::{Query, Response};
+use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal_orchestrate::{ConfigurationReceipt, OrchestrateNexusConfiguration};
 
 struct ClientHarness {
     _directory: tempfile::TempDir,
@@ -45,19 +50,15 @@ impl CreatesClientHarness for ClientHarness {
         let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept meta client");
-            let mut prefix = [0; 4];
-            stream.read_exact(&mut prefix).expect("read query length");
-            let mut bytes = vec![0; u32::from_le_bytes(prefix) as usize];
-            stream.read_exact(&mut bytes).expect("read query");
-            let query = Signal::<Query>::from(bytes)
+            let capacity = FrameCapacity::default();
+            let body = stream.read_frame(capacity).expect("read query frame");
+            let query = Signal::<Query>::from(Vec::from(body))
                 .restore()
                 .expect("restore meta query");
             let signal = response.signalize().expect("archive meta response");
-            let length = u32::try_from(signal.bytes().len()).expect("fixture response length");
             stream
-                .write_all(&length.to_le_bytes())
-                .expect("write response length");
-            stream.write_all(signal.bytes()).expect("write response");
+                .write_frame(&signal, capacity)
+                .expect("write response frame");
             query
         })
     }
@@ -66,16 +67,19 @@ impl CreatesClientHarness for ClientHarness {
 #[test]
 fn client_actualizes_datoms_and_textualizes_typed_responses() {
     let harness = ClientHarness::create();
-    let configure = Configure {
+    let configure = OrchestrateNexusConfiguration {
         ordinary_socket_path: "/tmp/ordinary.sock".to_owned(),
         meta_socket_path: "/tmp/meta.sock".to_owned(),
     };
-    let server = harness.answer_once(Response::Configured(configure.clone()));
-    let output = harness.invoke(Some("Configure.{ «/tmp/ordinary.sock» «/tmp/meta.sock» }"));
+    let server = harness.answer_once(Response::Configured(ConfigurationReceipt {
+        orchestrate_nexus_configuration: configure.clone(),
+        meta_configure_done: true,
+    }));
+    let output = harness.invoke(Some("Configure.{ /tmp/ordinary.sock /tmp/meta.sock }"));
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "Configured.{ «/tmp/ordinary.sock» «/tmp/meta.sock» }\n"
+        "Configured.{ { /tmp/ordinary.sock /tmp/meta.sock } True }\n"
     );
     assert_eq!(
         server.join().expect("meta fixture server"),

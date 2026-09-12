@@ -17,12 +17,16 @@ path = "src/main.rs"
 datom-codec.workspace = true
 meta-signal-orchestrate = { workspace = true, features = ["datom"] }
 protos.workspace = true
+signal.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
 ethos-zero.workspace = true
 
 [dev-dependencies]
+# The meta contract embeds the ordinary contract's configuration types;
+# the boundary test names them.
+signal-orchestrate = { workspace = true, features = ["datom"] }
 tempfile = "3"
 
 [lints]

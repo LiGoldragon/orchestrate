@@ -59,14 +59,23 @@ A client fault prints one datom value on stderr and exits 1:
 ## Code shape
 
 Every method lives under a trait. `fn main()` is the only free
-function. The ordinary ontology is three traits on `OrchestrateStore`:
-`Locks`, `Releases`, `Observes`. The transport dispatches to them.
+function. The ordinary ontology is four traits on `OrchestrateStore`:
+`Locks`, `Releases`, `Observes`, `Configures`. `NexusCore` bears
+`Applies<Entering>`, once per contract, and `Announcing`; the transport
+carries frames and decides nothing.
 
 ## Wire
 
-Each connection carries a little-endian `u32` length and one typed portable
-rkyv Signal. The contract crates own archive and restoration; runtime owns
-only the length prefix.
+Framing is `signal`'s and only `signal`'s: a four-byte big-endian length
+prefix and one validated rkyv archive. Never hand-roll a prefix here — a
+hand-rolled one disagreed with every other component for a full generation
+and the tests shared the mistake, so they could not catch it.
+
+Every query is answered with one frame except `Observe`, which opens a
+subscription on the connection.
+
+The meta socket is bound `0600` and admits only its own user; the ordinary
+socket is bound `0660`.
 
 ## Contract changes
 

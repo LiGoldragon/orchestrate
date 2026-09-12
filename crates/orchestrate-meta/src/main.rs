@@ -5,16 +5,10 @@ mod generated_client;
 
 use datom_codec::{Actualizing, Budget, Datom, Datomizable, Potential};
 use generated_client::{ClientFailure, Unreachable};
-use meta_signal_orchestrate::{ByteViewable, Query, Response, Restorable, Signal, Signalizable};
+use meta_signal_orchestrate::{Query, Response};
 use protos::{Protosizable, ReaderBudget, Textualizable};
-use std::{
-    env,
-    io::{Read, Write},
-    os::unix::net::UnixStream,
-    process::ExitCode,
-};
-
-const MAXIMUM_SIGNAL_BYTES: usize = 8 * 1024 * 1024;
+use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use std::{env, os::unix::net::UnixStream, process::ExitCode};
 
 enum Invocation {
     Describe,
@@ -154,25 +148,17 @@ trait Exchanging {
 }
 
 impl Exchanging for SignalConnection {
+    /// One framed query out, one framed reply in. Framing is `signal`'s: this
+    /// client owns no length prefix of its own.
+    ///
+    /// Exactly one reply is read even where the Nexus would go on writing —
+    /// an Observe opens a subscription there. A CLI that takes one argument
+    /// and prints one value ends at the state on open; dropping the
+    /// connection is how it unsubscribes.
     fn exchange<T>(&mut self, query: &Signal<T>) -> Result<Vec<u8>, TransportError> {
-        let bytes = query.bytes();
-        if bytes.len() > MAXIMUM_SIGNAL_BYTES {
-            return Err(TransportError::TooLarge(bytes.len()));
-        }
-        let length =
-            u32::try_from(bytes.len()).map_err(|_| TransportError::TooLarge(bytes.len()))?;
-        self.stream.write_all(&length.to_le_bytes())?;
-        self.stream.write_all(bytes)?;
-        self.stream.flush()?;
-        let mut prefix = [0; 4];
-        self.stream.read_exact(&mut prefix)?;
-        let response_length = u32::from_le_bytes(prefix) as usize;
-        if response_length > MAXIMUM_SIGNAL_BYTES {
-            return Err(TransportError::TooLarge(response_length));
-        }
-        let mut payload = vec![0; response_length];
-        self.stream.read_exact(&mut payload)?;
-        Ok(payload)
+        let capacity = FrameCapacity::default();
+        self.stream.write_frame(query, capacity)?;
+        Ok(Vec::from(self.stream.read_frame(capacity)?))
     }
 }
 
@@ -180,10 +166,10 @@ impl Exchanging for SignalConnection {
 enum TransportError {
     #[error("Unix socket I/O failed: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Signal frame: {0}")]
+    Frame(#[from] signal::FrameError),
     #[error("Signal archive validation failed")]
     Archive,
-    #[error("Signal payload exceeds the 8 MiB limit: {0} bytes")]
-    TooLarge(usize),
 }
 
 fn main() -> ExitCode {

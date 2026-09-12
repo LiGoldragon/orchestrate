@@ -1,5 +1,89 @@
 # Upgrades
 
+## 0.31.0 to 0.32.0 -- shared frame, real authority, no migration tool
+
+Breaking on the wire, in the store, and in the package. Not deployed by this
+change.
+
+### The frame is the shared one
+
+Orchestrate wrote a little-endian `u32` length prefix at three production
+sites and in five tests, while `signal/src/frame.rs` — the crate created to
+end exactly this disagreement — is big-endian. The mistake was invisible
+because Orchestrate spoke only to Orchestrate, and its own tests shared it.
+Orchestrate now frames through `signal` and carries no framing of its own.
+`live_nexus::a_little_endian_prefix_is_not_the_shared_frame` witnesses that
+the old prefix is now refused.
+
+Any client built before 0.32.0 will not be understood, and must be replaced.
+
+### The Nexus is Datom-free as built, not merely by manifest
+
+The Nix package built the whole workspace in one Cargo resolution, so feature
+unification compiled the contract crates with the clients' `datom` feature on
+and linked `datom-codec` and `protos` into `orchestrate-nexus`. The Nexus and
+the clients are now two separate resolutions joined at install, and the
+`datom-free-nexus` check runs `cargo tree` on the Nexus resolution the package
+is built from.
+
+`packages.nexus` and `packages.clients` are the two halves; `packages.default`
+is their join and still contains every binary the previous package did, minus
+`orchestrate-store-migrate`.
+
+### Authority on the meta socket
+
+The meta socket was privileged in name only: it bound exactly like the
+ordinary socket and authorised nobody. It is now bound `0600` and answers only
+a peer the kernel reports as its own user. A refused peer receives
+`PeerRefused.PeerRejection` carrying the user id. The ordinary socket is bound
+`0660`.
+
+### A durable record of whether the privileged Configure occurred
+
+There was none. The standard Nexus metadata tree now holds the desired
+configuration together with `meta_configure_done`, using
+`nexus::ConfigurationState` so the lifecycle rule is the shared one. Ordinary
+`Configure` is accepted while that record is unset and refused with
+`MetaConfigureOccurred` afterwards; `ReverseMetaConfiguration` on the meta
+socket unsets it again.
+
+### Observe is a subscription
+
+`Observe` no longer answers once and closes. The Nexus writes the state on
+open and one further `Observed` frame for every later change, on the same
+connection, until the peer closes it. No vocabulary changed: the subscription
+is the connection, so there is no token and no `Unwatch`. The default CLI
+still takes one argument and prints one value, so it ends at the state on
+open.
+
+### `orchestrate-store-migrate` is deleted, with its migration path
+
+It was written for the wrong generation. It required exactly one row in the
+*pre-0.30* configuration and allocator families; 0.30 emptied those families
+before it was ever deployed, so the tool would have refused the live store it
+was written for. The families, the `Previous*` record types, the
+`PreviousSignalMigrationRequired` and `Migration*` refusals, and the two tests
+that exercised them are gone.
+
+What a real 0.30-or-0.31 to 0.32 cutover needs is one read, and that is all
+that remains (`store::cutover`): Locks and the allocator carry across
+untouched, and a store that still has the separate configuration family has
+its metadata tree seeded from that row on first open, the row retracted in the
+same commit.
+
+`orchestrate-upgrade-preflight` and the pre-0.25 `active_path_locks` guard
+stay. They are a different generation and a refusal rather than a migration,
+and the deployed `orchestrate-service-path` check names the binary.
+
+### Corrections to the 0.30.0 and 0.31.0 entries below
+
+Both entries describe a tuple-record migration as a live requirement. It was
+not one. `5f016531`, the deployed 0.30.0, and `1bc55af1`, the released 0.31.0,
+carry textually identical `StoredConfiguration`, `StoredLock` and
+`StoredAllocator` types and identical family constants; the tuple types both
+revisions carry read the *pre-0.30* families, which 0.30 itself emptied on
+2026-09-08. Read those entries as history, not as instructions.
+
 ## 0.30.0 to 0.31.0 -- separate Nexus and Datom clients
 
 This is a coordinated socket and durable-archive cutover. The workspace now

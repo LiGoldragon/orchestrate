@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 datom-codec.workspace = true
 protos.workspace = true
+signal = { workspace = true }
 signal-orchestrate = { workspace = true, features = ["datom"] }
 thiserror.workspace = true
 

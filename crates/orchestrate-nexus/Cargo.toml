@@ -16,17 +16,19 @@ name = "orchestrate-nexus"
 path = "src/main.rs"
 
 [[bin]]
-name = "orchestrate-store-migrate"
-path = "src/bin/orchestrate_store_migrate.rs"
-
-[[bin]]
 name = "orchestrate-upgrade-preflight"
 path = "src/bin/orchestrate_upgrade_preflight.rs"
 
+# No `datom-codec` and no `protos`: the Nexus thinks in typed values and
+# never textualizes. The contract crates carry their Datom projection behind
+# a feature the clients enable and this crate does not; the `datom-free`
+# check witnesses that the built configuration keeps it that way.
 [dependencies]
 meta-signal-orchestrate.workspace = true
+nexus.workspace = true
 rkyv.workspace = true
 sema-engine.workspace = true
+signal = { workspace = true, features = ["transport"] }
 signal-orchestrate.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

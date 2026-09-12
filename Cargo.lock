@@ -95,36 +95,17 @@ dependencies = [
 
 [[package]]
 name = "datom-codec"
-version = "0.25.4"
-source = "git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e#2dad91afce6237d772767bd4ab19f31276e6999e"
+version = "0.26.1"
+source = "git+https://github.com/LiGoldragon/datom-codec.git?rev=18129314966c5043ee659de452b6f976fa319b21#18129314966c5043ee659de452b6f976fa319b21"
 dependencies = [
- "datom-codec-derive 0.25.4 (git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e)",
- "protos",
-]
-
-[[package]]
-name = "datom-codec"
-version = "0.25.4"
-source = "git+https://github.com/LiGoldragon/datom-codec?rev=35d26d822870356af9b04cacfec40d85600b541d#35d26d822870356af9b04cacfec40d85600b541d"
-dependencies = [
- "datom-codec-derive 0.25.4 (git+https://github.com/LiGoldragon/datom-codec?rev=35d26d822870356af9b04cacfec40d85600b541d)",
+ "datom-codec-derive",
  "protos",
 ]
 
 [[package]]
 name = "datom-codec-derive"
-version = "0.25.4"
-source = "git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e#2dad91afce6237d772767bd4ab19f31276e6999e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "datom-codec-derive"
-version = "0.25.4"
-source = "git+https://github.com/LiGoldragon/datom-codec?rev=35d26d822870356af9b04cacfec40d85600b541d#35d26d822870356af9b04cacfec40d85600b541d"
+version = "0.26.0"
+source = "git+https://github.com/LiGoldragon/datom-codec.git?rev=18129314966c5043ee659de452b6f976fa319b21#18129314966c5043ee659de452b6f976fa319b21"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -149,24 +130,10 @@ dependencies = [
 
 [[package]]
 name = "ethos-zero"
-version = "6.1.0"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=6e5ad400c2aed197c5daadf9a8bb6abf183b1439#6e5ad400c2aed197c5daadf9a8bb6abf183b1439"
+version = "8.0.0"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=da58504926dabe4680bb7863d812846b0f845d86#da58504926dabe4680bb7863d812846b0f845d86"
 dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec?rev=35d26d822870356af9b04cacfec40d85600b541d)",
- "prettyplease",
- "proc-macro2",
- "protos",
- "quote",
- "rkyv",
- "syn 3.0.5",
-]
-
-[[package]]
-name = "ethos-zero"
-version = "6.1.2"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=daf007296a19ad2f9c8a1e67e102b2e3f09db327#daf007296a19ad2f9c8a1e67e102b2e3f09db327"
-dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec?rev=35d26d822870356af9b04cacfec40d85600b541d)",
+ "datom-codec",
  "prettyplease",
  "proc-macro2",
  "protos",
@@ -263,13 +230,15 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "meta-signal-orchestrate"
-version = "1.0.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=7d81bd96b8966988a6cd1fea8ba50888ba92e85a#7d81bd96b8966988a6cd1fea8ba50888ba92e85a"
+version = "3.0.1"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=707f4cb82963c02b4e6aabd4d8e17d7b7bb81da9#707f4cb82963c02b4e6aabd4d8e17d7b7bb81da9"
 dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e)",
- "ethos-zero 6.1.0",
+ "datom-codec",
+ "ethos-zero",
  "protos",
  "rkyv",
+ "signal",
+ "signal-orchestrate",
 ]
 
 [[package]]
@@ -304,6 +273,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexus"
+version = "0.1.1"
+source = "git+https://github.com/LiGoldragon/nexus.git?rev=a84bfa960c0d5c02d30048c4bbbc67dfef79a67c#a84bfa960c0d5c02d30048c4bbbc67dfef79a67c"
+dependencies = [
+ "rkyv",
+ "thiserror",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -311,11 +289,12 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e)",
- "ethos-zero 6.1.2",
+ "datom-codec",
+ "ethos-zero",
  "protos",
+ "signal",
  "signal-orchestrate",
  "tempfile",
  "thiserror",
@@ -323,23 +302,27 @@ dependencies = [
 
 [[package]]
 name = "orchestrate-meta"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e)",
- "ethos-zero 6.1.2",
+ "datom-codec",
+ "ethos-zero",
  "meta-signal-orchestrate",
  "protos",
+ "signal",
+ "signal-orchestrate",
  "tempfile",
  "thiserror",
 ]
 
 [[package]]
 name = "orchestrate-nexus"
-version = "0.31.0"
+version = "0.32.0"
 dependencies = [
  "meta-signal-orchestrate",
+ "nexus",
  "rkyv",
  "sema-engine",
+ "signal",
  "signal-orchestrate",
  "tempfile",
  "thiserror",
@@ -379,8 +362,8 @@ dependencies = [
 
 [[package]]
 name = "protos"
-version = "0.29.0"
-source = "git+https://github.com/LiGoldragon/protos.git?rev=aac95b0d08a4c7eb7f73c8ea18309f9e2e89315f#aac95b0d08a4c7eb7f73c8ea18309f9e2e89315f"
+version = "0.30.0"
+source = "git+https://github.com/LiGoldragon/protos.git?rev=e8701521a37c698d6a2eb933618b9d5d1c6f6ffb#e8701521a37c698d6a2eb933618b9d5d1c6f6ffb"
 
 [[package]]
 name = "ptr_meta"
@@ -506,7 +489,7 @@ dependencies = [
 [[package]]
 name = "sema-engine"
 version = "0.15.1"
-source = "git+https://github.com/LiGoldragon/sema-engine.git?rev=7158e5503f37fd2fbca1d707f134e38a3fda1176#7158e5503f37fd2fbca1d707f134e38a3fda1176"
+source = "git+https://github.com/LiGoldragon/sema-engine.git?rev=27e814a721439af67721c530d48b4d2101141f74#27e814a721439af67721c530d48b4d2101141f74"
 dependencies = [
  "blake3",
  "rkyv",
@@ -521,6 +504,17 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signal"
+version = "3.0.1"
+source = "git+https://github.com/LiGoldragon/signal.git?rev=2276ec4227a08526cb667f475827368d02accc72#2276ec4227a08526cb667f475827368d02accc72"
+dependencies = [
+ "ethos-zero",
+ "rkyv",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "signal-frame"
@@ -545,13 +539,14 @@ dependencies = [
 
 [[package]]
 name = "signal-orchestrate"
-version = "1.0.4"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=0efc9fdada29e72cad839b2941370afadaf880fb#0efc9fdada29e72cad839b2941370afadaf880fb"
+version = "3.0.1"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=c783b72706575451fe4416d1598b2adf9859d333#c783b72706575451fe4416d1598b2adf9859d333"
 dependencies = [
- "datom-codec 0.25.4 (git+https://github.com/LiGoldragon/datom-codec.git?rev=2dad91afce6237d772767bd4ab19f31276e6999e)",
- "ethos-zero 6.1.0",
+ "datom-codec",
+ "ethos-zero",
  "protos",
  "rkyv",
+ "signal",
 ]
 
 [[package]]
