@@ -183,3 +183,154 @@ impl ServingMeta for Session {
         self.answer(&response).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::Read, os::unix::net::UnixStream as StandardUnixStream, path::PathBuf, time::Duration,
+    };
+
+    use signal::{FrameReading, FrameWriting};
+    use signal_orchestrate::OrchestrateNexusConfiguration;
+    use tokio::{net::UnixListener, task::JoinHandle};
+
+    use super::*;
+    use crate::{
+        core::Founding,
+        store::{OpensStore, OrchestrateStore},
+        transport::socket::Bindable,
+    };
+
+    /// A temporary directory can host one privileged socket, served for one
+    /// connection, belonging to a user this test names rather than to
+    /// whoever happens to own the file.
+    ///
+    /// Naming the owner is what makes the refusing branch reachable on a
+    /// single-user host: the rule compares the peer the kernel reports with
+    /// the user the socket belongs to, and a test process cannot become a
+    /// second user. Everything else on the path is the production one — a
+    /// real bound socket, a real accepted connection, real `SO_PEERCRED`, and
+    /// the real `Session`.
+    trait ServesOnePrivilegedConnection {
+        fn serve_one(&self, owner: u32) -> (PathBuf, JoinHandle<()>);
+        /// The user this test process is, read from a file it has just
+        /// created rather than assumed.
+        fn own_user(&self) -> u32;
+    }
+
+    impl ServesOnePrivilegedConnection for tempfile::TempDir {
+        fn serve_one(&self, owner: u32) -> (PathBuf, JoinHandle<()>) {
+            let socket_path = self.path().join("privileged.sock");
+            let listener: UnixListener = socket_path
+                .bind_socket(SocketAuthority::Privileged)
+                .expect("bind the privileged socket");
+            let (store, _) = OrchestrateStore::open(
+                &self.path().join("peer.sema"),
+                OrchestrateNexusConfiguration {
+                    ordinary_socket_path: self.path().join("o.sock").display().to_string(),
+                    meta_socket_path: socket_path.display().to_string(),
+                },
+            )
+            .expect("open an isolated store");
+            let core = NexusCore::found(store);
+            let handle = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept one connection");
+                let mut session = Session::opened(
+                    stream,
+                    SocketAuthority::Privileged,
+                    SocketOwner::named(owner),
+                );
+                session.serve_meta(core).await.expect("serve one session");
+            });
+            (socket_path, handle)
+        }
+
+        fn own_user(&self) -> u32 {
+            let witness = self.path().join("own-user");
+            std::fs::write(&witness, []).expect("create a file of our own");
+            SocketOwner::of(&witness)
+                .expect("read our own user from it")
+                .user()
+        }
+    }
+
+    /// One connection from this process, which never writes a query.
+    trait Probes {
+        fn refusal(self) -> (MetaResponse, Vec<u8>);
+    }
+
+    impl Probes for PathBuf {
+        fn refusal(self) -> (MetaResponse, Vec<u8>) {
+            let mut stream = StandardUnixStream::connect(&self).expect("connect");
+            // Bounded, so a frame the session never sends fails the test
+            // rather than hanging the harness.
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("bound the wait for a frame");
+            let body = stream
+                .read_frame(FrameCapacity::default())
+                .expect("read the refusal frame");
+            let response = Signal::<MetaResponse>::from(Vec::from(body))
+                .restore()
+                .expect("restore the refusal");
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).expect("read to the close");
+            (response, rest)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_peer_who_is_not_the_socket_owner_is_refused_in_vocabulary_and_closed() {
+        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let us = directory.own_user();
+        let (socket_path, handle) = directory.serve_one(us.wrapping_add(1));
+
+        let (response, rest) = tokio::task::spawn_blocking(move || socket_path.refusal())
+            .await
+            .expect("run the peer");
+        assert_eq!(
+            response,
+            MetaResponse::PeerRefused(PeerRejection {
+                peer_user_id: i64::from(us),
+            }),
+            "the peer is named a refusal in vocabulary, not left to guess at a dropped connection"
+        );
+        assert!(
+            rest.is_empty(),
+            "and nothing follows it: the connection is closed without a query being read"
+        );
+        handle.await.expect("the session ended without failing");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_socket_owner_reaches_the_contract_on_the_same_path() {
+        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let (socket_path, handle) = directory.serve_one(directory.own_user());
+
+        let response = tokio::task::spawn_blocking(move || {
+            let mut stream = StandardUnixStream::connect(&socket_path).expect("connect");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("bound the wait for a frame");
+            let query = MetaQuery::ReverseMetaConfiguration
+                .signalize()
+                .expect("archive a query");
+            stream
+                .write_frame(&query, FrameCapacity::default())
+                .expect("write the query");
+            let body = stream
+                .read_frame(FrameCapacity::default())
+                .expect("read the reply");
+            Signal::<MetaResponse>::from(Vec::from(body))
+                .restore()
+                .expect("restore the reply")
+        })
+        .await
+        .expect("run the peer");
+        assert!(
+            matches!(response, MetaResponse::OrdinaryConfigurationReopened(_)),
+            "the owner is admitted and answered on the contract, found {response:?}"
+        );
+        handle.await.expect("the session ended without failing");
+    }
+}

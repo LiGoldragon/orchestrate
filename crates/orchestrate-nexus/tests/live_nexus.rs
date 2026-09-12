@@ -14,10 +14,15 @@ use std::{
 };
 
 use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
+use orchestrate_nexus::store::record::{
+    Familial, SCHEMA_VERSION, StoredAllocator, StoredConfiguration, StoredLock, Storing,
+};
+use sema_engine::{Assertion, Engine, EngineOpen};
 use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
 use signal_orchestrate::{
-    ConfigurationReceipt, LockRequest, Observation, ObserveSelection,
-    OrchestrateNexusConfiguration, Query as OrdinaryQuery, Response as OrdinaryResponse,
+    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockRequest,
+    Observation, ObserveSelection, OrchestrateNexusConfiguration, Query as OrdinaryQuery,
+    Response as OrdinaryResponse,
 };
 
 struct IsolatedXdg {
@@ -370,5 +375,116 @@ fn malformed_archive_never_reaches_the_store() {
     assert_eq!(
         nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+    );
+}
+
+/// Writes, at the isolated store path, exactly the store deployed 0.30.0 and
+/// released 0.31.0 leave behind: the configuration in its own family, a Lock
+/// and an allocator in the families this generation still uses, and no
+/// metadata tree, because none existed. The shape is the one carried by
+/// `5f016531:src/store.rs`, the deployed 0.30.0 — the same three family names,
+/// schema labels and record fields.
+trait WritesAPreviousGenerationStore {
+    fn write_previous_generation_store(&self, held: &Lock);
+}
+
+impl WritesAPreviousGenerationStore for IsolatedXdg {
+    fn write_previous_generation_store(&self, held: &Lock) {
+        let store_path = self.store();
+        std::fs::create_dir_all(store_path.parent().expect("store path has a parent"))
+            .expect("create the state directory");
+        let mut engine = Engine::open(EngineOpen::new(
+            store_path.display().to_string(),
+            SCHEMA_VERSION,
+        ))
+        .expect("open a previous-generation store");
+        let configurations = engine
+            .register_table(StoredConfiguration::descriptor())
+            .expect("register the previous configuration family");
+        engine
+            .assert(Assertion::new(
+                configurations,
+                StoredConfiguration {
+                    ordinary_socket: self.ordinary_socket().display().to_string(),
+                    meta_socket: self.meta_socket().display().to_string(),
+                },
+            ))
+            .expect("write the previous configuration");
+        let locks = engine
+            .register_table(StoredLock::descriptor())
+            .expect("register the Lock family");
+        engine
+            .assert(Assertion::new(locks, StoredLock::from_public(held)))
+            .expect("write a held Lock");
+        let allocator = engine
+            .register_table(StoredAllocator::descriptor())
+            .expect("register the allocator family");
+        engine
+            .assert(Assertion::new(
+                allocator,
+                StoredAllocator {
+                    next_lock_id: held.lock_id + 1,
+                },
+            ))
+            .expect("write the allocator");
+    }
+}
+
+/// The cutover, driven through the sockets rather than through the store API:
+/// a Nexus that resumes a previous generation's store does not reopen the
+/// ordinary bootstrap window, so no ordinary peer can repoint its sockets.
+#[test]
+fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let held = Lock {
+        lock_id: 7,
+        lock_name: "carried".to_owned(),
+        flow_id: "flow-857335".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "held across the cutover".to_owned(),
+    };
+    roots.write_previous_generation_store(&held);
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+
+    assert_eq!(
+        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        "the carried Lock is served by the resumed Nexus"
+    );
+
+    let stranding = OrchestrateNexusConfiguration {
+        ordinary_socket_path: temporary.path().join("stranded.sock").display().to_string(),
+        meta_socket_path: temporary
+            .path()
+            .join("stranded-meta.sock")
+            .display()
+            .to_string(),
+    };
+    assert_eq!(
+        nexus.ordinary(&OrdinaryQuery::Configure(stranding.clone())),
+        OrdinaryResponse::ConfigurationRefused(ConfigurationRejection {
+            configuration_rejection_reason: ConfigurationRejectionReason::MetaConfigureOccurred,
+        }),
+        "an ordinary peer cannot repoint the sockets of a Nexus carried across the cutover"
+    );
+
+    let MetaResponse::OrdinaryConfigurationReopened(receipt) =
+        nexus.meta(&MetaQuery::ReverseMetaConfiguration)
+    else {
+        panic!("the privileged socket reopens ordinary Configure");
+    };
+    assert!(!receipt.meta_configure_done);
+    assert_eq!(
+        receipt.orchestrate_nexus_configuration.ordinary_socket_path,
+        nexus.roots.ordinary_socket().display().to_string(),
+        "the carried configuration is what the Nexus is bound by, and the refusal left it alone"
+    );
+    assert!(
+        matches!(
+            nexus.ordinary(&OrdinaryQuery::Configure(stranding)),
+            OrdinaryResponse::ConfigurationAccepted(_)
+        ),
+        "and only after the privileged reversal is the ordinary surface open again"
     );
 }

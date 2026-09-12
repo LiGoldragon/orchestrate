@@ -104,6 +104,12 @@ pub struct SocketOwner {
 
 pub trait OwnsSocket: Sized {
     fn of(socket_path: &Path) -> Result<Self, TransportError>;
+    /// A named owner, for a test that must express a socket belonging to a
+    /// user this process is not. A single-user test host has no second user
+    /// id to borrow, and the rule under test is about the two numbers being
+    /// different, not about where either came from.
+    #[cfg(test)]
+    fn named(user: u32) -> Self;
     fn user(&self) -> u32;
 }
 
@@ -112,6 +118,11 @@ impl OwnsSocket for SocketOwner {
         Ok(Self {
             user: std::os::unix::fs::MetadataExt::uid(&fs::metadata(socket_path)?),
         })
+    }
+
+    #[cfg(test)]
+    fn named(user: u32) -> Self {
+        Self { user }
     }
 
     fn user(&self) -> u32 {

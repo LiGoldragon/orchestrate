@@ -27,7 +27,11 @@ prints its signal contract ethos and its client failure ethos, then
 exits 0.
 
 A string containing a space or a delimiter character is written in
-curly quotes \u{201C} \u{201D}. A word without them is bare.
+guillemets \u{00AB} \u{00BB}, as the examples below are. A word without
+them is bare. Curly quotes \u{201C} \u{201D} were the delimiter of an
+earlier Protos generation and are refused by these clients:
+`Unreadable.Error.{ Composition [ 1 ] Arity.{ 4 5 } }` is what a
+curly-quoted Lock reason produces, naming neither quotes nor the field.
 
 ## Ordinary operations
 

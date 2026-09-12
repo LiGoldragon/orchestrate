@@ -113,6 +113,19 @@
               cargoTestExtraArgs = "-p orchestrate-nexus --test configuration_authority";
             }
           );
+          # The peer check's refusing branch. The named-owner witness runs
+          # anywhere; the second-user witness runs where the host grants a
+          # subordinate uid range, and says so when it cannot — a build
+          # sandbox has none to grant.
+          peer-authority = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              # --nocapture so that a host without a subordinate uid range
+              # says so in the build log, rather than passing in silence.
+              cargoTestExtraArgs = "-p orchestrate-nexus --test second_user_peer -- --nocapture";
+            }
+          );
           ordinary-client = craneLib.cargoTest (
             commonArgs
             // {

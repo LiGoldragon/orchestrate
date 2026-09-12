@@ -1,5 +1,72 @@
 # Upgrades
 
+## 0.32.0 to 0.33.0 -- a carried store keeps ordinary Configure shut
+
+No wire change. Both contracts are pinned exactly as 0.32.0 pinned them, and
+0.32.0's clients speak to this Nexus unchanged. The change is in the store's
+first open and in the tests.
+
+### A store carried across the cutover is not a fresh Nexus
+
+0.32.0 seeded the metadata tree of a carried 0.30 or 0.31 store with the
+privileged Configure recorded as *not* done, on the correct reading that those
+generations kept no such record. The consequence was not correct: while that
+record is unset, `Vision/nexus.md` makes `Configure` accessible on the ordinary
+socket, so after the cutover any ordinary peer could repoint both socket paths,
+and the next restart would bind them — stranding every client at a path no
+wrapper and no unit file knows.
+
+A carried store now resumes with the record set. 0.30 and 0.31 had no ordinary
+`Configure` at all: the value in a carried configuration row came from the
+executable's own constant or from a meta `Configure`, both privileged. The
+ordinary bootstrap window was never open in that store's life, and Vision gives
+it to a Nexus that has never been in service. A fresh store is unaffected — it
+seeds from the defaults with ordinary `Configure` open, exactly as before.
+
+A deployment cutting over from 0.30 or 0.31 therefore no longer depends on a
+meta `Configure` being the first act after start. Ordinary `Configure` on such
+a store answers `ConfigurationRefused.MetaConfigureOccurred` until
+`ReverseMetaConfiguration` is sent on the meta socket.
+
+Witnessed in `store::cutover::tests`, and through the sockets of the real
+executable over a store written in the deployed 0.30.0 shape, in
+`tests/live_nexus.rs`.
+
+### The meta socket's refusing branch is witnessed end to end
+
+0.32.0 tested the admission rule and the admitting wire path, and recorded the
+refusing wire path as having no end-to-end witness. It has two now.
+
+`transport::session::tests` binds a real privileged socket, accepts a real
+connection, reads the peer's credential with `SO_PEERCRED`, and asserts that a
+peer who is not the socket's owner receives `PeerRefused.PeerRejection` naming
+it, before it has written anything, and that the connection then closes. The
+socket's owner is named by the test rather than read from the file, because a
+single-user host has no second user to borrow; its companion test drives the
+same path with the owner admitted, so the refusal is the rule's doing and not
+the harness's.
+
+`tests/second_user_peer.rs` closes the last step — that the kernel's own answer
+for a genuinely different user reaches the rule — by connecting from a process
+mapped to the host's first subordinate uid. It requires `/etc/subuid`,
+`newuidmap`, `unshare` and `setpriv`; a Nix build sandbox grants none of them,
+so where the requirement is unmet the test says so and ends rather than
+reporting a refusal it did not see. The new `peer-authority` check runs it.
+
+### The CLI string delimiter, which no entry had recorded
+
+Not a change of this release, and a deploy-day break all the same. Since
+0.31.0 the clients have been built against a Protos generation whose opaque
+string is bounded by guillemets, `\u{00AB}like this\u{00BB}`; the deployed
+0.30.0 clients bound it with curly quotes, `\u{201C}like this\u{201D}`, and
+still accept them. So the first multi-word Lock reason sent through a client
+from this package fails, with `Unreadable.Error.{ Composition [ 1 ]
+Arity.{ 4 5 } }` — an error that names neither quotes nor the reason field.
+`AGENTS.md` said curly quotes until this release; it now says guillemets and
+says what the old form produces. Any document outside this repository that
+teaches the CLI — the `orchestrate` skill among them — needs the same
+correction before a deploy.
+
 ## 0.31.0 to 0.32.0 -- shared frame, real authority, no migration tool
 
 Breaking on the wire, in the store, and in the package. Not deployed by this

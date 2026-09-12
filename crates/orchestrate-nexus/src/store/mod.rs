@@ -111,8 +111,10 @@ trait SeedsMetadata {
 
 impl SeedsMetadata for Engine {
     /// A store that a previous generation left with its own configuration
-    /// family seeds from that row and clears it in the same commit; any other
-    /// store seeds from the executable's defaults. See `cutover`.
+    /// family seeds from that row, records the privileged Configure as done,
+    /// and clears the row in the same commit; any other store seeds from the
+    /// executable's defaults with ordinary Configure still open. See
+    /// `cutover`.
     fn seed_metadata(
         &mut self,
         metadata: TableReference<StoredMetadata>,
@@ -123,12 +125,21 @@ impl SeedsMetadata for Engine {
         } else {
             None
         };
-        let seed = carried
-            .as_ref()
-            .and_then(Carrying::configuration)
-            .cloned()
-            .unwrap_or_else(|| StoredConfiguration::from_public(defaults));
-        let state = ConfigurationState::from_default(seed);
+        let state = match carried.as_ref().and_then(Carrying::configuration) {
+            // A carried configuration was established by privileged means: in
+            // the generation that wrote it the ordinary socket had no
+            // Configure at all, so the value is either the executable's own
+            // default or a meta Configure. Seeding it as unconfigured would
+            // open the ordinary bootstrap window on a Nexus that has been in
+            // service, and any ordinary peer could then repoint its sockets.
+            // See `cutover`.
+            Some(carried) => {
+                let mut state = ConfigurationState::from_default(carried.clone());
+                state.meta_configure(carried.clone());
+                state
+            }
+            None => ConfigurationState::from_default(StoredConfiguration::from_public(defaults)),
+        };
         let mut commit = self.begin_atomic_commit().assert(
             metadata,
             StoredMetadata {

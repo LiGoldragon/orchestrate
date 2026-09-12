@@ -82,6 +82,13 @@ that already has a configuration row seeds its metadata tree from that row
 rather than from the executable's defaults, and the row is retracted in the
 same commit. After one open the reader is never reached again.
 
+The seeded record says the privileged Configure has been done. 0.30 and 0.31
+had no ordinary `Configure` at all, so every value in a carried row came from
+the privileged path — the executable's own constant or the meta socket — and
+the ordinary bootstrap window was never open in that store's life. Seeding it
+open would let any ordinary peer repoint both sockets, which the next restart
+would obey. The window belongs to a Nexus that has never been in service.
+
 Nothing older is read as data. The pre-0.25 `active_path_locks` family is
 counted and refused, never converted.
 

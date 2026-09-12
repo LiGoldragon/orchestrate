@@ -76,6 +76,10 @@ claimed it.
 A 0.30 or 0.31 store needs no migration tool. Its Lock and allocator families
 are identical to this one's, and its separate configuration family is read
 once on first open to seed the metadata tree, then cleared in the same commit.
+A store carried across that boundary resumes with the privileged `Configure`
+recorded as done, so ordinary `Configure` is shut: those generations had no
+ordinary `Configure`, so the configuration they carry was set by the
+privileged path alone.
 
 ## Verification
 
