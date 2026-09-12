@@ -763,3 +763,246 @@ impl Terminable for LiveNexus {
             .success()
     }
 }
+
+// ---------------------------------------------------------------------------
+// A store that was moved, driven end to end through the real executables.
+//
+// The refusal a carried store meets is correct and, on its own, a dead end:
+// the record that would have to change lives inside the store, and the meta
+// socket a client would ask through is named by that same store. So the way
+// out is a second executable that opens the store file with no Nexus running
+// — `orchestrate-relocate`. These tests are the whole ritual: what it refuses,
+// what it admits, and what the admission does not extend to.
+// ---------------------------------------------------------------------------
+
+/// A second pair of XDG roots beside the first, which is what relocating a
+/// store to a different state directory looks like from outside.
+trait Beside {
+    fn beside(temporary: &tempfile::TempDir, name: &str) -> Self;
+}
+
+impl Beside for IsolatedXdg {
+    fn beside(temporary: &tempfile::TempDir, name: &str) -> Self {
+        let root = temporary.path().join(name);
+        let roots = Self {
+            state_home: root.join("state"),
+            runtime_directory: root.join("runtime"),
+        };
+        std::fs::create_dir_all(roots.store().parent().expect("the store has a parent"))
+            .expect("create the second state directory");
+        std::fs::create_dir_all(&roots.runtime_directory).expect("create the second runtime root");
+        roots
+    }
+}
+
+/// What `orchestrate-relocate` said, and whether it declared anything.
+struct Declaration {
+    declared: bool,
+    said: String,
+}
+
+/// Running the operator's declaration in one pair of roots.
+trait Declares {
+    fn relocate(&self) -> Declaration;
+}
+
+impl Declares for IsolatedXdg {
+    fn relocate(&self) -> Declaration {
+        let finished = self
+            .command(env!("CARGO_BIN_EXE_orchestrate-relocate"))
+            .output()
+            .expect("run the relocation declaration");
+        Declaration {
+            declared: finished.status.success(),
+            said: format!(
+                "{}{}",
+                String::from_utf8_lossy(&finished.stdout),
+                String::from_utf8_lossy(&finished.stderr)
+            ),
+        }
+    }
+}
+
+/// Carrying a store's bytes without its file, which is what a cross-filesystem
+/// `mv`, a `tar`, and every snapshot restore do — and the only case that needs
+/// declaring, since a move that keeps the file is recognised unaided.
+trait Carries {
+    fn carry_store_to(&self, destination: &IsolatedXdg);
+}
+
+impl Carries for IsolatedXdg {
+    fn carry_store_to(&self, destination: &IsolatedXdg) {
+        std::fs::create_dir_all(
+            destination
+                .store()
+                .parent()
+                .expect("the store has a parent"),
+        )
+        .expect("create the destination state directory");
+        std::fs::copy(self.store(), destination.store()).expect("carry the bytes across");
+        std::fs::remove_file(self.store()).expect("and leave nothing at the origin");
+    }
+}
+
+#[test]
+fn a_copied_store_is_refused_and_will_not_be_declared_a_move() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let original = IsolatedXdg::create(&temporary);
+    let original_store = original.store();
+    drop(LiveNexus::start(binary, original));
+
+    let second = IsolatedXdg::beside(&temporary, "copy");
+    std::fs::copy(&original_store, second.store()).expect("copy the store, leaving the original");
+
+    let refused = second.relocate();
+    assert!(
+        !refused.declared,
+        "a copy is not a move, and the original is still there to prove it: {:?}",
+        refused.said
+    );
+    assert!(
+        refused.said.contains(&original_store.display().to_string()),
+        "and the refusal names what the operator has to deal with first: {:?}",
+        refused.said
+    );
+
+    let started = second.second_nexus(binary);
+    assert!(
+        started.exited_by_itself,
+        "so the copy is still refused, as it was before anything was asked"
+    );
+    assert!(
+        started.said.contains(&original_store.display().to_string()),
+        "found {:?}",
+        started.said
+    );
+}
+
+#[test]
+fn a_relocation_is_refused_while_the_nexus_is_still_serving() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let original = IsolatedXdg::create(&temporary);
+    let original_store = original.store();
+    let nexus = LiveNexus::start(binary, original);
+
+    // The store is unlinked from under a Nexus that goes on serving from the
+    // open file, which is exactly the case the origin check cannot see. The
+    // socket claim can, and is the reason the tool takes it.
+    let second = IsolatedXdg::beside(&temporary, "moved");
+    std::fs::copy(&original_store, second.store()).expect("carry the bytes across");
+    std::fs::remove_file(&original_store).expect("and unlink the original");
+
+    let refused = second.relocate();
+    assert!(
+        !refused.declared,
+        "something is still serving the sockets this store would bind: {:?}",
+        refused.said
+    );
+    assert!(
+        refused
+            .said
+            .contains(&nexus.roots.ordinary_socket().display().to_string())
+            || refused
+                .said
+                .contains(&nexus.roots.meta_socket().display().to_string()),
+        "and it names the socket that is held: {:?}",
+        refused.said
+    );
+    assert_eq!(
+        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "and the Nexus it refused to displace is still answering"
+    );
+}
+
+#[test]
+fn a_carried_store_serves_again_with_its_state_once_the_move_is_declared() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let original = IsolatedXdg::create(&temporary);
+    let mut nexus = LiveNexus::start(binary, original);
+    let owned = temporary.path().join("owned").display().to_string();
+    let OrdinaryResponse::Locked(held) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+        lock_name: "across-the-move".to_owned(),
+        flow_id: "test-flow".to_owned(),
+        lock_path_vector: vec![owned],
+        lock_reason: "held across a relocation".to_owned(),
+    })) else {
+        panic!("expected a Lock to be acquired");
+    };
+    let original_roots = IsolatedXdg {
+        state_home: nexus.roots.state_home.clone(),
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    assert!(nexus.terminate(), "SIGTERM delivered to this test's Nexus");
+    let status = nexus.child.wait().expect("reap the terminated Nexus");
+    assert!(
+        status.success(),
+        "a Nexus asked to stop exits successfully, found {status:?}"
+    );
+
+    // The state directory moves and the runtime directory does not, which is
+    // the shape a relocation actually has: the socket paths live in the
+    // store's metadata tree, so a relocated Nexus goes on listening exactly
+    // where it listened before. Only the store has gone somewhere else.
+    let moved = IsolatedXdg {
+        state_home: IsolatedXdg::beside(&temporary, "relocated").state_home,
+        runtime_directory: original_roots.runtime_directory.clone(),
+    };
+    original_roots.carry_store_to(&moved);
+
+    // Without the declaration, this is a copy as far as anything can tell.
+    let undeclared = moved.second_nexus(binary);
+    assert!(
+        undeclared.exited_by_itself,
+        "an absent origin is evidence, not consent: {:?}",
+        undeclared.said
+    );
+
+    let declared = moved.relocate();
+    assert!(
+        declared.declared,
+        "the original is gone and nothing holds the sockets: {:?}",
+        declared.said
+    );
+
+    let relocated = LiveNexus::start(binary, moved);
+    assert_eq!(
+        relocated.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        "and it serves the state it was carrying all along"
+    );
+
+    // The move is complete, so the declaration that admitted it is spent. A
+    // copy taken from the relocated store finds no standing licence, and a
+    // second relocation needs a second declaration.
+    let relocated_store = relocated.roots.store();
+    let third = IsolatedXdg {
+        state_home: IsolatedXdg::beside(&temporary, "third").state_home,
+        runtime_directory: relocated.roots.runtime_directory.clone(),
+    };
+    std::fs::create_dir_all(third.store().parent().expect("the store has a parent"))
+        .expect("create the third state directory");
+    std::fs::copy(&relocated_store, third.store()).expect("copy the relocated store");
+    let forged = third.second_nexus(binary);
+    assert!(
+        forged.exited_by_itself,
+        "a declaration admits one move, not a class of them: {:?}",
+        forged.said
+    );
+    assert!(
+        forged.said.contains(&relocated_store.display().to_string())
+            && forged.said.contains(&third.store().display().to_string()),
+        "and it is refused as the copy it is, naming the address the record \
+         holds and the one it was opened at, rather than merely failing to \
+         bind: {:?}",
+        forged.said
+    );
+    assert!(
+        !third.relocate().declared,
+        "nor can it be declared, because the store it was copied from is \
+         still there"
+    );
+}

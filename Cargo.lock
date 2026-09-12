@@ -388,8 +388,8 @@ dependencies = [
 
 [[package]]
 name = "nexus"
-version = "0.3.0"
-source = "git+https://github.com/LiGoldragon/nexus.git?rev=4ed2696c04a1aa064e9573e3b1f197b140c7644e#4ed2696c04a1aa064e9573e3b1f197b140c7644e"
+version = "0.5.0"
+source = "git+https://github.com/LiGoldragon/nexus.git?rev=c495f2acbfff57e017092b9cc1fbf9f73ca2badf#c495f2acbfff57e017092b9cc1fbf9f73ca2badf"
 dependencies = [
  "rkyv",
  "thiserror",
@@ -403,7 +403,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "datom-codec",
  "ethos-zero",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrate-meta"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "datom-codec",
  "ethos-zero",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrate-nexus"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "kameo",
  "meta-signal-orchestrate",

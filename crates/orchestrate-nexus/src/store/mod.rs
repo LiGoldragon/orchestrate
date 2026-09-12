@@ -9,33 +9,41 @@ pub mod error;
 pub mod legacy;
 pub mod normalize;
 pub mod record;
+mod relocation;
 mod situation;
 mod transition;
 
 pub use error::StoreError;
 pub use legacy::{LegacyStorePreflight, PreflightsLegacyStore};
+pub use relocation::Relocates;
 pub use situation::Situates;
 pub use transition::Configures;
 
 use std::{fs, path::Path};
 
-use nexus::{Configurable, ConfigurationState, Situated};
+use nexus::{
+    Bearing, Configurable, ConfigurationState, Identifying, Relocated, Situated, StoreIdentity,
+};
 use sema_engine::{Engine, EngineOpen, QueryPlan, TableReference};
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
 use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
-    CONFIGURATION_TABLE, Familial, SCHEMA_VERSION, StoredAllocator, StoredConfiguration,
-    StoredLock, StoredMetadata, StoredSituation, Storing,
+    CONFIGURATION_TABLE, Familial, SCHEMA_VERSION, SUPERSEDED_SITUATION_TABLE, StoredAllocator,
+    StoredConfiguration, StoredLock, StoredMetadata, StoredRelocation, StoredSituation, Storing,
 };
 
 /// The single owner of the Nexus's durable state.
 pub struct OrchestrateStore {
     engine: Engine,
-    store_path: String,
+    /// The file this store actually is, not merely the name it was reached
+    /// by: what the situation record is written from, and what the next open
+    /// compares itself against.
+    store: StoreIdentity,
     metadata: TableReference<StoredMetadata>,
     situation: TableReference<StoredSituation>,
+    relocation: TableReference<StoredRelocation>,
     locks: TableReference<StoredLock>,
     allocator: TableReference<StoredAllocator>,
     state: ConfigurationState<StoredConfiguration>,
@@ -77,21 +85,59 @@ impl OpensStore for OrchestrateStore {
             [stored] => stored.state.clone(),
             rows => return Err(StoreError::MetadataInvariant { count: rows.len() }),
         };
+        // A store guarded only by its path cannot tell a move from a copy,
+        // and this generation's guard rests on the store's file identity. A
+        // store still carrying the older family is refused rather than
+        // silently admitted with no guard at all.
+        if engine.catalog().is_registered(&SUPERSEDED_SITUATION_TABLE) {
+            return Err(StoreError::SupersededSituation);
+        }
         let situation: TableReference<StoredSituation> =
             engine.register_table(StoredSituation::descriptor())?;
+        let relocation: TableReference<StoredRelocation> =
+            engine.register_table(StoredRelocation::descriptor())?;
         // Before anything else this store holds is trusted: the socket paths
         // it is about to hand back belong to whichever Nexus last bound them,
-        // and a store that has been carried is not that Nexus.
-        let store_path = store_path.display().to_string();
+        // and a second copy of a store is not that Nexus.
+        //
+        // The engine has created or opened the file by now, so this identity
+        // is the file the Nexus is actually serving from.
+        let store = StoreIdentity::of(store_path);
+        let declared = match engine.match_records(QueryPlan::all(relocation))?.records() {
+            [] => None,
+            [row] => Some(row.relocation.clone()),
+            rows => return Err(StoreError::RelocationInvariant { count: rows.len() }),
+        };
         match engine.match_records(QueryPlan::all(situation))?.records() {
             [] => {}
-            [recorded] if recorded.situation.is_carried(&store_path) => {
-                return Err(StoreError::CarriedStore {
-                    recorded: recorded.situation.store_path().to_owned(),
-                    opened: store_path,
-                });
+            [recorded] => {
+                let recorded = recorded.situation.clone();
+                // Settled and Moved both pass: the first is a store at its own
+                // address, and the second is one file that has changed address,
+                // which no second claimant can be hiding behind. Only Carried
+                // is two files bearing one record, and only Carried consults
+                // the declaration.
+                if recorded.bearing(&store) == Bearing::Carried {
+                    let recorded_path = recorded.store().path().to_owned();
+                    match declared {
+                        Some(declaration) if declaration.admits(&recorded_path, store.path()) => {}
+                        Some(declaration) => {
+                            return Err(StoreError::UnrelatedRelocation {
+                                declared_origin: declaration.origin,
+                                declared_destination: declaration.destination,
+                                recorded: recorded_path,
+                                opened: store.path().to_owned(),
+                            });
+                        }
+                        None => {
+                            return Err(StoreError::CarriedStore {
+                                recorded: recorded_path,
+                                opened: store.path().to_owned(),
+                            });
+                        }
+                    }
+                }
             }
-            [_] => {}
             rows => return Err(StoreError::SituationInvariant { count: rows.len() }),
         }
         let locks = engine.register_table(StoredLock::descriptor())?;
@@ -111,9 +157,10 @@ impl OpensStore for OrchestrateStore {
         Ok((
             Self {
                 engine,
-                store_path,
+                store,
                 metadata,
                 situation,
+                relocation,
                 locks,
                 allocator,
                 state,

@@ -144,6 +144,18 @@
               cargoTestExtraArgs = "-p orchestrate-nexus --test carried_store";
             }
           );
+          # The declaration that lets a deliberately moved store serve again,
+          # and the two world-checks that keep a copy from making it. Its own
+          # check because the offline tool is its own failure: a Nexus that
+          # refuses correctly and a tool that admits wrongly are the same
+          # outage.
+          relocation = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p orchestrate-nexus --test relocation";
+            }
+          );
           stopping = craneLib.cargoTest (
             commonArgs
             // {

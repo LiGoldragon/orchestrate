@@ -7,7 +7,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.34.0"
+version = "0.35.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -19,7 +19,7 @@ datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "6
 ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "de3d9928b156f2e1a92d060b7817af201abfdbef" }
 kameo = { version = "0.22", default-features = false, features = ["macros"] }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "4279ad05141c392ad4fee83be7cee09d5dc12df5", default-features = false }
-nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "4ed2696c04a1aa064e9573e3b1f197b140c7644e" }
+nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "c495f2acbfff57e017092b9cc1fbf9f73ca2badf" }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "171b21f65337983ab624b7b906397a4f1f92c5a3" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "27e814a721439af67721c530d48b4d2101141f74" }

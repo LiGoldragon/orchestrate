@@ -104,5 +104,22 @@ Bump the `orchestrate` flake input in CriomOS-home, rebuild, restart
 The restart is graceful: the Nexus stops on `SIGTERM`, finishes the work
 it took, and releases its store and its socket claims before exiting.
 
-The Nexus refuses to start on a store opened anywhere other than where
-it records having been bound. Do not relocate the store file.
+The Nexus records which store *file* it opened, not merely the path, so
+moving the store within a filesystem needs nothing: the file is the same
+one and the Nexus recognises it. A store whose bytes arrived in a new
+file — a cross-filesystem `mv`, a `tar`, a snapshot restore — cannot be
+told from a copy, and is refused until the owner declares the move.
+
+To declare it, with the service stopped and in the service's own
+environment:
+
+    systemctl --user stop orchestrate-nexus
+    orchestrate-relocate
+    systemctl --user start orchestrate-nexus
+
+`orchestrate-relocate` takes no arguments; it derives the store path the
+same way the Nexus does. It refuses unless nothing remains at the
+address the store records and nothing holds the sockets it is about to
+bind, so a copy cannot be declared a move while the original exists. The
+declaration names that one move and is spent by the start that completes
+it.

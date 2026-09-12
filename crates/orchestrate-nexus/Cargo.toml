@@ -19,6 +19,13 @@ path = "src/main.rs"
 name = "orchestrate-upgrade-preflight"
 path = "src/bin/orchestrate_upgrade_preflight.rs"
 
+# Not a client and not a CLI in the Nexus sense: it speaks no signal, opens no
+# socket, and reaches no Nexus. It opens the store file, which is the only
+# place the question it answers can be settled. See `src/recovery.rs`.
+[[bin]]
+name = "orchestrate-relocate"
+path = "src/bin/orchestrate_relocate.rs"
+
 # No `datom-codec` and no `protos`: the Nexus thinks in typed values and
 # never textualizes. The contract crates carry their Datom projection behind
 # a feature the clients enable and this crate does not; the `datom-free`

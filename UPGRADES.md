@@ -1,5 +1,100 @@
 # Upgrades
 
+## 0.34.0 to 0.35.0 -- a store is identified by its file, and a move can be declared
+
+No wire change on either contract: 0.34.0's `orchestrate` and
+`orchestrate-meta` speak to this Nexus unchanged. There is one new executable,
+the situation family is replaced, and a store written by 0.34.0 is refused.
+
+### The situation record identifies the store file, not its path
+
+0.34.0 recorded the store's path, and a path is an address. Recording only the
+address makes every change of address look alike, so a store its owner
+deliberately moved was refused for exactly the reason a duplicate was — and
+the record that would have to change lived inside the store, reachable only
+through a Nexus that would not start. That was the dead end 0.34.0 named as
+owed.
+
+The record now carries the file's device and inode as well, which separates
+three cases the address alone could not:
+
+- **the same address** — settled, whatever file is there now. A restore in
+  place is ordinary, and the sockets in the record belong to whoever is at
+  that address anyway.
+- **the same file, a new address** — moved. One file cannot be two claimants,
+  so `mv` within a filesystem now needs nothing at all: no tool, no
+  declaration, no downtime beyond the restart.
+- **a different file, a new address** — carried. A copy as far as anything can
+  tell, including when it is a move that crossed a filesystem and arrived as
+  new bytes exactly as a duplication does. Refused, unless declared.
+
+This is PostgreSQL's shape: its shared-memory header identifies `$PGDATA` by
+`dev_t` and `ino_t` rather than by path, so a same-filesystem move is
+transparent and a copy gets a new inode and is seen as foreign.
+
+**The family is replaced, not migrated.** The new one is
+`orchestrate_nexus_situation_v2`. Any store that has been opened by
+0.34.0 at all is refused by name — 0.34.0 registered `v1` on every open, so the
+family's mere presence is the test, not whether it holds a row. It is refused
+rather than admitted with no guard, because that family was written by a
+generation that could not tell a move from a copy. 0.34.0 was never deployed, so no real store is expected to hit this. One
+that does should be served once under 0.34.0 where it lives, have its Locks
+released, and be replaced with a fresh store.
+
+### `orchestrate-relocate` declares a move that the file identity cannot show
+
+A new executable in the Nexus package. It is **not a client**: it speaks no
+signal, opens no socket and reaches no Nexus. It opens the store file, which
+is the only place the question can be settled — the Nexus finds its store
+before it reads its configuration, so the meta socket a client would ask
+through is named by the very store whose right to those paths is in doubt. A
+refused store that opened its meta socket in order to ask permission would
+have bound, to ask, the paths belonging to the Nexus still serving at the
+original.
+
+The authority is therefore the filesystem's: whoever may write the store file
+may say where it now lives. That is where Postgres puts `pg_resetwal` and etcd
+puts `etcdutl snapshot restore`, for the same reason — data is re-identified
+with nothing attached to it. etcd offers the live-start variant too,
+`--force-new-cluster`, and files it under "Unsafe feature".
+
+It takes no arguments, deriving the store path exactly as the Nexus does, so
+it can only ever act on the store the Nexus would open. It writes nothing
+unless two things are true of the world:
+
+1. **Nothing remains at the address the store records.** `cp` leaves the
+   original and `mv` does not, so a copy cannot be declared a move until the
+   operator has removed or renamed the original — at which point there
+   genuinely is one store.
+2. **Nothing holds the sockets.** A store can be unlinked while the Nexus
+   serving from it runs on, so an absent origin is no proof of an absent
+   claimant. The tool takes the `.claim` locks 0.34.0 introduced, exactly as
+   the Nexus does, and refuses while any is held. This is the inversion
+   Postgres uses when `pg_resetwal` refuses to run while `postmaster.pid` is
+   present.
+
+Neither check is the guard. The guard is the declaration they earn: it names
+one origin and one destination, is honoured by that move alone, and is spent
+by the commit that records the new address. A copy taken before the move
+completes is at neither end of it; a copy taken after finds nothing standing.
+The store gains one more family, `orchestrate_nexus_relocation_v1`, holding at
+most one row and usually none.
+
+### Rollout
+
+Bump the CriomOS-home `orchestrate` input to the new rev, rebuild, and
+`systemctl --user restart orchestrate-nexus`. `orchestrate-relocate` is
+installed alongside `orchestrate-nexus` and is not on the start path — the
+Nexus still starts with no arguments and no helper.
+
+Nothing needs relocating to deploy this. The operator procedure, for when
+something does:
+
+    systemctl --user stop orchestrate-nexus
+    # move the store
+    orchestrate-relocate
+    systemctl --user start orchestrate-nexus
+
 ## 0.33.1 to 0.34.0 -- the core is an actor, the sockets are claimed, and a carried store is refused
 
 No wire change on either contract: 0.33.1's `orchestrate` and
