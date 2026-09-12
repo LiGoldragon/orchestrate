@@ -1,5 +1,22 @@
 # Upgrades
 
+## 0.33.0 to 0.33.1 -- Pin signal-orchestrate 3.0.2, meta-signal-orchestrate 3.0.2, protos 0.30.1, datom-codec 0.26.3, ethos-zero 8.0.1, signal 3.0.2
+
+### What changed
+
+Dependency pins updated: signal-orchestrate 3.0.2, meta-signal-orchestrate
+3.0.2, protos 0.30.1, datom-codec 0.26.3, ethos-zero 8.0.1, signal 3.0.2.
+`nexus` is unchanged, still pinned at 0.1.1. No wire change, no store change.
+Both `orchestrate` and `orchestrate-meta` regenerate their client contract
+from `client.ethos` against ethos-zero 8.0.1 in their `build.rs`; the
+regenerated `src/generated/client.rs` is byte-identical to the committed one
+in both crates.
+
+### Rollout
+
+Bump the CriomOS `orchestrate` input to the new rev, deploy through Lojix,
+and restart orchestrate-nexus. No store migration.
+
 ## 0.32.0 to 0.33.0 -- a carried store keeps ordinary Configure shut
 
 No wire change. Both contracts are pinned exactly as 0.32.0 pinned them, and
