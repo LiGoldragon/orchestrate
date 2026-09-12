@@ -63,10 +63,15 @@ A client fault prints one datom value on stderr and exits 1:
 ## Code shape
 
 Every method lives under a trait. `fn main()` is the only free
-function. The ordinary ontology is four traits on `OrchestrateStore`:
-`Locks`, `Releases`, `Observes`, `Configures`. `NexusCore` bears
-`Applies<Entering>`, once per contract, and `Announcing`; the transport
-carries frames and decides nothing.
+function. The ordinary ontology is five traits on `OrchestrateStore`:
+`Locks`, `Releases`, `Observes`, `Configures`, `Situates`. `NexusCore`
+is a Kameo actor bearing `Message<T>` once per contract, plus
+`Attending` and `Overtaking` for subscription; the transport carries
+frames and decides nothing.
+
+`NexusCore` owns the store by value. Do not reintroduce a lock around
+it or a second reference to it: the only way to the store is a message.
+Sockets and sessions are tasks, never actors.
 
 ## Wire
 
@@ -79,7 +84,12 @@ Every query is answered with one frame except `Observe`, which opens a
 subscription on the connection.
 
 The meta socket is bound `0600` and admits only its own user; the ordinary
-socket is bound `0660`.
+socket is bound `0660`. Each path carries an advisory claim on
+`<socket>.claim` beside it, held for the life of the process; never
+replace it with a connect-probe.
+
+A refusal is a value of the contract the socket bears. Never write one
+contract's frame onto a socket bearing another.
 
 ## Contract changes
 
@@ -91,3 +101,8 @@ new signal crate rev in orchestrate's `Cargo.toml`.
 
 Bump the `orchestrate` flake input in CriomOS-home, rebuild, restart
 `orchestrate-nexus` with `systemctl --user restart orchestrate-nexus`.
+The restart is graceful: the Nexus stops on `SIGTERM`, finishes the work
+it took, and releases its store and its socket claims before exiting.
+
+The Nexus refuses to start on a store opened anywhere other than where
+it records having been bound. Do not relocate the store file.

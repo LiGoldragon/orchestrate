@@ -1,83 +1,117 @@
-//! Binding a Nexus socket, and the authority the socket itself carries.
+//! Claiming a Nexus socket path, binding it, and reading the peer on it.
 //!
-//! The meta socket is the root of the Nexus, so it is not merely a second
-//! filename: it is bound for the owning user alone, and a connection on it is
-//! answered only when the kernel says the peer is that user. The ordinary
-//! socket serves any peer the filesystem admits.
+//! The access a socket grants — the mode it is bound with and the peers it
+//! answers — is the `nexus` library's `SocketAuthority`, because it is the
+//! same in every Nexus. What is here is the part that is not: taking a socket
+//! path, on this filesystem, without taking one that belongs to somebody else.
+//!
+//! The question is "does this path belong to somebody else", and connecting
+//! to the socket answers a different one: "is anything listening at this
+//! inode right now". The two come apart in both directions. Remove the socket
+//! file from under a serving Nexus — a cleanup script, a `tmpfiles` rule —
+//! and the probe finds nothing, calls the path free, and lets a second Nexus
+//! bind it while the first still runs on the unlinked inode. And whatever the
+//! probe answers, it answers for the instant it ran: between the answer and
+//! the bind, the path can change hands.
+//!
+//! An advisory lock on a file beside the socket, taken before the socket is
+//! touched and held for the life of the process, answers the question that
+//! was asked. It is held by a process rather than by an inode, so unlinking
+//! the socket tells it nothing, and it cannot change hands underneath the
+//! bind: either this process holds the path or another one does.
 
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
     io::ErrorKind,
-    os::unix::{fs::PermissionsExt, net::UnixStream as StandardUnixStream},
-    path::Path,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
 };
 
+use nexus::{Permissive, SocketAuthority};
+use rustix::fs::{FlockOperation, flock};
 use tokio::net::{UnixListener, UnixStream};
 
 use super::TransportError;
 
-/// The access one socket grants.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SocketAuthority {
-    /// Readable and writable by the owning user and group.
-    Ordinary,
-    /// Readable and writable by the owning user alone, and answered only for
-    /// that user.
-    Privileged,
+/// The exclusive claim on one socket path, held for as long as the value
+/// lives — which, for a serving Nexus, is the life of the process.
+pub struct SocketClaim {
+    socket_path: PathBuf,
+    /// Held open only so that the advisory lock on it is held. Closing the
+    /// file is how the claim is released, so this field is the claim, and
+    /// nothing ever reads it.
+    #[allow(dead_code)]
+    claim: File,
 }
 
-/// An authority states the file mode that expresses it.
-pub trait Permissive {
-    fn mode(&self) -> u32;
-    fn admits(&self, peer_user: u32, owner: u32) -> bool;
+/// A socket path is claimed before it is bound, and bound only by whoever
+/// holds the claim.
+pub trait Claiming: Sized {
+    fn claim(socket_path: &Path) -> Result<Self, TransportError>;
+    fn socket_path(&self) -> &Path;
+    fn bind_listener(&self, authority: SocketAuthority) -> Result<UnixListener, TransportError>;
 }
 
-impl Permissive for SocketAuthority {
-    fn mode(&self) -> u32 {
-        match self {
-            Self::Ordinary => 0o660,
-            Self::Privileged => 0o600,
+impl Claiming for SocketClaim {
+    fn claim(socket_path: &Path) -> Result<Self, TransportError> {
+        let parent = socket_path
+            .parent()
+            .ok_or_else(|| TransportError::MissingSocketParent(socket_path.to_path_buf()))?;
+        fs::create_dir_all(parent)?;
+        let claim = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(Self::claim_path(socket_path))?;
+        match flock(&claim, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => Ok(Self {
+                socket_path: socket_path.to_path_buf(),
+                claim,
+            }),
+            Err(refusal) if refusal == rustix::io::Errno::WOULDBLOCK => Err(
+                TransportError::SocketAlreadyActive(socket_path.to_path_buf()),
+            ),
+            Err(refusal) => Err(TransportError::Io(refusal.into())),
         }
     }
 
-    fn admits(&self, peer_user: u32, owner: u32) -> bool {
-        match self {
-            Self::Ordinary => true,
-            Self::Privileged => peer_user == owner,
-        }
+    fn socket_path(&self) -> &Path {
+        &self.socket_path
     }
-}
 
-/// A path can become a bound Nexus socket carrying one authority.
-pub trait Bindable {
-    fn bind_socket(&self, authority: SocketAuthority) -> Result<UnixListener, TransportError>;
-    fn prepare_socket(&self) -> Result<(), TransportError>;
-}
-
-impl Bindable for Path {
-    fn bind_socket(&self, authority: SocketAuthority) -> Result<UnixListener, TransportError> {
-        self.prepare_socket()?;
-        let listener = UnixListener::bind(self)?;
+    /// Whatever is at the path is this claim's to remove: nothing else holds
+    /// the claim, so nothing else is listening there. A live Nexus's socket is
+    /// never reached by this line, because its holder would have been refused
+    /// at `claim`.
+    fn bind_listener(&self, authority: SocketAuthority) -> Result<UnixListener, TransportError> {
+        match fs::remove_file(&self.socket_path) {
+            Ok(()) => {}
+            Err(absent) if absent.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let listener = UnixListener::bind(&self.socket_path)?;
         // The mode is set after bind: a Unix socket takes its permissions
         // from the umask at bind time, which the Nexus does not own.
-        fs::set_permissions(self, fs::Permissions::from_mode(authority.mode()))?;
+        fs::set_permissions(
+            &self.socket_path,
+            fs::Permissions::from_mode(authority.mode()),
+        )?;
         Ok(listener)
     }
+}
 
-    fn prepare_socket(&self) -> Result<(), TransportError> {
-        let parent = self
-            .parent()
-            .ok_or_else(|| TransportError::MissingSocketParent(self.to_path_buf()))?;
-        fs::create_dir_all(parent)?;
-        match StandardUnixStream::connect(self) {
-            Ok(_) => Err(TransportError::SocketAlreadyActive(self.to_path_buf())),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
-                fs::remove_file(self)?;
-                Ok(())
-            }
-            Err(error) => Err(error.into()),
-        }
+/// The file the claim is held on, beside the socket it claims.
+trait Claimable {
+    fn claim_path(socket_path: &Path) -> PathBuf;
+}
+
+impl Claimable for SocketClaim {
+    fn claim_path(socket_path: &Path) -> PathBuf {
+        let mut claim = socket_path.as_os_str().to_owned();
+        claim.push(".claim");
+        PathBuf::from(claim)
     }
 }
 
@@ -127,38 +161,5 @@ impl OwnsSocket for SocketOwner {
 
     fn user(&self) -> u32 {
         self.user
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_privileged_authority_admits_its_owner_and_nobody_else() {
-        let owner = 1001;
-        assert!(SocketAuthority::Privileged.admits(owner, owner));
-        for peer in [0, 1, 1000, 1002, u32::MAX] {
-            assert!(
-                !SocketAuthority::Privileged.admits(peer, owner),
-                "user {peer} is not the Nexus's own user {owner}, root included"
-            );
-            assert!(
-                SocketAuthority::Ordinary.admits(peer, owner),
-                "the ordinary socket admits whoever the filesystem let through"
-            );
-        }
-    }
-
-    #[test]
-    fn the_privileged_socket_mode_grants_nothing_beyond_its_owner() {
-        assert_eq!(SocketAuthority::Privileged.mode() & 0o077, 0);
-        assert_eq!(SocketAuthority::Privileged.mode(), 0o600);
-        assert_eq!(SocketAuthority::Ordinary.mode(), 0o660);
-        assert_eq!(
-            SocketAuthority::Ordinary.mode() & 0o007,
-            0,
-            "neither socket is world-reachable"
-        );
     }
 }

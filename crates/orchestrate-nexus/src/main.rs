@@ -2,7 +2,7 @@ use std::process::ExitCode;
 
 use orchestrate_nexus::{
     DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
-    transport::{Binding, Serving, TransportRuntime},
+    transport::{Binding, Serving, StopsOnSignal, Termination, TransportRuntime},
 };
 
 fn main() -> ExitCode {
@@ -12,16 +12,21 @@ fn main() -> ExitCode {
             let (store, configuration) =
                 OrchestrateStore::open(defaults.store_path(), defaults.configuration())
                     .map_err(|error| error.to_string())?;
-            tokio::runtime::Builder::new_current_thread()
+            // Two workers, and two is the whole argument: the core is one
+            // actor and its durable step is synchronous, so one worker runs
+            // that step and one keeps accepting while it does. A
+            // single-threaded runtime would let one commit stall both
+            // listeners; more workers would buy nothing, because serialising
+            // the store is the actor's job by design.
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .map_err(|error| error.to_string())?
                 .block_on(async move {
                     let transport = TransportRuntime::bind(configuration, store)?;
                     println!("orchestrate-nexus ready");
-                    let (shutdown_sender, shutdown) = tokio::sync::oneshot::channel();
-                    let _shutdown_sender = shutdown_sender;
-                    transport.serve_until(shutdown).await
+                    transport.serve_until(Termination::asked()?).await
                 })
                 .map_err(|error| error.to_string())
         }) {

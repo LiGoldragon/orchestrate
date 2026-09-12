@@ -6,7 +6,7 @@
 //! durable fact of whether the privileged Configure was ever done. Its
 //! lifecycle rule is the shared one, from the `nexus` library.
 
-use nexus::ConfigurationState;
+use nexus::{ConfigurationState, Situation};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
     EngineRecord, FamilyName, RecordKey, SchemaHash, SchemaVersion, TableDescriptor, TableName,
@@ -16,10 +16,12 @@ use signal_orchestrate::{Lock, OrchestrateNexusConfiguration};
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
 pub const METADATA_TABLE: TableName = TableName::new("orchestrate_nexus_metadata_v1");
 pub const CONFIGURATION_TABLE: TableName = TableName::new("orchestrate_configuration_v2");
+pub const SITUATION_TABLE: TableName = TableName::new("orchestrate_nexus_situation_v1");
 pub const LOCKS_TABLE: TableName = TableName::new("locks_v2");
 pub const ALLOCATOR_TABLE: TableName = TableName::new("lock_id_allocator_v2");
 pub const METADATA_KEY: &str = "metadata";
 pub const CONFIGURATION_KEY: &str = "configuration";
+pub const SITUATION_KEY: &str = "situation";
 pub const ALLOCATOR_KEY: &str = "next";
 
 /// The socket paths the Nexus binds, as they are stored.
@@ -38,6 +40,26 @@ pub struct StoredMetadata {
 impl EngineRecord for StoredMetadata {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(METADATA_KEY)
+    }
+}
+
+/// Where the Nexus was last actually bound.
+///
+/// Its own family rather than a second field on the metadata tree, because
+/// the two are different kinds of fact: the tree is desired state, which the
+/// meta socket writes and the next start reads as configuration, and this is
+/// observed state, which the Nexus writes at bind and nothing ever reads as
+/// configuration. Keeping them apart also means a store written before this
+/// family existed simply has no row here, rather than a metadata tree that
+/// has to be migrated to a new shape.
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, Debug, PartialEq, Eq)]
+pub struct StoredSituation {
+    pub situation: Situation,
+}
+
+impl EngineRecord for StoredSituation {
+    fn record_key(&self) -> RecordKey {
+        RecordKey::new(SITUATION_KEY)
     }
 }
 
@@ -78,6 +100,16 @@ impl Familial for StoredMetadata {
             METADATA_TABLE,
             FamilyName::new("orchestrate-nexus-metadata"),
             SchemaHash::for_label("orchestrate-nexus-metadata-v1"),
+        )
+    }
+}
+
+impl Familial for StoredSituation {
+    fn descriptor() -> TableDescriptor<Self> {
+        TableDescriptor::new(
+            SITUATION_TABLE,
+            FamilyName::new("orchestrate-nexus-situation"),
+            SchemaHash::for_label("orchestrate-nexus-situation-v1"),
         )
     }
 }

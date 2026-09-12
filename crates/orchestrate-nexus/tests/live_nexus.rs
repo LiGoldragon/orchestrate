@@ -33,6 +33,7 @@ struct IsolatedXdg {
 trait CreatesIsolatedXdg: Sized {
     fn create(temporary: &tempfile::TempDir) -> Self;
     fn store(&self) -> PathBuf;
+    fn claim(&self, socket: &Path) -> PathBuf;
     fn ordinary_socket(&self) -> PathBuf;
     fn meta_socket(&self) -> PathBuf;
     fn command(&self, binary: &str) -> Command;
@@ -62,7 +63,13 @@ impl CreatesIsolatedXdg for IsolatedXdg {
 
     fn meta_socket(&self) -> PathBuf {
         self.runtime_directory
-            .join("orchestrate-nexus/meta-orchestrate.sock")
+            .join("orchestrate-nexus/orchestrate-meta.sock")
+    }
+
+    fn claim(&self, socket: &Path) -> PathBuf {
+        let mut claim = socket.as_os_str().to_owned();
+        claim.push(".claim");
+        PathBuf::from(claim)
     }
 
     fn command(&self, binary: &str) -> Command {
@@ -487,4 +494,272 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
         ),
         "and only after the privileged reversal is the ordinary surface open again"
     );
+}
+
+/// What became of a second Nexus started against a runtime directory, which
+/// is what a stray start or a double-enabled unit produces.
+struct SecondNexus {
+    exited_by_itself: bool,
+    said: String,
+}
+
+/// Bounded on purpose: a second Nexus that does not exit is precisely the
+/// defect these tests are about, and a harness that waited on it forever
+/// would hang rather than report. It is stopped by the process id this helper
+/// holds, never by a pattern.
+trait StartsASecondNexus {
+    fn second_nexus(&self, binary: &str) -> SecondNexus;
+}
+
+impl StartsASecondNexus for IsolatedXdg {
+    fn second_nexus(&self, binary: &str) -> SecondNexus {
+        use std::io::Read;
+
+        let mut child = self
+            .command(binary)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start a second Nexus");
+        let mut stderr = child.stderr.take().expect("capture its stderr");
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut said = String::new();
+            let _ = stderr.read_to_string(&mut said);
+            let _ = sender.send(said);
+        });
+        // The pipe closes when the process ends, so this waits on the exit
+        // itself; the duration is only the bound on a Nexus that never ends.
+        let (exited_by_itself, said) = match receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(said) => (true, said),
+            Err(_) => {
+                child
+                    .kill()
+                    .expect("stop the second Nexus this test started");
+                (false, receiver.recv().unwrap_or_default())
+            }
+        };
+        child.wait().expect("reap the second Nexus");
+        SecondNexus {
+            exited_by_itself,
+            said,
+        }
+    }
+}
+
+/// The witnessed hazard, driven through the real executable: a second Nexus
+/// carrying a *different* store must not take the sockets of the one already
+/// serving.
+///
+/// This is the case the store's own lock cannot see — two stores, one pair of
+/// socket paths, which is what a meta Configure pointing a second Nexus at
+/// the live paths produces. It is refused by the claim rather than by a
+/// probe, so the refusal does not depend on the first Nexus happening to
+/// answer a connection at the instant the second one asks.
+#[test]
+fn a_second_nexus_with_its_own_store_cannot_take_the_serving_nexus_paths() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let nexus = LiveNexus::start(binary, roots);
+
+    let second_state = temporary.path().join("second-state");
+    std::fs::create_dir_all(&second_state).expect("create a second state root");
+    let stray = IsolatedXdg {
+        state_home: second_state,
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    let second = stray.second_nexus(binary);
+    assert!(
+        second.exited_by_itself,
+        "a second Nexus on a held path exits rather than taking it"
+    );
+    assert!(
+        second.said.contains("already owns socket")
+            && second
+                .said
+                .contains(&nexus.roots.ordinary_socket().display().to_string()),
+        "and says which path is held: {:?}",
+        second.said
+    );
+    assert_eq!(
+        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "while the first Nexus is still serving on the same socket"
+    );
+}
+
+/// The case a connect-probe cannot see, and the reason the probe is gone.
+///
+/// A probe answers "is anybody listening at this path" by connecting to the
+/// file. Remove the file from under a serving Nexus — a tidy-up script, a
+/// stale-socket cleaner, a `tmpfiles` rule — and the probe finds nothing,
+/// concludes the path is free, and lets a second Nexus bind it while the
+/// first is still running on the unlinked inode. Two Nexuses then each
+/// believe they own the Lock table.
+///
+/// A claim is held on a file beside the socket rather than on the socket, and
+/// is answered by the kernel rather than by a connection, so removing the
+/// socket tells it nothing.
+#[test]
+fn removing_the_socket_file_under_a_serving_nexus_does_not_free_its_path() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let nexus = LiveNexus::start(binary, roots);
+
+    std::fs::remove_file(nexus.roots.ordinary_socket()).expect("remove the socket file");
+    std::fs::remove_file(nexus.roots.meta_socket()).expect("remove the meta socket file");
+
+    let second_state = temporary.path().join("second-state");
+    std::fs::create_dir_all(&second_state).expect("create a second state root");
+    let stray = IsolatedXdg {
+        state_home: second_state,
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    let second = stray.second_nexus(binary);
+    assert!(
+        second.exited_by_itself,
+        "the path is still held by the Nexus serving on it, socket file or no \
+         socket file"
+    );
+    assert!(
+        second.said.contains("already owns socket"),
+        "and is refused by name: {:?}",
+        second.said
+    );
+}
+
+/// A socket file left behind by a Nexus that is gone is taken, because no
+/// claim is held on it — the case the old connect-probe also handled, kept
+/// as a witness that the new rule did not close it.
+#[test]
+fn a_nexus_takes_the_socket_files_a_dead_nexus_left_behind() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let mut nexus = LiveNexus::start(binary, roots);
+    nexus.child.kill().expect("stop the first Nexus");
+    nexus.child.wait().expect("reap the first Nexus");
+    let roots = IsolatedXdg {
+        state_home: nexus.roots.state_home.clone(),
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    drop(nexus);
+    assert!(
+        roots.ordinary_socket().exists(),
+        "a killed Nexus leaves its socket files behind, which is the state a \
+         restart finds"
+    );
+
+    let resumed = LiveNexus::start(binary, roots);
+    assert_eq!(
+        resumed.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+    );
+    assert!(
+        resumed
+            .roots
+            .claim(&resumed.roots.ordinary_socket())
+            .exists(),
+        "and holds the claim beside it"
+    );
+}
+
+/// The witnessed incident: a copy of a real store, opened by the same user on
+/// the same machine, carries the production socket paths and would bind them.
+#[test]
+fn a_nexus_refuses_to_serve_a_store_carried_from_somewhere_else() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let original = IsolatedXdg::create(&temporary);
+    let original_store = original.store();
+    let nexus = LiveNexus::start(binary, original);
+    drop(nexus);
+
+    let carried_root = temporary.path().join("carried");
+    std::fs::create_dir_all(&carried_root).expect("create the second root");
+    let carried = IsolatedXdg {
+        state_home: carried_root.join("state"),
+        runtime_directory: carried_root.join("runtime"),
+    };
+    std::fs::create_dir_all(carried.store().parent().expect("store has a parent"))
+        .expect("create the carried state directory");
+    std::fs::create_dir_all(&carried.runtime_directory).expect("create the carried runtime root");
+    std::fs::copy(&original_store, carried.store()).expect("copy the store the way a backup does");
+
+    let second = carried.second_nexus(binary);
+    assert!(
+        second.exited_by_itself,
+        "a Nexus opening a carried store exits rather than binding the socket \
+         paths it carries"
+    );
+    assert!(
+        second.said.contains(&original_store.display().to_string())
+            && second.said.contains(&carried.store().display().to_string()),
+        "and names where the store says it lives and where it was opened: {:?}",
+        second.said
+    );
+}
+
+/// A Nexus asked to go by its service manager goes, and leaves both paths and
+/// its store to whatever starts next.
+#[test]
+fn a_terminated_nexus_stops_cleanly_and_the_next_one_starts_at_once() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let mut nexus = LiveNexus::start(binary, roots);
+    let owned = temporary.path().join("owned").display().to_string();
+    let OrdinaryResponse::Locked(held) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+        lock_name: "across-the-stop".to_owned(),
+        flow_id: "test-flow".to_owned(),
+        lock_path_vector: vec![owned],
+        lock_reason: "held across a termination".to_owned(),
+    })) else {
+        panic!("expected a Lock to be acquired");
+    };
+
+    // By the PID this test holds, never by a pattern: a scratch Nexus and a
+    // real one are the same executable.
+    assert!(
+        nexus.terminate(),
+        "SIGTERM was delivered to the Nexus this test started"
+    );
+    let status = nexus.child.wait().expect("reap the terminated Nexus");
+    assert!(
+        status.success(),
+        "a Nexus asked to stop exits successfully, found {status:?}"
+    );
+
+    let roots = IsolatedXdg {
+        state_home: nexus.roots.state_home.clone(),
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    drop(nexus);
+    let resumed = LiveNexus::start(binary, roots);
+    assert_eq!(
+        resumed.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        "and the next Nexus takes the same paths and serves the same state"
+    );
+}
+
+/// Asking one known process to stop the way a service manager does.
+trait Terminable {
+    fn terminate(&self) -> bool;
+}
+
+impl Terminable for LiveNexus {
+    /// By the process id this test's `Child` holds, never by a name or path
+    /// pattern: a scratch Nexus and a deployed one are the same executable,
+    /// and a pattern would reach both.
+    fn terminate(&self) -> bool {
+        Command::new("kill")
+            .arg("-TERM")
+            .arg(self.child.id().to_string())
+            .status()
+            .expect("ask the kernel to terminate one process id")
+            .success()
+    }
 }

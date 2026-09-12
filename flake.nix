@@ -126,6 +126,31 @@
               cargoTestExtraArgs = "-p orchestrate-nexus --test second_user_peer -- --nocapture";
             }
           );
+          # The socket path is held by a claim rather than probed, the store
+          # refuses to be served from somewhere it was not bound, and a
+          # stopped Nexus leaves both to the next one. Each is its own check
+          # because each is its own failure.
+          socket-claim = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p orchestrate-nexus --test socket_claim";
+            }
+          );
+          carried-store = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p orchestrate-nexus --test carried_store";
+            }
+          );
+          stopping = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p orchestrate-nexus --test stopping";
+            }
+          );
           ordinary-client = craneLib.cargoTest (
             commonArgs
             // {

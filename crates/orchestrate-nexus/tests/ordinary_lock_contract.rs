@@ -1,11 +1,11 @@
 //! Behavioral contract for the ordinary Lock surface, exercised where the
 //! Nexus actually applies it: through Nexus Core.
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
-    core::{Applies, Founding, NexusCore},
+    core::{FoundedCore, Founding},
 };
 use signal_orchestrate::{
     Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
@@ -14,7 +14,7 @@ use signal_orchestrate::{
 
 struct CoreFixture {
     directory: tempfile::TempDir,
-    core: Arc<NexusCore>,
+    founded: FoundedCore,
 }
 
 trait CreatesCoreFixture: Sized {
@@ -33,7 +33,7 @@ impl CreatesCoreFixture for CoreFixture {
         .expect("open isolated store");
         Self {
             directory,
-            core: NexusCore::found(store),
+            founded: FoundedCore::found(store),
         }
     }
 
@@ -83,8 +83,9 @@ async fn locks_are_atomic_complete_and_released_by_durable_id() {
     let first = fixture.path("first");
     let second = fixture.path("second");
     let acquired = fixture
-        .core
-        .apply(Query::Lock(
+        .founded
+        .core()
+        .ask(Query::Lock(
             fixture.lock_request("alpha", &[&first, &second]),
         ))
         .await
@@ -97,8 +98,9 @@ async fn locks_are_atomic_complete_and_released_by_durable_id() {
     assert_eq!(acquired.lock_reason, "behavioral proof");
     assert_eq!(
         fixture
-            .core
-            .apply(Query::Release(acquired.lock_id))
+            .founded
+            .core()
+            .ask(Query::Release(acquired.lock_id))
             .await
             .expect("release"),
         Response::Released(acquired),
@@ -110,8 +112,9 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let fixture = CoreFixture::create();
     let owned = fixture.path("owned");
     let held = fixture
-        .core
-        .apply(Query::Lock(fixture.lock_request("alpha", &[&owned])))
+        .founded
+        .core()
+        .ask(Query::Lock(fixture.lock_request("alpha", &[&owned])))
         .await
         .expect("acquire")
         .locked();
@@ -119,8 +122,9 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let elsewhere = fixture.path("elsewhere");
     assert_eq!(
         fixture
-            .core
-            .apply(Query::Lock(fixture.lock_request("alpha", &[&elsewhere])))
+            .founded
+            .core()
+            .ask(Query::Lock(fixture.lock_request("alpha", &[&elsewhere])))
             .await
             .expect("refuse duplicate name"),
         Response::LockRejected(LockRejection::DuplicateName(held.clone())),
@@ -128,8 +132,9 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let requested = format!("{owned}/child");
     assert_eq!(
         fixture
-            .core
-            .apply(Query::Lock(fixture.lock_request("beta", &[&requested])))
+            .founded
+            .core()
+            .ask(Query::Lock(fixture.lock_request("beta", &[&requested])))
             .await
             .expect("refuse overlap"),
         Response::LockRejected(LockRejection::PathOverlap(LockOverlap {
@@ -141,8 +146,9 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let independent = fixture.path("independent");
     assert!(matches!(
         fixture
-            .core
-            .apply(Query::Lock(
+            .founded
+            .core()
+            .ask(Query::Lock(
                 fixture.lock_request("gamma", &[&independent, &owned])
             ))
             .await
@@ -151,8 +157,9 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     ));
     assert!(matches!(
         fixture
-            .core
-            .apply(Query::Lock(fixture.lock_request("delta", &[&independent])))
+            .founded
+            .core()
+            .ask(Query::Lock(fixture.lock_request("delta", &[&independent])))
             .await
             .expect("acquire independent"),
         Response::Locked(_),
@@ -164,23 +171,26 @@ async fn observe_locks_is_name_then_id_ordered() {
     let fixture = CoreFixture::create();
     let beta_path = fixture.path("beta");
     let beta = fixture
-        .core
-        .apply(Query::Lock(fixture.lock_request("beta", &[&beta_path])))
+        .founded
+        .core()
+        .ask(Query::Lock(fixture.lock_request("beta", &[&beta_path])))
         .await
         .expect("acquire beta")
         .locked();
     let alpha_path = fixture.path("alpha");
     let alpha = fixture
-        .core
-        .apply(Query::Lock(fixture.lock_request("alpha", &[&alpha_path])))
+        .founded
+        .core()
+        .ask(Query::Lock(fixture.lock_request("alpha", &[&alpha_path])))
         .await
         .expect("acquire alpha")
         .locked();
 
     assert_eq!(
         fixture
-            .core
-            .apply(Query::Observe(ObserveSelection::Locks))
+            .founded
+            .core()
+            .ask(Query::Observe(ObserveSelection::Locks))
             .await
             .expect("observe"),
         Response::Observed(Observation::Locks(vec![alpha, beta])),
@@ -193,30 +203,36 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     let store_path = directory.path().join("orchestrate.sema");
     let defaults = directory.path().defaults();
     let (store, _) = OrchestrateStore::open(&store_path, defaults.clone()).expect("open store");
-    let core = NexusCore::found(store);
+    let founded = FoundedCore::found(store);
     let request = LockRequest {
         lock_name: "alpha".to_owned(),
         flow_id: "first-flow".to_owned(),
         lock_path_vector: vec![directory.path().join("first").display().to_string()],
         lock_reason: "first".to_owned(),
     };
-    let first = core
-        .apply(Query::Lock(request))
+    let first = founded
+        .core()
+        .ask(Query::Lock(request))
         .await
         .expect("acquire first")
         .locked();
     assert_eq!(
-        core.apply(Query::Release(first.lock_id))
+        founded
+            .core()
+            .ask(Query::Release(first.lock_id))
             .await
             .expect("release first"),
         Response::Released(first.clone()),
     );
-    drop(core);
+    // The core owns the store, so the restart below is a real one: the file
+    // is released when the core stops and not a moment before.
+    founded.settled().await;
 
     let (store, _) = OrchestrateStore::open(&store_path, defaults).expect("reopen store");
-    let core = NexusCore::found(store);
-    let later = core
-        .apply(Query::Lock(LockRequest {
+    let founded = FoundedCore::found(store);
+    let later = founded
+        .core()
+        .ask(Query::Lock(LockRequest {
             lock_name: "alpha".to_owned(),
             flow_id: "later-flow".to_owned(),
             lock_path_vector: vec![directory.path().join("later").display().to_string()],
@@ -227,7 +243,9 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
         .locked();
     assert_ne!(first.lock_id, later.lock_id);
     assert_eq!(
-        core.apply(Query::Release(first.lock_id))
+        founded
+            .core()
+            .ask(Query::Release(first.lock_id))
             .await
             .expect("reject stale release"),
         Response::ReleaseRejected(ReleaseRejection::UnknownLockId),

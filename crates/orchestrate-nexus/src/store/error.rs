@@ -8,6 +8,12 @@ pub enum StoreError {
     Engine(#[from] sema_engine::Error),
     #[error("the durable store has {count} Nexus metadata rows")]
     MetadataInvariant { count: usize },
+    #[error(
+        "this store records that it was bound at {recorded:?}, and it was opened at {opened:?}: a store carried away from where it was bound holds another Nexus's socket paths. Open it where it records itself, or remove it."
+    )]
+    CarriedStore { recorded: String, opened: String },
+    #[error("the durable store has {count} situation rows")]
+    SituationInvariant { count: usize },
     #[error("the durable store has {count} Lock ID allocator rows")]
     LockIdAllocatorInvariant { count: usize },
     #[error(

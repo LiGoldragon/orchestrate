@@ -11,7 +11,7 @@ use thiserror::Error;
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
 const STORE_FILE: &str = "orchestrate-nexus.sema";
 const ORDINARY_SOCKET_FILE: &str = "orchestrate.sock";
-const META_SOCKET_FILE: &str = "meta-orchestrate.sock";
+const META_SOCKET_FILE: &str = "orchestrate-meta.sock";
 
 /// The default durable store and socket configuration derived by the executable.
 pub struct DefaultConfiguration {

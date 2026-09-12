@@ -141,7 +141,7 @@ impl StartsReachable for ReachableNexus {
             .expect("read Nexus readiness")
             .expect("Nexus exited before readiness");
         assert_eq!(line, "orchestrate-nexus ready");
-        let meta_socket = runtime_directory.join("orchestrate-nexus/meta-orchestrate.sock");
+        let meta_socket = runtime_directory.join("orchestrate-nexus/orchestrate-meta.sock");
         // The one departure from production, and the reason for it is in this
         // file's header: 0600 refuses the connection before the rule is
         // reached, and the rule is what is under test.

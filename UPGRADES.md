@@ -1,5 +1,82 @@
 # Upgrades
 
+## 0.33.1 to 0.34.0 -- the core is an actor, the sockets are claimed, and a carried store is refused
+
+No wire change on either contract: 0.33.1's `orchestrate` and
+`orchestrate-meta` speak to this Nexus unchanged. The store gains one family
+and the runtime directory gains two files, and the meta socket's default name
+changes. All three matter to a deployment.
+
+### Nexus Core is a Kameo actor
+
+`NexusCore` owns `OrchestrateStore` by value. The `Arc<Mutex<_>>` is gone, and
+with it the possibility of anything else reaching the store: the only way in
+is a message. `Applies<Entering>` is gone too — Kameo's `Message<T>` is the
+same kind, from the library the psyche already chose, and naming it twice
+would have been the duplication rather than the ontology.
+
+Sessions and listeners stay tasks. The mailbox is bounded at 64, so a peer
+that outruns the durable store is made to wait instead of queueing without
+limit. The runtime is now two-threaded: one worker for the core's synchronous
+durable step, one that keeps accepting while it runs.
+
+Observation is now one step of the core rather than two acquisitions, so a
+subscriber can neither miss a change nor be sent the same one twice.
+
+### `SIGTERM` and `SIGINT` stop the Nexus gracefully
+
+0.33.1 built a shutdown channel and never sent on it, so every stop was a
+kill. A termination signal now drains the accepted work, closes the store and
+releases the socket claims before the process exits, and the process exits
+successfully. `systemctl --user restart orchestrate-nexus` is therefore a
+clean restart rather than a `SIGKILL` after `TimeoutStopSec`.
+
+### Socket paths are claimed, not probed
+
+0.33.1 asked "is anyone listening here?" by connecting, and deleted the socket
+file when nobody answered. That has a window between the probe and the bind,
+and it reads the wrong thing: remove the socket file from under a serving
+Nexus and the path looks free.
+
+Each socket path now carries an advisory lock on `<socket>.claim` beside it,
+taken before the socket is touched and held for the life of the process. A
+second Nexus is refused by name. **Two new files appear in the runtime
+directory**: `orchestrate.sock.claim` and `orchestrate-meta.sock.claim`. They
+are `0600`, empty, and are not sockets; a `tmpfiles` or cleanup rule that
+sweeps the runtime directory must leave them alone while the service runs.
+
+### The meta socket's default name is now `orchestrate-meta.sock`
+
+Following the ruling that the meta CLI is `<component>-meta`. **This affects a
+fresh store only.** A deployed store holds its socket paths in the metadata
+tree and keeps binding `meta-orchestrate.sock` until a meta `Configure` moves
+it. Nothing outside the Nexus needs to change for the existing deployment; a
+new install gets the new name.
+
+### A store carried away from where it was bound is refused
+
+The Nexus now writes, once both sockets are bound, which store file it
+actually opened and which paths it actually bound — a new `orchestrate_nexus_situation_v1`
+family, written and never read as configuration. On the next open, a store
+found somewhere other than where that record says it lives is a copy, and the
+Nexus exits naming both paths rather than binding the socket paths the copy
+carries.
+
+This is the witnessed incident from 0.32.0 made impossible instead of
+survived. It also means **a deliberate relocation of the store now fails to
+start**: move the file back, or remove it. A first-class relocation is not
+designed and is owed.
+
+Existing stores are unaffected until their first start under 0.34.0, which
+writes the record for the path they are already at.
+
+### Rollout
+
+Bump the CriomOS-home `orchestrate` input to the new rev, rebuild, and
+`systemctl --user restart orchestrate-nexus`. No store migration and no wire
+change. After the restart, confirm the two `.claim` files exist beside the
+sockets and that the previously held Locks are served.
+
 ## 0.33.0 to 0.33.1 -- Pin signal-orchestrate 3.0.2, meta-signal-orchestrate 3.0.2, protos 0.30.1, datom-codec 0.26.3, ethos-zero 8.0.1, signal 3.0.2
 
 ### What changed

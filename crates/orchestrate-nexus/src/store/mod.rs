@@ -9,15 +9,17 @@ pub mod error;
 pub mod legacy;
 pub mod normalize;
 pub mod record;
+mod situation;
 mod transition;
 
 pub use error::StoreError;
 pub use legacy::{LegacyStorePreflight, PreflightsLegacyStore};
+pub use situation::Situates;
 pub use transition::Configures;
 
 use std::{fs, path::Path};
 
-use nexus::{Configurable, ConfigurationState};
+use nexus::{Configurable, ConfigurationState, Situated};
 use sema_engine::{Engine, EngineOpen, QueryPlan, TableReference};
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
@@ -25,13 +27,15 @@ use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
     CONFIGURATION_TABLE, Familial, SCHEMA_VERSION, StoredAllocator, StoredConfiguration,
-    StoredLock, StoredMetadata, Storing,
+    StoredLock, StoredMetadata, StoredSituation, Storing,
 };
 
 /// The single owner of the Nexus's durable state.
 pub struct OrchestrateStore {
     engine: Engine,
+    store_path: String,
     metadata: TableReference<StoredMetadata>,
+    situation: TableReference<StoredSituation>,
     locks: TableReference<StoredLock>,
     allocator: TableReference<StoredAllocator>,
     state: ConfigurationState<StoredConfiguration>,
@@ -73,6 +77,23 @@ impl OpensStore for OrchestrateStore {
             [stored] => stored.state.clone(),
             rows => return Err(StoreError::MetadataInvariant { count: rows.len() }),
         };
+        let situation: TableReference<StoredSituation> =
+            engine.register_table(StoredSituation::descriptor())?;
+        // Before anything else this store holds is trusted: the socket paths
+        // it is about to hand back belong to whichever Nexus last bound them,
+        // and a store that has been carried is not that Nexus.
+        let store_path = store_path.display().to_string();
+        match engine.match_records(QueryPlan::all(situation))?.records() {
+            [] => {}
+            [recorded] if recorded.situation.is_carried(&store_path) => {
+                return Err(StoreError::CarriedStore {
+                    recorded: recorded.situation.store_path().to_owned(),
+                    opened: store_path,
+                });
+            }
+            [_] => {}
+            rows => return Err(StoreError::SituationInvariant { count: rows.len() }),
+        }
         let locks = engine.register_table(StoredLock::descriptor())?;
         let allocator: TableReference<StoredAllocator> =
             engine.register_table(StoredAllocator::descriptor())?;
@@ -90,7 +111,9 @@ impl OpensStore for OrchestrateStore {
         Ok((
             Self {
                 engine,
+                store_path,
                 metadata,
+                situation,
                 locks,
                 allocator,
                 state,

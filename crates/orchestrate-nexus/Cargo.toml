@@ -24,9 +24,11 @@ path = "src/bin/orchestrate_upgrade_preflight.rs"
 # a feature the clients enable and this crate does not; the `datom-free`
 # check witnesses that the built configuration keeps it that way.
 [dependencies]
+kameo.workspace = true
 meta-signal-orchestrate.workspace = true
 nexus.workspace = true
 rkyv.workspace = true
+rustix = { version = "1", features = ["fs"] }
 sema-engine.workspace = true
 signal = { workspace = true, features = ["transport"] }
 signal-orchestrate.workspace = true

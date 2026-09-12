@@ -1,24 +1,42 @@
 //! Nexus Core: the one owner of durable state, and the change stream every
 //! subscriber follows.
 //!
-//! An object enters here for the effect; the response follows as an effect of
-//! it. That is what [`Applies`] names, once per contract this Nexus speaks.
+//! The core is an actor, and it is the only actor in the Nexus. What an actor
+//! is for is owning exclusive mutable state and serialising access to it, so
+//! the boundary is drawn at the state: one lock table is one unit of
+//! consistency, so it gets one actor, and that actor owns the store outright.
+//! Nothing else in the process can reach it — not through a mutex, not
+//! through a reference; the only way in is a message.
 //!
-//! Locks change only through `Applies`, so the core is also the only place
-//! that can announce a change. It announces the whole observation rather than
-//! a delta: a subscriber that joins mid-stream and one that has followed from
-//! the start then hold the same value, and no subscriber has to reassemble
-//! state from fragments.
+//! Sockets are not actors and sessions are not actors. A listener is a task
+//! and a connection is a task holding a reference to this one actor, so a
+//! session that fails cannot take the listener down with it and a second
+//! socket is a second door onto the same state rather than a second owner of
+//! it. What separates the two doors is not the actor: it is which message
+//! type the session on the other side of them can construct.
 //!
-//! Serialization is `Arc<Mutex<_>>`, which Vision permits while the Kameo
-//! standards are undesigned. The boundary is drawn so that becoming an actor
-//! is a change of this file only: nothing outside it touches the store.
+//! An object enters here for the effect, and the response follows as an
+//! effect of it — which is what Kameo's `Message` already names, so this file
+//! does not name it twice.
+//!
+//! The mailbox is bounded, so a peer that outruns the store is made to wait
+//! rather than allowed to queue without limit. Announcements
+//! go out through a broadcast channel, which never makes the core wait on a
+//! subscriber: one that falls too far behind is told it lagged and is sent
+//! the current state instead, which is the value it would have converged on.
 
-use std::sync::Arc;
-
+use kameo::{
+    Actor,
+    actor::{ActorRef, PreparedActor},
+    error::{ActorStopReason, PanicError},
+    mailbox,
+    message::{Context, Message},
+};
 use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
-use signal_orchestrate::{Observation, Query as OrdinaryQuery, Response as OrdinaryResponse};
-use tokio::sync::{Mutex, broadcast};
+use signal_orchestrate::{
+    Observation, ObserveSelection, Query as OrdinaryQuery, Response as OrdinaryResponse,
+};
+use tokio::sync::broadcast;
 
 use crate::{
     configuration::AnswersMeta,
@@ -31,112 +49,177 @@ use crate::{
 /// current state instead, which is the same value it would have converged on.
 const ANNOUNCEMENT_BACKLOG: usize = 64;
 
+/// How many requests may wait for the core before a peer is made to wait for
+/// the mailbox. Bounded on purpose: the core is the throughput of the durable
+/// store, and an unbounded queue in front of it would turn a slow disk into
+/// unbounded memory instead of into the backpressure it actually is.
+const MAILBOX_CAPACITY: usize = 64;
+
+/// The one core of a Nexus, and the task that owns it.
+///
+/// The two are a pair because the store is inside the actor: the core is
+/// reachable while the task runs, and the store it holds is released when
+/// that task ends and not before. Anything that has to open the store again —
+/// a restart, or a second process — waits on `ended`, never merely on the
+/// reference going away.
+pub struct FoundedCore {
+    core: ActorRef<NexusCore>,
+    ended: tokio::task::JoinHandle<Result<(NexusCore, ActorStopReason), PanicError>>,
+}
+
+/// Founds the core around the one opened store.
+pub trait Founding: Sized {
+    fn found(store: OrchestrateStore) -> Self;
+    /// The reference every session holds. Cheap to clone, and the only way
+    /// anything reaches the store.
+    fn core(&self) -> &ActorRef<NexusCore>;
+    /// Stops the core and waits for it to let the store go.
+    fn settled(self) -> impl std::future::Future<Output = ()> + Send;
+}
+
+impl Founding for FoundedCore {
+    fn found(store: OrchestrateStore) -> Self {
+        let prepared: PreparedActor<NexusCore> =
+            PreparedActor::new(mailbox::bounded(MAILBOX_CAPACITY));
+        let core = prepared.actor_ref().clone();
+        Self {
+            core,
+            ended: prepared.spawn(store),
+        }
+    }
+
+    fn core(&self) -> &ActorRef<NexusCore> {
+        &self.core
+    }
+
+    /// A graceful stop rather than a kill: a request already in the mailbox
+    /// is a request a peer is still waiting on, and a Lock already accepted
+    /// is one a flow believes it holds.
+    async fn settled(self) {
+        let _ = self.core.stop_gracefully().await;
+        let _ = self.ended.await;
+    }
+}
+
 /// The decision-making engine of the Orchestrate Nexus.
 pub struct NexusCore {
-    store: Mutex<OrchestrateStore>,
+    store: OrchestrateStore,
     announcements: broadcast::Sender<Observation>,
 }
 
-/// Builds the core around the one opened store.
-pub trait Founding {
-    fn found(store: OrchestrateStore) -> Arc<Self>;
-}
+/// There is no `on_stop` here, and that is a statement rather than an
+/// omission: every durable transition commits before it answers, so a core
+/// that has answered has already written and there is nothing left to flush.
+/// What stopping does is drop the store and close the announcement channel,
+/// which is how an open subscription learns its Nexus is gone.
+impl Actor for NexusCore {
+    type Args = OrchestrateStore;
+    type Error = StoreError;
 
-impl Founding for NexusCore {
-    fn found(store: OrchestrateStore) -> Arc<Self> {
+    /// The store is opened before the actor exists and handed over here, so
+    /// the actor's first instant is also the first instant anything owns it.
+    async fn on_start(store: Self::Args, _: ActorRef<Self>) -> Result<Self, Self::Error> {
         let (announcements, _) = broadcast::channel(ANNOUNCEMENT_BACKLOG);
-        Arc::new(Self {
-            store: Mutex::new(store),
+        Ok(Self {
+            store,
             announcements,
         })
     }
 }
 
-/// One contract's objects enter the core and their responses follow.
-pub trait Applies<Entering> {
-    type Effect;
+impl Message<OrdinaryQuery> for NexusCore {
+    type Reply = Result<OrdinaryResponse, StoreError>;
 
-    fn apply(
-        &self,
-        entering: Entering,
-    ) -> impl std::future::Future<Output = Result<Self::Effect, StoreError>> + Send;
-}
-
-impl Applies<OrdinaryQuery> for NexusCore {
-    type Effect = OrdinaryResponse;
-
-    // Written as a manual future rather than `async fn`: the returned future
-    // must be `Send` so a connection task can hold it.
-    #[allow(clippy::manual_async_fn)]
-    fn apply(
-        &self,
+    async fn handle(
+        &mut self,
         entering: OrdinaryQuery,
-    ) -> impl std::future::Future<Output = Result<OrdinaryResponse, StoreError>> + Send {
-        async move {
-            let mut store = self.store.lock().await;
-            let response = match entering {
-                OrdinaryQuery::Configure(configuration) => {
-                    store.ordinary_configure(configuration)?
-                }
-                OrdinaryQuery::Lock(request) => store.lock(request)?,
-                OrdinaryQuery::Release(lock_id) => store.release(lock_id)?,
-                OrdinaryQuery::Observe(selection) => {
-                    OrdinaryResponse::Observed(store.observe(selection)?)
-                }
-            };
-            if matches!(
-                response,
-                OrdinaryResponse::Locked(_) | OrdinaryResponse::Released(_)
-            ) {
-                let _ = self
-                    .announcements
-                    .send(store.observe(signal_orchestrate::ObserveSelection::Locks)?);
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let response = match entering {
+            OrdinaryQuery::Configure(configuration) => {
+                self.store.ordinary_configure(configuration)?
             }
-            Ok(response)
+            OrdinaryQuery::Lock(request) => self.store.lock(request)?,
+            OrdinaryQuery::Release(lock_id) => self.store.release(lock_id)?,
+            OrdinaryQuery::Observe(selection) => {
+                OrdinaryResponse::Observed(self.store.observe(selection)?)
+            }
+        };
+        if matches!(
+            response,
+            OrdinaryResponse::Locked(_) | OrdinaryResponse::Released(_)
+        ) {
+            let _ = self
+                .announcements
+                .send(self.store.observe(ObserveSelection::Locks)?);
         }
+        Ok(response)
     }
 }
 
-impl Applies<MetaQuery> for NexusCore {
-    type Effect = MetaResponse;
+impl Message<MetaQuery> for NexusCore {
+    type Reply = Result<MetaResponse, StoreError>;
 
-    #[allow(clippy::manual_async_fn)]
-    fn apply(
-        &self,
+    async fn handle(
+        &mut self,
         entering: MetaQuery,
-    ) -> impl std::future::Future<Output = Result<MetaResponse, StoreError>> + Send {
-        async move {
-            let mut store = self.store.lock().await;
-            let outcome = match entering {
-                MetaQuery::Configure(configuration) => store.meta_configure(configuration)?,
-                MetaQuery::ReverseMetaConfiguration => store.reverse_meta_configuration()?,
-            };
-            Ok(outcome.meta_response())
-        }
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let outcome = match entering {
+            MetaQuery::Configure(configuration) => self.store.meta_configure(configuration)?,
+            MetaQuery::ReverseMetaConfiguration => self.store.reverse_meta_configuration()?,
+        };
+        Ok(outcome.meta_response())
     }
 }
 
-/// State is observed by subscription: the state on open, then each change.
-pub trait Announcing {
-    fn opening_observation(
-        &self,
-        selection: &signal_orchestrate::ObserveSelection,
-    ) -> impl std::future::Future<Output = Result<Observation, StoreError>> + Send;
-
-    fn announcements(&self) -> broadcast::Receiver<Observation>;
+/// A peer joining the change stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attending {
+    pub selection: ObserveSelection,
 }
 
-impl Announcing for NexusCore {
-    #[allow(clippy::manual_async_fn)]
-    fn opening_observation(
-        &self,
-        selection: &signal_orchestrate::ObserveSelection,
-    ) -> impl std::future::Future<Output = Result<Observation, StoreError>> + Send {
-        let selection = selection.clone();
-        async move { self.store.lock().await.observe(selection) }
-    }
+/// What that peer is given: the state on open, and every change after it.
+///
+/// Both halves are taken in one step of the core, so nothing can commit
+/// between the two. A subscriber therefore never misses a change and never
+/// sees the same one twice — which two separate acquisitions could not
+/// promise, and did not.
+pub struct Attendance {
+    pub opening: Observation,
+    pub announcements: broadcast::Receiver<Observation>,
+}
 
-    fn announcements(&self) -> broadcast::Receiver<Observation> {
-        self.announcements.subscribe()
+impl Message<Attending> for NexusCore {
+    type Reply = Result<Attendance, StoreError>;
+
+    async fn handle(
+        &mut self,
+        attending: Attending,
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        Ok(Attendance {
+            opening: self.store.observe(attending.selection)?,
+            announcements: self.announcements.subscribe(),
+        })
+    }
+}
+
+/// Reading the current observation of a core that is between requests, which
+/// is what a subscriber that fell behind needs to catch up on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Overtaking {
+    pub selection: ObserveSelection,
+}
+
+impl Message<Overtaking> for NexusCore {
+    type Reply = Result<Observation, StoreError>;
+
+    async fn handle(
+        &mut self,
+        overtaking: Overtaking,
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.store.observe(overtaking.selection)
     }
 }
