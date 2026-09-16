@@ -32,3 +32,10 @@ materialized from cache.nixos.org, evaluation produced
 `/nix/store/aknbax0ynbz70ikp07xjb38bfvlfy8lc-orchestrate-test-0.35.0.drv` and
 the remote `--max-jobs 0` build completed. Its valid output is
 `/nix/store/6ld576drb5a099h2izm976dr03hz39ab-orchestrate-test-0.35.0`.
+
+The original `nix build` terminal stream detached from its tool wrapper before
+completion, so its CLI exit code was not captured and is not claimed as exit
+0. Separate read-only evidence did exit 0: `nix path-info` resolved the valid
+output above, and `nix log` retrieved the derivation log. That remote log shows
+`cargo test --release --locked -p orchestrate --test mcp_component_fixture`;
+it ran 4 tests, with 4 passed, 0 failed, 0 ignored, 0 measured, and 0 filtered.
