@@ -170,6 +170,13 @@
               cargoTestExtraArgs = "-p orchestrate --test client";
             }
           );
+          mcp-component-fixture = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p orchestrate --test mcp_component_fixture";
+            }
+          );
           meta-client = craneLib.cargoTest (
             commonArgs
             // {
