@@ -1,9 +1,14 @@
 # MCP component POC receipt
 
 Commit `5ac0cbb72a5e19857c3bfb4488da1fafa178e278` added a bounded component
-selector and `orchestrate-mcp-component` CLI proof surface. It is **not an MCP
-server**: it does not implement JSON-RPC, `tools/list`, `tools/call`, or MCP
-stdio framing.
+selector and its initial CLI proof surface. That commit was not an MCP server.
+
+The subsequent source change makes `orchestrate-mcp-component` a JSON-RPC 2.0
+MCP stdio server. It implements `initialize`, `tools/list`, and `tools/call`
+for one tool, `orchestrate_component`. Its input schema requires exactly one
+string property, `component`, with the five declared labels. Malformed JSON
+returns a JSON-RPC parse error. Bad component argument shapes and unavailable
+backends are tool results with `isError: true`.
 
 The completed leg accepts one component label in its CLI surface. `Orchestrate`
 delegates `Observe.Locks` to the existing `orchestrate` CLI, which sends the
@@ -12,9 +17,9 @@ typed `Signal<Query>` over `ORCHESTRATE_SOCKET` and renders the typed
 unavailable. It does not replace send-subflow or claim that the unavailable
 backends exist.
 
-Completed validation for that commit:
+Completed validation for the CLI POC and MCP server:
 
-- `cargo test -p orchestrate --test mcp_component_fixture`: 2 passed, 0 failed,
+- `cargo test -p orchestrate --test mcp_component_fixture`: 4 passed, 0 failed,
   0 filtered.
 - `cargo check -p orchestrate --bins`: passed.
 

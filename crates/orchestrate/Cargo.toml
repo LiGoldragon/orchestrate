@@ -22,6 +22,7 @@ datom-codec.workspace = true
 protos.workspace = true
 signal = { workspace = true }
 signal-orchestrate = { workspace = true, features = ["datom"] }
+serde_json = "1"
 thiserror.workspace = true
 
 [build-dependencies]

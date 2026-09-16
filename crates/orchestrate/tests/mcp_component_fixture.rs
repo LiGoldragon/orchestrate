@@ -2,14 +2,19 @@
 
 use std::{os::unix::net::UnixListener, path::PathBuf};
 
+use serde_json::{Value, json};
 use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
 use signal_orchestrate::{Observation, ObserveSelection, Query, Response};
 
 #[allow(dead_code)]
 #[path = "../src/mcp_component.rs"]
 mod mcp_component;
+#[allow(dead_code)]
+#[path = "../src/mcp_server.rs"]
+mod mcp_server;
 
 use mcp_component::{Component, ComponentError, ComponentResult, handle_component_at_socket};
+use mcp_server::{McpServer, ServingMcp};
 
 struct OrchestrateHarness {
     _directory: tempfile::TempDir,
@@ -96,4 +101,76 @@ fn malformed_and_unsupported_component_arguments_are_explicit() {
             Ok(ComponentResult::Unavailable(component))
         );
     }
+}
+
+#[test]
+fn mcp_tools_list_and_call_validate_one_string_and_use_the_orchestrate_socket_fixture() {
+    let fixture = OrchestrateHarness::create();
+    let handler = McpServer::new(PathBuf::from(env!("CARGO_BIN_EXE_orchestrate")))
+        .at_socket(fixture.socket.clone());
+    let listed = handler
+        .handle_request(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .expect("tools/list response");
+    assert_eq!(
+        listed["result"]["tools"][0]["name"],
+        "orchestrate_component"
+    );
+    assert_eq!(
+        listed["result"]["tools"][0]["inputSchema"]["required"],
+        json!(["component"])
+    );
+
+    let server = fixture.answer_once(Response::Observed(Observation::Locks(Vec::new())));
+    let called = handler
+        .handle_request(json!({
+            "jsonrpc": "2.0", "id": "call", "method": "tools/call",
+            "params": { "name": "orchestrate_component", "arguments": { "component": "Orchestrate" } }
+        }))
+        .expect("tools/call response");
+    assert_eq!(called["result"]["content"][0]["text"], "Observed.Locks.[]");
+    assert_eq!(called["result"]["isError"], false);
+    assert_eq!(
+        server.join().expect("fixture server"),
+        Query::Observe(ObserveSelection::Locks)
+    );
+
+    for arguments in [
+        Value::Null,
+        json!({}),
+        json!({ "component": 7 }),
+        json!({ "component": "Orchestrate", "extra": true }),
+    ] {
+        let response = handler
+            .handle_request(json!({
+                "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                "params": { "name": "orchestrate_component", "arguments": arguments }
+            }))
+            .expect("invalid argument response");
+        assert_eq!(response["result"]["isError"], true);
+    }
+    let unavailable = handler
+        .handle_request(json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "orchestrate_component", "arguments": { "component": "Message" } }
+        }))
+        .expect("unavailable response");
+    assert_eq!(unavailable["result"]["isError"], true);
+    assert_eq!(
+        unavailable["result"]["content"][0]["text"],
+        "McpComponent.Unavailable.Message"
+    );
+}
+
+#[test]
+fn mcp_stdio_fixture_returns_a_json_rpc_parse_error_for_malformed_input() {
+    let handler = McpServer::new(PathBuf::from(env!("CARGO_BIN_EXE_orchestrate")));
+    let mut output = Vec::new();
+    handler.serve("{ not-json }\n".as_bytes(), &mut output);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output).expect("JSON-RPC error response"),
+        json!({
+            "jsonrpc": "2.0", "id": null,
+            "error": { "code": -32700, "message": "Parse error" }
+        })
+    );
 }
