@@ -10,6 +10,9 @@ string property, `component`, with the five declared labels. Malformed JSON
 returns a JSON-RPC parse error. Bad component argument shapes and unavailable
 backends are tool results with `isError: true`.
 
+The actual MCP server source revision is
+`1916956b29416796d000dc4343f8b41c7903b1b2`.
+
 The completed leg accepts one component label in its CLI surface. `Orchestrate`
 delegates `Observe.Locks` to the existing `orchestrate` CLI, which sends the
 typed `Signal<Query>` over `ORCHESTRATE_SOCKET` and renders the typed
@@ -23,6 +26,9 @@ Completed validation for the CLI POC and MCP server:
   0 filtered.
 - `cargo check -p orchestrate --bins`: passed.
 
-The focused Nix check did not run: evaluation timed out while obtaining
-`/nix/store/77dbgds155bbz3vd3qywq1sii07i5ljs-source` from the configured cache
-and then cache.nixos.org. No derivation path or Nix build result was produced.
+The focused Nix check initially waited for
+`/nix/store/77dbgds155bbz3vd3qywq1sii07i5ljs-source`. After that exact source
+materialized from cache.nixos.org, evaluation produced
+`/nix/store/aknbax0ynbz70ikp07xjb38bfvlfy8lc-orchestrate-test-0.35.0.drv` and
+the remote `--max-jobs 0` build completed. Its valid output is
+`/nix/store/6ld576drb5a099h2izm976dr03hz39ab-orchestrate-test-0.35.0`.
