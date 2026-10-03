@@ -145,8 +145,18 @@ sweeps the runtime directory must leave them alone while the service runs.
 Following the ruling that the meta CLI is `<component>-meta`. **This affects a
 fresh store only.** A deployed store holds its socket paths in the metadata
 tree and keeps binding `meta-orchestrate.sock` until a meta `Configure` moves
-it. Nothing outside the Nexus needs to change for the existing deployment; a
-new install gets the new name.
+it, and the installed `orchestrate-meta` wrapper targets `orchestrate-meta.sock`.
+A deployed store therefore needs one move, or the wrapper cannot reach it:
+
+```sh
+ORCHESTRATE_META_SOCKET=/run/user/$(id -u)/orchestrate-nexus/meta-orchestrate.sock \
+  <orchestrate package>/bin/orchestrate-meta \
+  'Configure.{ «/run/user/1001/orchestrate-nexus/orchestrate.sock» «/run/user/1001/orchestrate-nexus/orchestrate-meta.sock» }'
+systemctl --user restart orchestrate-nexus
+```
+
+`Configured` persists the new path; the running Nexus keeps serving the old one
+until the restart.
 
 ### A store carried away from where it was bound is refused
 

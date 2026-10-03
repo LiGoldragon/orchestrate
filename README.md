@@ -24,7 +24,7 @@ Each client takes exactly one inline Datom query and no flags:
 orchestrate 'Lock.{ MyLock 6329f1 [ /absolute/path ] «why I hold it» }'
 orchestrate 'Observe.Locks'
 orchestrate 'Release.442'
-orchestrate-meta 'Configure.{ «/run/user/1001/orchestrate-nexus/orchestrate.sock» «/run/user/1001/orchestrate-nexus/meta-orchestrate.sock» }'
+orchestrate-meta 'Configure.{ «/run/user/1001/orchestrate-nexus/orchestrate.sock» «/run/user/1001/orchestrate-nexus/orchestrate-meta.sock» }'
 ```
 
 `ORCHESTRATE_SOCKET` selects the ordinary socket and
