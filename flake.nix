@@ -48,9 +48,9 @@
         # Nexus alone is what makes the Datom-free Nexus a fact about the
         # binary. The `datom-free-nexus` check witnesses it on exactly this
         # resolution.
-        # The test graph also holds the released 0.36.0 `orchestrate-nexus`
-        # (see `store-generations`), so the Nexus package is named with its
-        # version wherever Cargo is asked for it by name.
+        # The Nexus package is named with its version wherever Cargo is asked
+        # for it by name, so a test graph that ever holds a second
+        # `orchestrate-nexus` still selects this one.
         nexusSpec = "orchestrate-nexus@${version}";
         nexusArgs = commonArgs // {
           pname = "orchestrate-nexus";

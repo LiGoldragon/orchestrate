@@ -6,7 +6,7 @@ mod generated_client;
 use datom_codec::{Actualizing, Budget, Datomizable, Potential};
 use generated_client::{ClientFailure, Unreachable};
 use meta_signal_orchestrate::{Query, Response};
-use protos::{Protosizable, ReaderBudget, Textualizable};
+use protos::{Compactable, Protosizable, ReaderBudget};
 use signal::{
     Conclusion, Contracted, Delivery, Dispatch, ExchangeFault, ExchangeLedger, ExchangeMinting,
     Exchanged, FrameCapacity, FrameReading, FrameWriting, Greeted, HandshakeReceipt,
@@ -122,7 +122,7 @@ where
     T: Datomizable,
 {
     fn datom_text(&self) -> String {
-        self.datomize(Vec::new()).protosize().textualize()
+        self.datomize(Vec::new()).protosize().compact()
     }
 }
 

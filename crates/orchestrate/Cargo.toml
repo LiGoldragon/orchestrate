@@ -13,6 +13,12 @@ build = "build.rs"
 name = "orchestrate"
 path = "src/main.rs"
 
+[features]
+# Generated types derive their textual forms behind `datom`; this client is
+# a textualizer, so it is always on.
+default = ["datom"]
+datom = []
+
 [dependencies]
 datom-codec.workspace = true
 protos.workspace = true

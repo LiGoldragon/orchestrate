@@ -1,5 +1,37 @@
 # Upgrades
 
+## 0.36.1 to 0.37.0 -- signal 8.0.0, ethos-zero 16.0.0, protos and datom-codec 0.32.2
+
+No wire change on either socket and no store change. signal 8.0.0 `f35460de`,
+signal-orchestrate 5.0.0 `7cc50259` and meta-signal-orchestrate 5.0.0
+`77afda05` generate byte-identical Rust from byte-identical ethos, so both
+contract digests and every archived layout are those of 0.36.x: a 0.36.x CLI
+and a 0.37.0 Nexus, or the reverse, still greet. A 0.37.0 Nexus opens a store
+0.36.x served as it is.
+
+Repinned: signal 8.0.0 `f35460de` (from 7.0.0 `66e7b153`), signal-orchestrate
+5.0.0 `7cc50259` (from 4.0.0 `4e683453`), meta-signal-orchestrate 5.0.0
+`77afda05` (from 4.0.0 `972a3b03`), protos 0.32.2 `15b41da8` and datom-codec
+0.32.2 `4dff16b4`, both with `rkyv` (from 0.31.0 `1febca78` and `09e2a9d5`),
+ethos-zero 16.0.0 `c2653dd8` (from 13.0.0 `cf7dd128`). The lock graph holds
+one signal, one datom-codec, one protos and one ethos-zero.
+
+- Both clients' `client.ethos` regenerate under ethos-zero 16: every type
+  derives rkyv and carries its Datom derives behind a `datom` feature, which
+  each client enables by default, since a client is a textualizer.
+- The clients print every reply on one line through protos 0.32's
+  `Compactable::compact`; `textualize` is now the vertical canonical print.
+- The `store-generations` check no longer opens a store the released 0.36.0
+  wrote. That release links signal 7.0.0 and this one signal 8.0.0, and
+  signal's `links = "signal"` admits one signal per Cargo graph, so the
+  previous release can no longer be a dev-dependency. The resume across
+  generations is witnessed at process level by orchestrate-test's
+  `orchestrate-previous-orchestrate` scenario; the check keeps the open that
+  is refused on a family and writes nothing.
+
+Deploy: repin the user environment's orchestrate input to this revision,
+build, and switch. Verify with `orchestrate 'Observe.Locks'`.
+
 ## 0.36.0 to 0.36.1 -- the store is stamped and its families registered in one write
 
 No wire change on either contract, and no store change: a store 0.36.0 served
