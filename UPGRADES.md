@@ -1,5 +1,53 @@
 # Upgrades
 
+## 0.35.0 to 0.36.0 -- the wire moves onto signal 7.0.0's exchange layer
+
+A clean breaking wire deployment on both sockets, with no compatibility path.
+The Nexus and both CLIs ship in one package, and every running client goes
+through those CLIs, so they move together in one switch; a 0.35.0 client
+against a 0.36.0 Nexus, or the reverse, does not talk.
+
+Repinned: signal 7.0.0 `66e7b153`, signal-orchestrate 4.0.0 `4e683453`,
+meta-signal-orchestrate 4.0.0 `972a3b03`, protos 0.31.0 `1febca78`,
+datom-codec 0.31.0 `09e2a9d5`, ethos-zero 13.0.0 `cf7dd128`. The lock graph
+holds one protos and one datom-codec. nexus 0.5.0 and sema-engine 0.15.1 are
+unchanged.
+
+What changes on the wire:
+
+- A connection is greeted once with the digest of the contract's Ethos source
+  and answered `Greeted` or `GreetingRefused.ContractMismatch` (then closed).
+  An exchange opened before the greeting, or a second greeting, is a fault
+  against the connection.
+- Every query is `Dispatch::Open` on an exchange the peer names, and every
+  answer is `Delivery::Answer` naming it. Exchanges run concurrently on one
+  connection: a `Lock` can be opened while an `Observe` stream runs. A
+  one-answer exchange ends with its answer; no `End` frame follows it.
+- `Observe`'s state on open is sent even with no Locks. `Dispatch::Abandon`
+  ends one stream without closing the connection.
+- A subscriber that falls behind has its exchange ended `Lagged`; 0.35.0
+  re-sent it the whole state instead (`Overtaking`, now removed from the
+  core). Recovery is opening `Observe` again.
+- An unreadable frame, including one whose prefix claims more than the frame
+  capacity, is answered `UnreadableQuery` against the connection, then closed;
+  0.35.0 closed without a word.
+- A peer the meta socket refuses is sent `PeerRefused` as an answer against
+  the connection (exchange 0), unprompted, then closed.
+
+The CLIs' failure vocabulary gains `GreetingRefused` and `ExchangeFaulted`.
+The generated client files derive `Composing` (datom-codec 0.31) in place of
+`Compositional`.
+
+No store change: a 0.35.0 store is opened as it is.
+
+Deploy: repin the user environment's orchestrate input to this revision,
+build, and switch while no Lock is held (`orchestrate 'Observe.Locks'`
+answers `Observed.Locks.[]`). Verify with `orchestrate 'Observe.Locks'` and a
+meta call — `orchestrate-meta 'Configure.{ <ordinary socket> <meta socket> }'`
+with the paths the Nexus already serves, which answers `Configured` with
+`meta_configure_done` true and leaves ordinary `Configure` shut, as it is once
+the privileged `Configure` has been done.
+
 ## 0.34.0 to 0.35.0 -- a store is identified by its file, and a move can be declared
 
 No wire change on either contract: 0.34.0's `orchestrate` and

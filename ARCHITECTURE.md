@@ -49,8 +49,8 @@ the store is a message.
 enters for the effect, and the response follows as an effect of it. That is
 what `Applies<Entering>` used to name in this repository; Kameo's `Message`
 is the same kind from the library the actor layer already is, so it is not
-named twice. `Attending` and `Overtaking` carry the other half — a subscriber
-receives the state on open, then every change.
+named twice. `Attending` carries the other half — a subscriber receives the
+state on open, then every change.
 
 Locks change only through the core, so the core is the only place that can
 announce a change, and it announces the whole observation rather than a delta:
@@ -62,7 +62,9 @@ The mailbox is bounded at 64. The core is the throughput of the durable store,
 and an unbounded queue in front of it would turn a slow disk into unbounded
 memory rather than into the backpressure it is. Announcement fan-out is a
 broadcast channel, which never makes the core wait on a subscriber: one that
-falls too far behind is told it lagged and re-reads the current state.
+falls too far behind has its exchange ended with signal's `Lagged`, and the
+recovery is the peer's — opening `Observe` again, which delivers the state on
+open.
 
 ## Sockets, sessions, and authority
 
@@ -71,13 +73,33 @@ an accepted connection is a task holding a reference to the one core, so a
 session that fails ends its own connection and is recorded against the socket
 it arrived on while the listener keeps listening.
 
+A session is `signal`'s exchange layer, multiplexed. Its parts are types
+bearing traits, generic over the contract's query root:
+
+- `GreetingGate<Q>` (`Gating`) answers the one greeting with
+  `Q::receipt`, refuses a second, and refuses an exchange opened before the
+  contract was settled.
+- `SessionLedger` (`Ledgering`) is `signal`'s `ExchangeLedger` — the open set,
+  its ceiling, the faults for a reused or unknown identifier — plus the task
+  feeding each subscription, so `Abandon` and a closed connection stop the
+  work done for it.
+- `SocketContract`, on `OrdinaryQuery` and `MetaQuery`, says what opening an
+  exchange produces: `Opened::Answered`, or `Opened::Streaming` with the state
+  on open and the `Announcements` that follow it.
+- `Inbound` reads frames as a task of its own, because a frame read is not
+  safe to cancel halfway; each `Feeder` follows one subscription and hands
+  framed changes to the session through a channel with room for one, so a
+  subscriber that is not reading holds its feeder back and is found lagging
+  instead of being buffered for without limit.
+
 What separates the two doors is not the actor: it is the message type the
 session behind each can construct. A session serving the ordinary contract can
 only ever build an `OrdinaryQuery`, and the meta contract's operations are
 unreachable from it. Authority is therefore checked by the type system rather
 than by a runtime branch.
 
-The same rule decides what a refused peer is told. A refusal is a value of the
+The same rule decides what a refused peer is told: unprompted, as an answer
+against the connection rather than an exchange. A refusal is a value of the
 contract the socket bears — a frame written on a socket must be one its peer
 can restore — so `Refusing` is implemented on the response types. The meta
 response names the peer; the ordinary response has nothing to name it with,

@@ -18,7 +18,11 @@ use orchestrate_nexus::store::record::{
     Familial, SCHEMA_VERSION, StoredAllocator, StoredConfiguration, StoredLock, Storing,
 };
 use sema_engine::{Assertion, Engine, EngineOpen};
-use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal::{
+    Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId, Exchanged, FIRST_EXCHANGE,
+    FrameCapacity, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable, Signal,
+    Signalizable,
+};
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockRequest,
     Observation, ObserveSelection, OrchestrateNexusConfiguration, Query as OrdinaryQuery,
@@ -122,18 +126,44 @@ impl Drop for LiveNexus {
     }
 }
 
-/// One connection to one socket, framed with the shared Signal frame.
+/// One connection to one socket, speaking signal's exchange layer with the
+/// shared Signal frame: greeted once, then any number of exchanges, each named
+/// by an identifier this side mints.
 struct Connection {
     stream: UnixStream,
+    next: ExchangeId,
 }
 
 trait Connects: Sized {
     fn to(socket_path: &Path) -> Self;
-    fn ask<Q: Signalizable>(&mut self, query: &Q) -> &mut Self;
-    fn hear<R>(&mut self) -> R
+    /// Greet with the contract `Q` and read the receipt.
+    fn greet<Q: Contracted, R>(&mut self) -> Delivery<R>
+    where
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
+    /// Connect and greet, insisting the greeting settles the contract.
+    fn greeted<Q: Contracted, R>(socket_path: &Path) -> Self
+    where
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> &mut Self
+    where
+        Dispatch<Q>: Signalizable;
+    /// Open a new exchange with one query, and say which exchange it is.
+    fn open<Q>(&mut self, query: Q) -> ExchangeId
+    where
+        Dispatch<Q>: Signalizable;
+    fn hear<R>(&mut self) -> Delivery<R>
     where
         R: rkyv::Archive,
-        Signal<R>: Restorable<R>;
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
+    /// The next frame, which must be an answer on `exchange`.
+    fn answer_on<R>(&mut self, exchange: ExchangeId) -> R
+    where
+        R: rkyv::Archive + std::fmt::Debug,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
 }
 
 impl Connects for Connection {
@@ -144,51 +174,110 @@ impl Connects for Connection {
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .expect("bound the wait for a frame");
-        Self { stream }
+        Self {
+            stream,
+            next: FIRST_EXCHANGE,
+        }
     }
 
-    fn ask<Q: Signalizable>(&mut self, query: &Q) -> &mut Self {
-        let signal = query.signalize().expect("archive query");
+    fn greet<Q: Contracted, R>(&mut self) -> Delivery<R>
+    where
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
+    {
+        let greeting = Dispatch::<Q>::Greet(Q::greeting());
+        self.send(&greeting).hear()
+    }
+
+    fn greeted<Q: Contracted, R>(socket_path: &Path) -> Self
+    where
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
+    {
+        let mut connection = Self::to(socket_path);
+        let receipt = connection.greet::<Q, R>();
+        assert!(
+            matches!(
+                receipt,
+                Delivery::Greeted(HandshakeReceipt::Greeted(digest)) if digest == Q::contract_digest()
+            ),
+            "the greeting settles the contract"
+        );
+        connection
+    }
+
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> &mut Self
+    where
+        Dispatch<Q>: Signalizable,
+    {
+        let signal = dispatch.signalize().expect("archive dispatch");
         self.stream
             .write_frame(&signal, FrameCapacity::default())
-            .expect("write query frame");
+            .expect("write dispatch frame");
         self
     }
 
-    fn hear<R>(&mut self) -> R
+    fn open<Q>(&mut self, query: Q) -> ExchangeId
+    where
+        Dispatch<Q>: Signalizable,
+    {
+        let exchange = self.next;
+        self.next += 1;
+        self.send(&Dispatch::Open(Opening { exchange, query }));
+        exchange
+    }
+
+    fn hear<R>(&mut self) -> Delivery<R>
     where
         R: rkyv::Archive,
-        Signal<R>: Restorable<R>,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
     {
         let body = self
             .stream
             .read_frame(FrameCapacity::default())
-            .expect("read response frame");
-        Signal::<R>::from(Vec::from(body))
+            .expect("read delivery frame");
+        Signal::<Delivery<R>>::from(Vec::from(body))
             .restore()
-            .expect("restore response")
+            .expect("restore delivery")
+    }
+
+    fn answer_on<R>(&mut self, exchange: ExchangeId) -> R
+    where
+        R: rkyv::Archive + std::fmt::Debug,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
+    {
+        match self.hear::<R>() {
+            Delivery::Answer(answer) if answer.exchange() == exchange => answer.response,
+            other => panic!("expected an answer on exchange {exchange}, found {other:?}"),
+        }
     }
 }
 
 trait ExchangesOrdinary {
-    fn ordinary(&self, query: &OrdinaryQuery) -> OrdinaryResponse;
+    fn ordinary(&self, query: OrdinaryQuery) -> OrdinaryResponse;
 }
 
 impl ExchangesOrdinary for LiveNexus {
-    fn ordinary(&self, query: &OrdinaryQuery) -> OrdinaryResponse {
-        Connection::to(&self.roots.ordinary_socket())
-            .ask(query)
-            .hear()
+    fn ordinary(&self, query: OrdinaryQuery) -> OrdinaryResponse {
+        let mut connection =
+            Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&self.roots.ordinary_socket());
+        let exchange = connection.open(query);
+        connection.answer_on(exchange)
     }
 }
 
 trait ExchangesMeta {
-    fn meta(&self, query: &MetaQuery) -> MetaResponse;
+    fn meta(&self, query: MetaQuery) -> MetaResponse;
 }
 
 impl ExchangesMeta for LiveNexus {
-    fn meta(&self, query: &MetaQuery) -> MetaResponse {
-        Connection::to(&self.roots.meta_socket()).ask(query).hear()
+    fn meta(&self, query: MetaQuery) -> MetaResponse {
+        let mut connection =
+            Connection::greeted::<MetaQuery, MetaResponse>(&self.roots.meta_socket());
+        let exchange = connection.open(query);
+        connection.answer_on(exchange)
     }
 }
 
@@ -213,7 +302,7 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
     let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
     let mut nexus = LiveNexus::start(binary, roots);
     let owned = temporary.path().join("owned").display().to_string();
-    let locked = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+    let locked = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
         lock_name: "live-lock".to_owned(),
         flow_id: "test-flow".to_owned(),
         lock_path_vector: vec![owned.clone()],
@@ -223,7 +312,7 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
         panic!("expected Locked response, found {locked:?}");
     };
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![lock.clone()])),
     );
     let configured = OrchestrateNexusConfiguration {
@@ -231,7 +320,7 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
         meta_socket_path: nexus.roots.meta_socket().display().to_string(),
     };
     assert_eq!(
-        nexus.meta(&MetaQuery::Configure(configured.clone())),
+        nexus.meta(MetaQuery::Configure(configured.clone())),
         MetaResponse::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: configured,
             meta_configure_done: true,
@@ -247,7 +336,7 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
     drop(nexus);
     let resumed = LiveNexus::start(binary, roots);
     assert_eq!(
-        resumed.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        resumed.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![lock])),
     );
     assert!(resumed.roots.store().exists());
@@ -266,6 +355,25 @@ fn the_privileged_socket_is_bound_for_its_owner_alone() {
     assert_eq!(nexus.roots.ordinary_socket().mode(), 0o660);
 }
 
+trait Requests {
+    fn requested(&self, name: &str, reason: String) -> OrdinaryQuery;
+}
+
+impl Requests for tempfile::TempDir {
+    fn requested(&self, name: &str, reason: String) -> OrdinaryQuery {
+        OrdinaryQuery::Lock(LockRequest {
+            lock_name: name.to_owned(),
+            flow_id: "test-flow".to_owned(),
+            lock_path_vector: vec![self.path().join(name).display().to_string()],
+            lock_reason: reason,
+        })
+    }
+}
+
+/// The exchange layer end to end on one connection: a greeting, an `Observe`
+/// that goes on answering, a `Lock` opened beside it and told apart from it
+/// by exchange alone, a change made elsewhere reaching the stream, and an
+/// abandoned stream that stops being fed while the connection stays open.
 #[test]
 fn observe_delivers_the_state_on_open_and_every_later_change() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
@@ -273,42 +381,167 @@ fn observe_delivers_the_state_on_open_and_every_later_change() {
     let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
 
     let mut subscriber = Connection::to(&nexus.roots.ordinary_socket());
-    subscriber.ask(&OrdinaryQuery::Observe(ObserveSelection::Locks));
     assert_eq!(
-        subscriber.hear::<OrdinaryResponse>(),
+        subscriber.greet::<OrdinaryQuery, OrdinaryResponse>(),
+        Delivery::Greeted(HandshakeReceipt::Greeted(OrdinaryQuery::contract_digest())),
+        "the greeting settles the ordinary contract by its digest"
+    );
+    let watching = subscriber.open(OrdinaryQuery::Observe(ObserveSelection::Locks));
+    assert_eq!(
+        subscriber.answer_on::<OrdinaryResponse>(watching),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
-        "a subscriber receives the state on open"
+        "a subscriber receives the state on open, even when no Lock is held"
     );
 
-    let owned = temporary.path().join("owned").display().to_string();
-    let OrdinaryResponse::Locked(lock) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
-        lock_name: "watched".to_owned(),
-        flow_id: "test-flow".to_owned(),
-        lock_path_vector: vec![owned],
-        lock_reason: "subscription proof".to_owned(),
-    })) else {
-        panic!("expected a Lock to be acquired");
+    // A Lock opened on the same connection while the stream runs.
+    let acquiring =
+        subscriber.open(temporary.requested("watched", "subscription proof".to_owned()));
+    let mut acquired = None;
+    let mut announced = None;
+    for _ in 0..2 {
+        match subscriber.hear::<OrdinaryResponse>() {
+            Delivery::Answer(answer) if answer.exchange() == acquiring => {
+                acquired = Some(answer.response)
+            }
+            Delivery::Answer(answer) if answer.exchange() == watching => {
+                announced = Some(answer.response)
+            }
+            other => panic!("only the two open exchanges are answered, found {other:?}"),
+        }
+    }
+    let Some(OrdinaryResponse::Locked(lock)) = acquired else {
+        panic!("the Lock exchange is answered Locked, found {acquired:?}");
     };
     assert_eq!(
-        subscriber.hear::<OrdinaryResponse>(),
-        OrdinaryResponse::Observed(Observation::Locks(vec![lock.clone()])),
-        "an acquisition reaches the open subscription without being asked for"
+        announced,
+        Some(OrdinaryResponse::Observed(Observation::Locks(vec![
+            lock.clone()
+        ]))),
+        "the acquisition reaches the stream on the same connection, on its own exchange"
     );
 
     assert!(matches!(
-        nexus.ordinary(&OrdinaryQuery::Release(lock.lock_id)),
+        nexus.ordinary(OrdinaryQuery::Release(lock.lock_id)),
         OrdinaryResponse::Released(_)
     ));
     assert_eq!(
-        subscriber.hear::<OrdinaryResponse>(),
+        subscriber.answer_on::<OrdinaryResponse>(watching),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
-        "a release reaches it too"
+        "a release made on another connection reaches it too"
     );
+
+    // Abandoned: the next change is not sent on it, and the connection
+    // stays open for the next exchange.
+    subscriber.send(&Dispatch::<OrdinaryQuery>::Abandon(watching));
+    let OrdinaryResponse::Locked(after) =
+        nexus.ordinary(temporary.requested("after", "after abandon".to_owned()))
+    else {
+        panic!("expected a Lock to be acquired");
+    };
+    let reopened = subscriber.open(OrdinaryQuery::Observe(ObserveSelection::Locks));
+    assert_eq!(
+        subscriber.hear::<OrdinaryResponse>(),
+        Delivery::Answer(signal::Answer {
+            exchange: reopened,
+            response: OrdinaryResponse::Observed(Observation::Locks(vec![after])),
+        }),
+        "the abandoned stream sent nothing more; the next frame is the new exchange's state on open"
+    );
+}
+
+/// A subscriber that stops reading is not buffered for without limit and is
+/// not silently re-sent the state: once it is further behind than the Nexus
+/// keeps changes for, its exchange ends `Lagged`, and opening `Observe` again
+/// on the same connection gives it the state on open.
+#[test]
+fn a_subscriber_that_falls_behind_ends_lagged_and_reopens_for_the_state_on_open() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+
+    let mut subscriber =
+        Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&nexus.roots.ordinary_socket());
+    let watching = subscriber.open(OrdinaryQuery::Observe(ObserveSelection::Locks));
+    assert_eq!(
+        subscriber.answer_on::<OrdinaryResponse>(watching),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+    );
+
+    // Every change from here carries the ballast, a quarter-mebibyte reason,
+    // so a few unread frames fill the socket and the stream stops being read
+    // from the core. Two hundred changes is three times what the core keeps
+    // for a subscriber, whatever the socket buffers hold.
+    let mut worker =
+        Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&nexus.roots.ordinary_socket());
+    let ballast_request = worker.open(temporary.requested("ballast", "b".repeat(256 * 1024)));
+    let OrdinaryResponse::Locked(ballast) = worker.answer_on::<OrdinaryResponse>(ballast_request)
+    else {
+        panic!("the ballast is locked");
+    };
+    for _ in 0..100 {
+        let locking = worker.open(temporary.requested("churn", "churn".to_owned()));
+        let OrdinaryResponse::Locked(churn) = worker.answer_on::<OrdinaryResponse>(locking) else {
+            panic!("the churn Lock is acquired");
+        };
+        let releasing = worker.open(OrdinaryQuery::Release(churn.lock_id));
+        assert!(matches!(
+            worker.answer_on::<OrdinaryResponse>(releasing),
+            OrdinaryResponse::Released(_)
+        ));
+    }
+
+    let mut answered = 0;
+    let ending = loop {
+        match subscriber.hear::<OrdinaryResponse>() {
+            Delivery::Answer(answer) if answer.exchange() == watching => answered += 1,
+            Delivery::End(ending) => break ending,
+            other => panic!("only the stream speaks, found {other:?}"),
+        }
+        assert!(
+            answered < 200,
+            "the stream never ended though it fell behind"
+        );
+    };
+    assert_eq!(
+        ending,
+        Ending::faulted(watching, ExchangeFault::Lagged),
+        "after {answered} changes the subscriber is told it lagged, on its own exchange"
+    );
+
+    let reopened = subscriber.open(OrdinaryQuery::Observe(ObserveSelection::Locks));
+    assert_eq!(
+        subscriber.answer_on::<OrdinaryResponse>(reopened),
+        OrdinaryResponse::Observed(Observation::Locks(vec![ballast])),
+        "opening Observe again delivers the state on open"
+    );
+}
+
+/// The one frame a Nexus sends a peer whose frame it could not read: a fault
+/// against the connection, after which it closes.
+trait ReadsTheFault {
+    fn the_fault(self) -> Delivery<OrdinaryResponse>;
+}
+
+impl ReadsTheFault for Vec<u8> {
+    fn the_fault(self) -> Delivery<OrdinaryResponse> {
+        let mut written = std::io::Cursor::new(self);
+        let body = written
+            .read_frame(FrameCapacity::default())
+            .expect("one Signal frame came back");
+        assert_eq!(
+            written.position() as usize,
+            written.get_ref().len(),
+            "and nothing after it"
+        );
+        Signal::<Delivery<OrdinaryResponse>>::from(Vec::from(body))
+            .restore()
+            .expect("restore the fault")
+    }
 }
 
 #[test]
 fn a_little_endian_prefix_is_not_the_shared_frame() {
-    use std::io::{Read, Write};
+    use std::io::Write;
 
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
@@ -327,18 +560,24 @@ fn a_little_endian_prefix_is_not_the_shared_frame() {
     stream
         .shutdown(std::net::Shutdown::Write)
         .expect("finish the query");
-    let mut response = Vec::new();
-    // The Nexus reads the prefix byte-swapped, finds a body far past the
-    // frame capacity, and drops the connection: the read ends empty or is
-    // reset outright. Either way no Signal frame comes back.
-    let read = stream.read_to_end(&mut response);
-    assert!(
-        response.is_empty(),
-        "the Nexus frames big-endian; a little-endian prefix is refused, not answered: {read:?}"
+    // The Nexus reads the prefix byte-swapped and finds a body far past the
+    // frame capacity. It reads no further: it says the frame could not be
+    // read, against the connection, and closes. Only the one frame is read
+    // here, because closing on a body it never read lets the kernel reset
+    // the connection after it.
+    let body = stream
+        .read_frame(FrameCapacity::default())
+        .expect("one Signal frame comes back");
+    assert_eq!(
+        Signal::<Delivery<OrdinaryResponse>>::from(Vec::from(body))
+            .restore()
+            .expect("restore the fault"),
+        Delivery::End(Ending::connection_faulted(ExchangeFault::UnreadableQuery)),
+        "the Nexus frames big-endian; a little-endian prefix is refused in vocabulary, not answered"
     );
 
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
         "and the same query framed by the shared crate is answered"
     );
@@ -378,9 +617,13 @@ fn malformed_archive_never_reaches_the_store() {
     stream
         .read_to_end(&mut response)
         .expect("read closed socket");
-    assert!(response.is_empty());
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        response.the_fault(),
+        Delivery::End(Ending::connection_faulted(ExchangeFault::UnreadableQuery)),
+        "an unreadable frame is named as such, against the connection"
+    );
+    assert_eq!(
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
     );
 }
@@ -455,7 +698,7 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
 
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![held])),
         "the carried Lock is served by the resumed Nexus"
     );
@@ -469,7 +712,7 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
             .to_string(),
     };
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Configure(stranding.clone())),
+        nexus.ordinary(OrdinaryQuery::Configure(stranding.clone())),
         OrdinaryResponse::ConfigurationRefused(ConfigurationRejection {
             configuration_rejection_reason: ConfigurationRejectionReason::MetaConfigureOccurred,
         }),
@@ -477,7 +720,7 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     );
 
     let MetaResponse::OrdinaryConfigurationReopened(receipt) =
-        nexus.meta(&MetaQuery::ReverseMetaConfiguration)
+        nexus.meta(MetaQuery::ReverseMetaConfiguration)
     else {
         panic!("the privileged socket reopens ordinary Configure");
     };
@@ -489,7 +732,7 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     );
     assert!(
         matches!(
-            nexus.ordinary(&OrdinaryQuery::Configure(stranding)),
+            nexus.ordinary(OrdinaryQuery::Configure(stranding)),
             OrdinaryResponse::ConfigurationAccepted(_)
         ),
         "and only after the privileged reversal is the ordinary surface open again"
@@ -583,7 +826,7 @@ fn a_second_nexus_with_its_own_store_cannot_take_the_serving_nexus_paths() {
         second.said
     );
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
         "while the first Nexus is still serving on the same socket"
     );
@@ -654,7 +897,7 @@ fn a_nexus_takes_the_socket_files_a_dead_nexus_left_behind() {
 
     let resumed = LiveNexus::start(binary, roots);
     assert_eq!(
-        resumed.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        resumed.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
     );
     assert!(
@@ -711,7 +954,7 @@ fn a_terminated_nexus_stops_cleanly_and_the_next_one_starts_at_once() {
     let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
     let mut nexus = LiveNexus::start(binary, roots);
     let owned = temporary.path().join("owned").display().to_string();
-    let OrdinaryResponse::Locked(held) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+    let OrdinaryResponse::Locked(held) = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
         lock_name: "across-the-stop".to_owned(),
         flow_id: "test-flow".to_owned(),
         lock_path_vector: vec![owned],
@@ -739,7 +982,7 @@ fn a_terminated_nexus_stops_cleanly_and_the_next_one_starts_at_once() {
     drop(nexus);
     let resumed = LiveNexus::start(binary, roots);
     assert_eq!(
-        resumed.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        resumed.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![held])),
         "and the next Nexus takes the same paths and serves the same state"
     );
@@ -911,7 +1154,7 @@ fn a_relocation_is_refused_while_the_nexus_is_still_serving() {
         refused.said
     );
     assert_eq!(
-        nexus.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
         "and the Nexus it refused to displace is still answering"
     );
@@ -924,7 +1167,7 @@ fn a_carried_store_serves_again_with_its_state_once_the_move_is_declared() {
     let original = IsolatedXdg::create(&temporary);
     let mut nexus = LiveNexus::start(binary, original);
     let owned = temporary.path().join("owned").display().to_string();
-    let OrdinaryResponse::Locked(held) = nexus.ordinary(&OrdinaryQuery::Lock(LockRequest {
+    let OrdinaryResponse::Locked(held) = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
         lock_name: "across-the-move".to_owned(),
         flow_id: "test-flow".to_owned(),
         lock_path_vector: vec![owned],
@@ -970,7 +1213,7 @@ fn a_carried_store_serves_again_with_its_state_once_the_move_is_declared() {
 
     let relocated = LiveNexus::start(binary, moved);
     assert_eq!(
-        relocated.ordinary(&OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        relocated.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
         OrdinaryResponse::Observed(Observation::Locks(vec![held])),
         "and it serves the state it was carrying all along"
     );

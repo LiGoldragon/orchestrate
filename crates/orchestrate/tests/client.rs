@@ -12,8 +12,14 @@ use std::{
     process::{Command, Output},
 };
 
-use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal::{
+    Answer, Contracted, Delivery, Dispatch, FrameCapacity, FrameReading, FrameWriting,
+    HandshakeReceipt, HandshakeRejection, Restorable, Signal, Signalizable,
+};
 use signal_orchestrate::{Observation, ObserveSelection, Query, Response};
+
+/// A query this contract reads.
+const QUERY: &str = "Observe.Locks";
 
 struct ClientHarness {
     _directory: tempfile::TempDir,
@@ -24,6 +30,30 @@ trait CreatesClientHarness: Sized {
     fn create() -> Self;
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
+    fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
+}
+
+/// The fixture's side of signal's exchange layer, framed with the shared crate.
+trait Answers {
+    fn dispatched(&mut self) -> Dispatch<Query>;
+    fn deliver(&mut self, delivery: Delivery<Response>);
+}
+
+impl Answers for std::os::unix::net::UnixStream {
+    fn dispatched(&mut self) -> Dispatch<Query> {
+        let body = self
+            .read_frame(FrameCapacity::default())
+            .expect("read a dispatch frame");
+        Signal::<Dispatch<Query>>::from(Vec::from(body))
+            .restore()
+            .expect("restore the dispatch")
+    }
+
+    fn deliver(&mut self, delivery: Delivery<Response>) {
+        let signal = delivery.signalize().expect("archive the delivery");
+        self.write_frame(&signal, FrameCapacity::default())
+            .expect("write the delivery");
+    }
 }
 
 impl CreatesClientHarness for ClientHarness {
@@ -49,16 +79,34 @@ impl CreatesClientHarness for ClientHarness {
         let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
-            let capacity = FrameCapacity::default();
-            let body = stream.read_frame(capacity).expect("read query frame");
-            let query = Signal::<Query>::from(Vec::from(body))
-                .restore()
-                .expect("restore ordinary query");
-            let signal = response.signalize().expect("archive ordinary response");
-            stream
-                .write_frame(&signal, capacity)
-                .expect("write response frame");
-            query
+            let Dispatch::Greet(greeting) = stream.dispatched() else {
+                panic!("the client greets before anything else");
+            };
+            assert_eq!(
+                greeting,
+                Query::greeting(),
+                "the client greets with the digest of the contract it was built from"
+            );
+            stream.deliver(Delivery::Greeted(Query::receipt(&greeting)));
+            let Dispatch::Open(opening) = stream.dispatched() else {
+                panic!("then opens one exchange");
+            };
+            stream.deliver(Delivery::Answer(Answer {
+                exchange: opening.exchange,
+                response,
+            }));
+            opening.query
+        })
+    }
+
+    fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()> {
+        let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept ordinary client");
+            stream.dispatched();
+            stream.deliver(Delivery::Greeted(HandshakeReceipt::GreetingRefused(
+                HandshakeRejection::ContractMismatch(digest),
+            )));
         })
     }
 }
@@ -92,4 +140,17 @@ fn client_describes_contracts_and_reports_datom_failures() {
     assert!(!malformed.status.success());
     let stderr = String::from_utf8(malformed.stderr).unwrap();
     assert!(stderr.starts_with("Unreadable."), "{stderr}");
+}
+
+#[test]
+fn a_refused_greeting_is_reported_as_vocabulary() {
+    let harness = ClientHarness::create();
+    let server = harness.refuse_greeting(42);
+    let output = harness.invoke(Some(QUERY));
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "GreetingRefused.ContractMismatch.42\n"
+    );
+    server.join().expect("fixture server");
 }

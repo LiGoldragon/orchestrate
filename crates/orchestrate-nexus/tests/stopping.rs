@@ -13,7 +13,10 @@ use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     transport::{Binding, Serving, TransportRuntime},
 };
-use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal::{
+    Contracted, Delivery, Dispatch, FIRST_EXCHANGE, FrameCapacity, FrameReading, FrameWriting,
+    HandshakeReceipt, Opening, Restorable, Signal, Signalizable,
+};
 use signal_orchestrate::{
     LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,
     Query as OrdinaryQuery, Response as OrdinaryResponse,
@@ -50,16 +53,29 @@ impl Asks for str {
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .expect("bound the wait for a frame");
-        let signal = query.signalize().expect("archive the query");
-        stream
-            .write_frame(&signal, FrameCapacity::default())
-            .expect("write the query");
-        let body = stream
-            .read_frame(FrameCapacity::default())
-            .expect("read the reply");
-        Signal::<OrdinaryResponse>::from(Vec::from(body))
-            .restore()
-            .expect("restore the reply")
+        let mut hear = |dispatch: Dispatch<OrdinaryQuery>| {
+            let signal = dispatch.signalize().expect("archive the dispatch");
+            stream
+                .write_frame(&signal, FrameCapacity::default())
+                .expect("write the dispatch");
+            let body = stream
+                .read_frame(FrameCapacity::default())
+                .expect("read the delivery");
+            Signal::<Delivery<OrdinaryResponse>>::from(Vec::from(body))
+                .restore()
+                .expect("restore the delivery")
+        };
+        assert_eq!(
+            hear(Dispatch::Greet(OrdinaryQuery::greeting())),
+            Delivery::Greeted(HandshakeReceipt::Greeted(OrdinaryQuery::contract_digest()))
+        );
+        match hear(Dispatch::Open(Opening {
+            exchange: FIRST_EXCHANGE,
+            query: query.clone(),
+        })) {
+            Delivery::Answer(answer) => answer.response,
+            other => panic!("expected the answer, found {other:?}"),
+        }
     }
 }
 

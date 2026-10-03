@@ -235,9 +235,14 @@ fn a_peer_the_kernel_reports_as_another_user_is_refused_on_the_meta_socket() {
     );
 
     let frame = std::fs::read(&frame_path).expect("the probe wrote the frame it was sent");
-    let response: MetaResponse = Signal::<MetaResponse>::from(frame)
+    let delivery = Signal::<signal::Delivery<MetaResponse>>::from(frame)
         .restore()
-        .expect("restore the frame as the meta contract");
+        .expect("restore the frame as the meta contract's delivery");
+    let signal::Delivery::Answer(answer) = delivery else {
+        panic!("the refusal is an answer against the connection, found {delivery:?}");
+    };
+    assert_eq!(answer.exchange, signal::CONNECTION_EXCHANGE);
+    let response = answer.response;
     assert_eq!(
         response,
         MetaResponse::PeerRefused(PeerRejection {

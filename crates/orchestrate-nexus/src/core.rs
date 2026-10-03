@@ -22,8 +22,8 @@
 //! The mailbox is bounded, so a peer that outruns the store is made to wait
 //! rather than allowed to queue without limit. Announcements
 //! go out through a broadcast channel, which never makes the core wait on a
-//! subscriber: one that falls too far behind is told it lagged and is sent
-//! the current state instead, which is the value it would have converged on.
+//! subscriber: one that falls too far behind has its exchange ended with
+//! signal's `Lagged`, and opens `Observe` again for the state on open.
 
 use kameo::{
     Actor,
@@ -45,8 +45,8 @@ use crate::{
 };
 
 /// How many announced observations a subscriber may fall behind before the
-/// core stops keeping them. A subscriber that lags past this is re-sent the
-/// current state instead, which is the same value it would have converged on.
+/// core stops keeping them. A subscriber that lags past this has its exchange
+/// ended `Lagged`.
 const ANNOUNCEMENT_BACKLOG: usize = 64;
 
 /// How many requests may wait for the core before a peer is made to wait for
@@ -202,24 +202,5 @@ impl Message<Attending> for NexusCore {
             opening: self.store.observe(attending.selection)?,
             announcements: self.announcements.subscribe(),
         })
-    }
-}
-
-/// Reading the current observation of a core that is between requests, which
-/// is what a subscriber that fell behind needs to catch up on.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Overtaking {
-    pub selection: ObserveSelection,
-}
-
-impl Message<Overtaking> for NexusCore {
-    type Reply = Result<Observation, StoreError>;
-
-    async fn handle(
-        &mut self,
-        overtaking: Overtaking,
-        _: &mut Context<Self, Self::Reply>,
-    ) -> Self::Reply {
-        self.store.observe(overtaking.selection)
     }
 }

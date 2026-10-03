@@ -1,10 +1,12 @@
 ; Datom-boundary failures for the privileged Orchestrate client.
 Library
-[ datom_codec:Error ]
+[ datom_codec:Error signal:[ HandshakeRejection ExchangeFault ] ]
 [ SocketPath.String
   TransportError.String
   Unreachable.{ SocketPath TransportError }
   ClientFailure.[ Unreadable.Error
-                  Unreachable.Unreachable ] ]
+                  Unreachable.Unreachable
+                  GreetingRefused.HandshakeRejection
+                  ExchangeFaulted.ExchangeFault ] ]
 []
 []

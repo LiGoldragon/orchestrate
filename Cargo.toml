@@ -7,7 +7,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.35.0"
+version = "0.36.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -15,16 +15,16 @@ repository = "https://github.com/LiGoldragon/orchestrate"
 publish = false
 
 [workspace.dependencies]
-datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "627db67f2655efd9f786864009955005fd8ab2ad" }
-ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "de3d9928b156f2e1a92d060b7817af201abfdbef" }
+datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "09e2a9d52bf7f2f11e51d15cb6c3177f72c6c927" }
+ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "cf7dd128bcaead69e03ce1c2e6ac20c0c19a6823" }
 kameo = { version = "0.22", default-features = false, features = ["macros"] }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "4279ad05141c392ad4fee83be7cee09d5dc12df5", default-features = false }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "972a3b03db961291b7bc517fb8e1b9277ae22984", default-features = false }
 nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "c495f2acbfff57e017092b9cc1fbf9f73ca2badf" }
-protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "171b21f65337983ab624b7b906397a4f1f92c5a3" }
+protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "1febca7836bf8d5f5973a302fdd50aa9c84c159b" }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 sema-engine = { git = "https://github.com/LiGoldragon/sema-engine.git", rev = "27e814a721439af67721c530d48b4d2101141f74" }
-signal = { git = "https://github.com/LiGoldragon/signal.git", rev = "8f9a0deb701cebbea518679548df4a795affc918", default-features = false }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "e7221190ed4cf256ee1f0ead1b8af4758c67079a", default-features = false }
+signal = { git = "https://github.com/LiGoldragon/signal.git", rev = "66e7b153706696c2cfbb2abcf931a5e83aec91af", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "4e68345361f531b472306a47a02b7bc58ebf8a32", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 

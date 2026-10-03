@@ -3,11 +3,15 @@
 #[path = "generated/client.rs"]
 mod generated_client;
 
-use datom_codec::{Actualizing, Budget, Datom, Datomizable, Potential};
+use datom_codec::{Actualizing, Budget, Datomizable, Potential};
 use generated_client::{ClientFailure, Unreachable};
 use meta_signal_orchestrate::{Query, Response};
 use protos::{Protosizable, ReaderBudget, Textualizable};
-use signal::{FrameCapacity, FrameReading, FrameWriting, Restorable, Signal, Signalizable};
+use signal::{
+    Conclusion, Contracted, Delivery, Dispatch, ExchangeFault, ExchangeLedger, ExchangeMinting,
+    Exchanged, FrameCapacity, FrameReading, FrameWriting, Greeted, HandshakeReceipt,
+    HandshakeRejection, Opening, Restorable, Signal, Signalizable,
+};
 use std::{env, os::unix::net::UnixStream, process::ExitCode};
 
 enum Invocation {
@@ -96,21 +100,16 @@ impl Querying for Client {
     }
 
     fn query(&self, query: &Query) -> Result<Response, ClientFailure> {
-        let exchange = query
-            .signalize()
-            .map_err(|_| TransportError::Archive)
-            .and_then(|signal| SignalConnection::connect(&self.socket_path)?.exchange(&signal))
-            .and_then(|bytes| {
-                Signal::<Response>::from(bytes)
-                    .restore()
-                    .map_err(|_| TransportError::Archive)
-            });
-        exchange.map_err(|error| {
-            ClientFailure::Unreachable(Unreachable {
-                socket_path: self.socket_path.clone(),
-                transport_error: error.to_string(),
+        SignalConnection::connect(&self.socket_path)
+            .and_then(|mut connection| connection.ask(query.clone()))
+            .map_err(|error| match error {
+                TransportError::Refused(rejection) => ClientFailure::GreetingRefused(rejection),
+                TransportError::Faulted(fault) => ClientFailure::ExchangeFaulted(fault),
+                error => ClientFailure::Unreachable(Unreachable {
+                    socket_path: self.socket_path.clone(),
+                    transport_error: error.to_string(),
+                }),
             })
-        })
     }
 }
 
@@ -120,15 +119,17 @@ trait DatomText {
 
 impl<T> DatomText for T
 where
-    T: Datomizable<Output = Datom>,
+    T: Datomizable,
 {
     fn datom_text(&self) -> String {
         self.datomize(Vec::new()).protosize().textualize()
     }
 }
 
+/// One connection, greeted once, carrying the one exchange this CLI opens.
 struct SignalConnection {
     stream: UnixStream,
+    ledger: ExchangeLedger,
 }
 
 trait Connecting: Sized {
@@ -139,26 +140,104 @@ impl Connecting for SignalConnection {
     fn connect(socket_path: &str) -> Result<Self, TransportError> {
         Ok(Self {
             stream: UnixStream::connect(socket_path)?,
+            ledger: ExchangeLedger::default(),
         })
     }
 }
 
-trait Exchanging {
-    fn exchange<T>(&mut self, query: &Signal<T>) -> Result<Vec<u8>, TransportError>;
+/// Whole frames of signal's exchange layer. Framing is `signal`'s: this
+/// client owns no length prefix of its own.
+trait Framing {
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), TransportError>
+    where
+        Dispatch<Q>: Signalizable;
+    fn receive<R>(&mut self) -> Result<Delivery<R>, TransportError>
+    where
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
 }
 
-impl Exchanging for SignalConnection {
-    /// One framed query out, one framed reply in. Framing is `signal`'s: this
-    /// client owns no length prefix of its own.
+impl Framing for SignalConnection {
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), TransportError>
+    where
+        Dispatch<Q>: Signalizable,
+    {
+        let signal = dispatch.signalize().map_err(|_| TransportError::Archive)?;
+        self.stream.write_frame(&signal, FrameCapacity::default())?;
+        Ok(())
+    }
+
+    fn receive<R>(&mut self) -> Result<Delivery<R>, TransportError>
+    where
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
+    {
+        let body = self.stream.read_frame(FrameCapacity::default())?;
+        Signal::<Delivery<R>>::from(Vec::from(body))
+            .restore()
+            .map_err(|_| TransportError::Archive)
+    }
+}
+
+trait Asking {
+    /// Greet once, open one exchange with the query, and read its answer.
     ///
-    /// Exactly one reply is read even where the Nexus would go on writing —
-    /// an Observe opens a subscription there. A CLI that takes one argument
-    /// and prints one value ends at the state on open; dropping the
-    /// connection is how it unsubscribes.
-    fn exchange<T>(&mut self, query: &Signal<T>) -> Result<Vec<u8>, TransportError> {
-        let capacity = FrameCapacity::default();
-        self.stream.write_frame(query, capacity)?;
-        Ok(Vec::from(self.stream.read_frame(capacity)?))
+    /// Exactly one answer is read even where the Nexus would go on writing:
+    /// an `Observe` opens a stream there. A CLI that takes one argument and
+    /// prints one value ends at the state on open; closing the connection is
+    /// how it leaves the stream.
+    fn ask<Q, R>(&mut self, query: Q) -> Result<R, TransportError>
+    where
+        Q: Contracted,
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>;
+}
+
+impl Asking for SignalConnection {
+    fn ask<Q, R>(&mut self, query: Q) -> Result<R, TransportError>
+    where
+        Q: Contracted,
+        Dispatch<Q>: Signalizable,
+        R: rkyv::Archive,
+        Signal<Delivery<R>>: Restorable<Delivery<R>>,
+    {
+        self.send(&Dispatch::<Q>::Greet(Q::greeting()))?;
+        match self.receive::<R>()? {
+            Delivery::Greeted(HandshakeReceipt::Greeted(_)) => {
+                self.ledger.greet().map_err(TransportError::Faulted)?
+            }
+            Delivery::Greeted(HandshakeReceipt::GreetingRefused(rejection)) => {
+                return Err(TransportError::Refused(rejection));
+            }
+            // A socket that will not admit this peer says so unprompted, as
+            // an answer against the connection itself.
+            Delivery::Answer(answer) if answer.is_connection_wide() => {
+                return Ok(answer.response);
+            }
+            Delivery::End(ending) => return Err(ending.conclusion.into()),
+            Delivery::Answer(_) => return Err(TransportError::Unexpected),
+        }
+        let exchange = self.ledger.open().map_err(TransportError::Faulted)?;
+        self.send(&Dispatch::Open(Opening { exchange, query }))?;
+        match self.receive::<R>()? {
+            Delivery::Answer(answer)
+                if answer.exchange() == exchange || answer.is_connection_wide() =>
+            {
+                Ok(answer.response)
+            }
+            Delivery::End(ending) => Err(ending.conclusion.into()),
+            Delivery::Answer(_) | Delivery::Greeted(_) => Err(TransportError::Unexpected),
+        }
+    }
+}
+
+impl From<Conclusion> for TransportError {
+    fn from(conclusion: Conclusion) -> Self {
+        match conclusion {
+            Conclusion::Faulted(fault) => Self::Faulted(fault),
+            Conclusion::Completed => Self::Unanswered,
+        }
     }
 }
 
@@ -170,6 +249,14 @@ enum TransportError {
     Frame(#[from] signal::FrameError),
     #[error("Signal archive validation failed")]
     Archive,
+    #[error("the Nexus refused the greeting: {0:?}")]
+    Refused(HandshakeRejection),
+    #[error("the exchange ended with a fault: {0:?}")]
+    Faulted(ExchangeFault),
+    #[error("the exchange ended without an answer")]
+    Unanswered,
+    #[error("the Nexus sent a frame for no exchange this client opened")]
+    Unexpected,
 }
 
 fn main() -> ExitCode {

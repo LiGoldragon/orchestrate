@@ -25,7 +25,9 @@ use crate::{
     store::{OrchestrateStore, Situates, StoreError},
 };
 
-use session::{Opening, ServingMeta, ServingOrdinary, Session};
+use meta_signal_orchestrate::Query as MetaQuery;
+use session::{Opening, ServesConnection, Session};
+use signal_orchestrate::Query as OrdinaryQuery;
 use socket::{Claiming, OwnsSocket, SocketClaim, SocketOwner};
 
 /// The two bound sockets and the core behind them.
@@ -206,10 +208,10 @@ impl Serving for TransportRuntime {
                         let (stream, _) = accepted?;
                         let core = self.core.core().clone();
                         let socket_path = self.ordinary.socket_path().to_path_buf();
-                        let mut session = Session::opened(
+                        let session = Session::<OrdinaryQuery>::opened(
                             stream, self.ordinary.authority, self.ordinary.owner);
                         connections.spawn(async move {
-                            session.serve_ordinary(core).await.err()
+                            session.serve(core).await.err()
                                 .map(|error| SessionEnding::on(&socket_path, &error))
                         });
                     }
@@ -217,10 +219,10 @@ impl Serving for TransportRuntime {
                         let (stream, _) = accepted?;
                         let core = self.core.core().clone();
                         let socket_path = self.meta.socket_path().to_path_buf();
-                        let mut session = Session::opened(
+                        let session = Session::<MetaQuery>::opened(
                             stream, self.meta.authority, self.meta.owner);
                         connections.spawn(async move {
-                            session.serve_meta(core).await.err()
+                            session.serve(core).await.err()
                                 .map(|error| SessionEnding::on(&socket_path, &error))
                         });
                     }

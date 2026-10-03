@@ -66,8 +66,9 @@ Every method lives under a trait. `fn main()` is the only free
 function. The ordinary ontology is five traits on `OrchestrateStore`:
 `Locks`, `Releases`, `Observes`, `Configures`, `Situates`. `NexusCore`
 is a Kameo actor bearing `Message<T>` once per contract, plus
-`Attending` and `Overtaking` for subscription; the transport carries
-frames and decides nothing.
+`Attending` for subscription; the transport carries signal's exchange
+layer — `GreetingGate`, `SessionLedger`, one `Feeder` per subscription — and
+decides nothing.
 
 `NexusCore` owns the store by value. Do not reintroduce a lock around
 it or a second reference to it: the only way to the store is a message.
