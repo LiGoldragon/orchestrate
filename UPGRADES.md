@@ -1,5 +1,17 @@
 # Upgrades
 
+## 0.37.0 to 0.37.1 -- sema-engine 0.18.0
+
+No wire change on either socket and no store change. sema-engine 0.18.0
+`9884905f` (from 0.17.0 `489d290d`) keeps the engine storage layout number;
+it removes `with_prior`, which orchestrate never used, and adds Memorable,
+whose change-receipts table appears only on a store's first typed change,
+which orchestrate never makes. A 0.37.1 Nexus opens a store 0.37.0 served
+as it is, with its Locks and configuration, and writes no new table.
+
+Deploy: repin the user environment's orchestrate input to this revision,
+build, and switch. Verify with `orchestrate 'Observe.Locks'`.
+
 ## 0.36.1 to 0.37.0 -- signal 8.0.0, ethos-zero 16.0.0, protos and datom-codec 0.32.2
 
 No wire change on either socket and no store change. signal 8.0.0 `f35460de`,
