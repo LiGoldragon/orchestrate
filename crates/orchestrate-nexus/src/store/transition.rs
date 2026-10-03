@@ -18,16 +18,19 @@ use crate::{
     },
 };
 
-/// Reads every Lock the store currently holds, in the order Observe declares.
+/// Reads the Locks a plan selects, in the order Observe declares.
 trait ReadsCurrentLocks {
+    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<Lock>, StoreError>;
+
+    /// Every Lock the store currently holds.
     fn current_locks(&self) -> Result<Vec<Lock>, StoreError>;
 }
 
 impl ReadsCurrentLocks for OrchestrateStore {
-    fn current_locks(&self) -> Result<Vec<Lock>, StoreError> {
+    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<Lock>, StoreError> {
         let mut locks: Vec<_> = self
             .engine
-            .match_records(QueryPlan::all(self.locks))?
+            .match_records(plan)?
             .records()
             .iter()
             .map(|stored| stored.clone().into_public())
@@ -39,25 +42,31 @@ impl ReadsCurrentLocks for OrchestrateStore {
         });
         Ok(locks)
     }
+
+    fn current_locks(&self) -> Result<Vec<Lock>, StoreError> {
+        self.locks_selected_by(QueryPlan::all(self.locks))
+    }
 }
 
 impl Locks for OrchestrateStore {
     fn lock(&mut self, request: LockRequest) -> Result<OrdinaryResponse, StoreError> {
         let request = NormalizedLockRequest::from_request(request)?;
-        for holder in self.current_locks()? {
-            if request.duplicates_name_of(&holder) {
-                return Ok(OrdinaryResponse::LockRejected(
-                    LockRejection::DuplicateName(holder),
-                ));
-            }
-            if let Some(path) = request.overlapping_path_of(&holder) {
-                return Ok(OrdinaryResponse::LockRejected(LockRejection::PathOverlap(
-                    LockOverlap {
-                        lock_path: path,
-                        lock: holder,
-                    },
-                )));
-            }
+        // The engine reads only the held Locks this request conflicts with;
+        // the first of them in Observe's order is the one the refusal names.
+        let conflicting =
+            self.locks_selected_by(QueryPlan::filtered(self.locks, request.clone()))?;
+        if let Some(holder) = conflicting.into_iter().next() {
+            let rejection = if request.duplicates_name_of(&holder) {
+                LockRejection::DuplicateName(holder)
+            } else if let Some(path) = request.overlapping_path_of(&holder) {
+                LockRejection::PathOverlap(LockOverlap {
+                    lock_path: path,
+                    lock: holder,
+                })
+            } else {
+                unreachable!("the conflict predicate admits only a conflicting Lock")
+            };
+            return Ok(OrdinaryResponse::LockRejected(rejection));
         }
         let allocator = match self
             .engine

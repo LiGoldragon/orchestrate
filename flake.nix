@@ -48,9 +48,13 @@
         # Nexus alone is what makes the Datom-free Nexus a fact about the
         # binary. The `datom-free-nexus` check witnesses it on exactly this
         # resolution.
+        # The test graph also holds the released 0.36.0 `orchestrate-nexus`
+        # (see `store-generations`), so the Nexus package is named with its
+        # version wherever Cargo is asked for it by name.
+        nexusSpec = "orchestrate-nexus@${version}";
         nexusArgs = commonArgs // {
           pname = "orchestrate-nexus";
-          cargoExtraArgs = "--package orchestrate-nexus";
+          cargoExtraArgs = "--package ${nexusSpec}";
         };
         clientArgs = commonArgs // {
           pname = "orchestrate-clients";
@@ -96,21 +100,21 @@
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test live_nexus";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test live_nexus";
             }
           );
           ordinary-lock-contract = craneLib.cargoTest (
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test ordinary_lock_contract";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test ordinary_lock_contract";
             }
           );
           configuration-authority = craneLib.cargoTest (
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test configuration_authority";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test configuration_authority";
             }
           );
           # The peer check's refusing branch. The named-owner witness runs
@@ -123,7 +127,7 @@
               cargoArtifacts = workspaceArtifacts;
               # --nocapture so that a host without a subordinate uid range
               # says so in the build log, rather than passing in silence.
-              cargoTestExtraArgs = "-p orchestrate-nexus --test second_user_peer -- --nocapture";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test second_user_peer -- --nocapture";
             }
           );
           # The socket path is held by a claim rather than probed, the store
@@ -134,14 +138,14 @@
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test socket_claim";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test socket_claim";
             }
           );
           carried-store = craneLib.cargoTest (
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test carried_store";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test carried_store";
             }
           );
           # The declaration that lets a deliberately moved store serve again,
@@ -153,14 +157,25 @@
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test relocation";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test relocation";
+            }
+          );
+          # A store the released 0.36.0 served, with its own sema-engine,
+          # resumes here with its Locks, configuration and guard; and an open
+          # refused on a family writes nothing, because every family is
+          # declared to the engine's open.
+          store-generations = craneLib.cargoTest (
+            commonArgs
+            // {
+              cargoArtifacts = workspaceArtifacts;
+              cargoTestExtraArgs = "-p ${nexusSpec} --test store_generations";
             }
           );
           stopping = craneLib.cargoTest (
             commonArgs
             // {
               cargoArtifacts = workspaceArtifacts;
-              cargoTestExtraArgs = "-p orchestrate-nexus --test stopping";
+              cargoTestExtraArgs = "-p ${nexusSpec} --test stopping";
             }
           );
           ordinary-client = craneLib.cargoTest (
@@ -213,7 +228,7 @@
               cargoArtifacts = nexusArtifacts;
               pnameSuffix = "-datom-free-nexus";
               buildPhaseCargoCommand = ''
-                nexus_tree=$(cargo tree --package orchestrate-nexus --edges normal --locked --offline)
+                nexus_tree=$(cargo tree --package ${nexusSpec} --edges normal --locked --offline)
                 client_tree=$(cargo tree --package orchestrate --package orchestrate-meta \
                   --edges normal --locked --offline)
                 echo "$nexus_tree"

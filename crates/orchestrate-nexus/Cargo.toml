@@ -44,6 +44,10 @@ tokio.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+# The generation before this one, as it was released: `store_generations`
+# has it write a store, with its own sema-engine, for this generation to open.
+orchestrate-nexus-0-36-0 = { package = "orchestrate-nexus", git = "https://github.com/LiGoldragon/orchestrate.git", rev = "b56f2644600ffc58fedf4b83639b8b39e615ff2b" }
+sema-engine.workspace = true
 
 [lints]
 workspace = true

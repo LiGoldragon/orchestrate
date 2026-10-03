@@ -418,7 +418,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "orchestrate"
-version = "0.36.0"
+version = "0.36.1"
 dependencies = [
  "datom-codec",
  "ethos-zero 13.0.0",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "orchestrate-meta"
-version = "0.36.0"
+version = "0.36.1"
 dependencies = [
  "datom-codec",
  "ethos-zero 13.0.0",
@@ -448,13 +448,31 @@ dependencies = [
 [[package]]
 name = "orchestrate-nexus"
 version = "0.36.0"
+source = "git+https://github.com/LiGoldragon/orchestrate.git?rev=b56f2644600ffc58fedf4b83639b8b39e615ff2b#b56f2644600ffc58fedf4b83639b8b39e615ff2b"
 dependencies = [
  "kameo",
  "meta-signal-orchestrate",
  "nexus",
  "rkyv",
  "rustix",
- "sema-engine",
+ "sema-engine 0.15.1",
+ "signal",
+ "signal-orchestrate",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "orchestrate-nexus"
+version = "0.36.1"
+dependencies = [
+ "kameo",
+ "meta-signal-orchestrate",
+ "nexus",
+ "orchestrate-nexus 0.36.0",
+ "rkyv",
+ "rustix",
+ "sema-engine 0.17.0",
  "signal",
  "signal-orchestrate",
  "tempfile",
@@ -628,6 +646,18 @@ dependencies = [
  "rkyv",
  "sema",
  "signal-frame",
+ "signal-sema",
+ "thiserror",
+]
+
+[[package]]
+name = "sema-engine"
+version = "0.17.0"
+source = "git+https://github.com/LiGoldragon/sema-engine.git?rev=489d290df38a0ae5a4f8a80963ddaa888b65531f#489d290df38a0ae5a4f8a80963ddaa888b65531f"
+dependencies = [
+ "blake3",
+ "rkyv",
+ "sema",
  "signal-sema",
  "thiserror",
 ]

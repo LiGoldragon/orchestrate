@@ -1,5 +1,33 @@
 # Upgrades
 
+## 0.36.0 to 0.36.1 -- the store is stamped and its families registered in one write
+
+No wire change on either contract, and no store change: a store 0.36.0 served
+opens as it is, with its Locks, configuration, situation and any declared
+relocation. The `store-generations` check opens one written by the released
+0.36.0 itself.
+
+Repinned: sema-engine 0.17.0 `489d290d` (from 0.15.1 `27e814a7`); sema and
+signal-sema are unchanged.
+
+- The open declares all five families (metadata, situation, relocation, Locks,
+  allocator) through `EngineOpen::with_family`. The engine writes the layout
+  stamp, the versioning policy and the family catalog in one transaction, so a
+  family the engine refuses, or a crash during the open, leaves the store
+  unstamped. This closes the NON_IDEAL entry on non-atomic stamping.
+- An open Orchestrate itself refuses after the engine has opened (pre-0.25
+  PathLocks, the 0.34.0 situation family, a carried store) now finds all five
+  families registered, empty where they were absent; the next open would
+  register them identically.
+- Lock acquisition reads the conflicting Locks through the engine's Filter
+  read plan instead of reading every Lock and scanning; the refusals are
+  unchanged.
+- Cargo now resolves two `orchestrate-nexus` packages in the test graph, so
+  name this one `orchestrate-nexus@<version>` when selecting it with `-p`.
+
+Deploy: repin the user environment's orchestrate input to this revision,
+build, and switch. Verify with `orchestrate 'Observe.Locks'`.
+
 ## 0.35.0 to 0.36.0 -- the wire moves onto signal 7.0.0's exchange layer
 
 A clean breaking wire deployment on both sockets, with no compatibility path.

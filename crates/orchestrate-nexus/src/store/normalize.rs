@@ -5,15 +5,20 @@ use std::{
     path::{Component, Path},
 };
 
+use sema_engine::RecordPredicate;
 use signal_orchestrate::{Lock, LockRequest};
 
-use super::error::StoreError;
+use super::{
+    error::StoreError,
+    record::{StoredLock, Storing},
+};
 
 /// A Lock request whose path values have passed Nexus normalization.
 ///
 /// This is a durable-transition input, not a second public contract type.
 /// Keeping its path and overlap rules with the request prevents transport or
 /// callers from acquiring a partially normalized Lock.
+#[derive(Clone)]
 pub struct NormalizedLockRequest {
     request: LockRequest,
 }
@@ -63,6 +68,16 @@ impl NormalizesLockRequests for NormalizedLockRequest {
             lock_path_vector: self.request.lock_path_vector,
             lock_reason: self.request.lock_reason,
         }
+    }
+}
+
+/// As a read plan's predicate, a request admits exactly the held Locks it
+/// conflicts with: the one bearing its name, and every one holding a path that
+/// overlaps a path it asks for. Lock acquisition reads only those.
+impl RecordPredicate<StoredLock> for NormalizedLockRequest {
+    fn admits(&self, held: &StoredLock) -> bool {
+        let held = held.clone().into_public();
+        self.duplicates_name_of(&held) || self.overlapping_path_of(&held).is_some()
     }
 }
 

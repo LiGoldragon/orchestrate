@@ -9,7 +9,8 @@
 use nexus::{ConfigurationState, Relocation, Situation};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use sema_engine::{
-    EngineRecord, FamilyName, RecordKey, SchemaHash, SchemaVersion, TableDescriptor, TableName,
+    EngineOpen, EngineRecord, FamilyName, RecordKey, SchemaHash, SchemaVersion, TableDescriptor,
+    TableName,
 };
 use signal_orchestrate::{Lock, OrchestrateNexusConfiguration};
 
@@ -167,6 +168,26 @@ impl Familial for StoredAllocator {
             FamilyName::new("orchestrate-lock-id-allocator"),
             SchemaHash::for_label("orchestrate-lock-id-allocator-v2"),
         )
+    }
+}
+
+/// An open that names every family the Nexus keeps, so the engine registers
+/// them in the same write transaction as the store's layout stamp.
+///
+/// The superseded situation family and the pre-0.32 configuration family are
+/// not declared: the first is only ever refused, and the second is only read
+/// from a store that already carries it.
+pub trait DeclaresOrchestrateFamilies {
+    fn declaring_orchestrate_families(self) -> Self;
+}
+
+impl DeclaresOrchestrateFamilies for EngineOpen {
+    fn declaring_orchestrate_families(self) -> Self {
+        self.with_family(&StoredMetadata::descriptor())
+            .with_family(&StoredSituation::descriptor())
+            .with_family(&StoredRelocation::descriptor())
+            .with_family(&StoredLock::descriptor())
+            .with_family(&StoredAllocator::descriptor())
     }
 }
 

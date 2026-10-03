@@ -30,8 +30,9 @@ use signal_orchestrate::OrchestrateNexusConfiguration;
 use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
-    CONFIGURATION_TABLE, Familial, SCHEMA_VERSION, SUPERSEDED_SITUATION_TABLE, StoredAllocator,
-    StoredConfiguration, StoredLock, StoredMetadata, StoredRelocation, StoredSituation, Storing,
+    CONFIGURATION_TABLE, DeclaresOrchestrateFamilies, Familial, SCHEMA_VERSION,
+    SUPERSEDED_SITUATION_TABLE, StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata,
+    StoredRelocation, StoredSituation, Storing,
 };
 
 /// The single owner of the Nexus's durable state.
@@ -68,10 +69,15 @@ impl OpensStore for OrchestrateStore {
                 .parent()
                 .expect("configured store path has a parent"),
         )?;
-        let mut engine = Engine::open(EngineOpen::new(
-            store_path.display().to_string(),
-            SCHEMA_VERSION,
-        ))?;
+        // Every family this Nexus keeps is declared to the open, so the
+        // engine stamps the store and registers them in one write
+        // transaction: an open that fails on a family, or a crash during it,
+        // leaves the store unstamped rather than stamped forward. The
+        // registrations below then only hand back references.
+        let mut engine = Engine::open(
+            EngineOpen::new(store_path.display().to_string(), SCHEMA_VERSION)
+                .declaring_orchestrate_families(),
+        )?;
         let active_path_locks = engine.count_active_path_locks()?;
         if active_path_locks != 0 {
             return Err(StoreError::LegacyActiveLocks {

@@ -160,6 +160,13 @@ next process's to take.
 - one row per active Lock;
 - one monotonic next-Lock-ID row.
 
+Every family the store keeps is declared to the engine's open
+(`DeclaresOrchestrateFamilies`), so the layout stamp, the versioning policy
+and the families land in one write transaction: an open the engine refuses on
+a family, or a crash during it, leaves the store as it was. Lock acquisition
+reads only the held Locks the request conflicts with, through a Filter read
+plan whose predicate is the normalized request itself.
+
 The public contract types are not persisted directly. Stable storage records
 hold plain named fields, so wire generation changes do not silently redefine
 the database layout.
