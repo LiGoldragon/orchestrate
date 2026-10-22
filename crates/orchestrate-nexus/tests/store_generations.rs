@@ -11,6 +11,7 @@
 //! here: the previous release links signal 7.0.0, this one signal 8.0.0, and
 //! signal's `links = "signal"` admits one signal per Cargo graph.
 
+use memory_engine::{Engine, EngineOpen, FamilyName, SchemaHash, TableDescriptor};
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     store::{
@@ -18,7 +19,6 @@ use orchestrate_nexus::{
         record::{LOCKS_TABLE, METADATA_TABLE, SCHEMA_VERSION, StoredLock},
     },
 };
-use sema_engine::{Engine, EngineOpen, FamilyName, SchemaHash, TableDescriptor};
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
 trait Fixture {
@@ -37,7 +37,7 @@ impl Fixture for std::path::Path {
 #[test]
 fn an_open_refused_on_a_family_writes_nothing() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let store_path = directory.path().join("orchestrate.sema");
+    let store_path = directory.path().join("orchestrate.memory");
     {
         // A store whose Lock family is some other generation's, which this
         // one neither is nor evolves from.

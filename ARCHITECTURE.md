@@ -12,7 +12,7 @@ ordinary Datom CLI           privileged Datom CLI
        |                           |
        +------ orchestrate-nexus --+
                      |
-              orchestrate-nexus.sema
+              orchestrate-nexus.memory
 ```
 
 ## Process boundaries

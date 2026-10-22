@@ -9,6 +9,6 @@ Rules for work here:
   accepts the generated `signal-orchestrate` Query Datom root and `orchestrate-meta` accepts
   the generated `meta-signal-orchestrate` Query Datom root. Do not add tier auto-routing back to
   either client.
-- This component owns **its own** `sema-engine` database file
-  (`orchestrate.sema`). Orchestrate Nexus serializes request handling through
+- This component owns **its own** `memory-engine` database file
+  (`orchestrate.memory`). Orchestrate Nexus serializes request handling through
   its one service mutex. There is no shared cross-component database.

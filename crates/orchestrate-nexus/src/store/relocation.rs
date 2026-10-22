@@ -9,8 +9,8 @@
 //! Spending it is `Situates::situate`'s, in the commit that records the new
 //! address.
 
+use memory_engine::QueryPlan;
 use nexus::Relocation;
-use sema_engine::QueryPlan;
 
 use crate::store::{OrchestrateStore, StoreError};
 

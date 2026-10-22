@@ -59,10 +59,10 @@ impl Serves for Path {
 #[test]
 fn a_copy_cannot_be_declared_a_move_while_the_original_is_still_there() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let copy = directory.path().join("copy.sema");
+    let copy = directory.path().join("copy.memory");
     std::fs::copy(&original, &copy).expect("copy the store the way a backup would");
 
     let error = StoreRelocation::declare(&copy)
@@ -82,12 +82,12 @@ fn a_copy_cannot_be_declared_a_move_while_the_original_is_still_there() {
 #[test]
 fn a_move_is_declared_once_the_original_is_gone_and_the_sockets_are_free() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
     // A move that did not carry the file: the case the declaration exists
     // for. `cp` then `rm` is what a cross-filesystem `mv` does.
-    let moved = directory.path().join("moved.sema");
+    let moved = directory.path().join("moved.memory");
     std::fs::copy(&original, &moved).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
 
@@ -113,10 +113,10 @@ fn a_relocation_is_refused_while_something_still_holds_a_socket() {
     use orchestrate_nexus::transport::socket::{Claiming, SocketClaim};
 
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let moved = directory.path().join("moved.sema");
+    let moved = directory.path().join("moved.memory");
     std::fs::copy(&original, &moved).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
 
@@ -142,7 +142,7 @@ fn a_relocation_is_refused_while_something_still_holds_a_socket() {
 #[test]
 fn a_store_at_its_own_recorded_address_has_nothing_to_declare() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let store_path = directory.path().join("original.sema");
+    let store_path = directory.path().join("original.memory");
     directory.path().served(&store_path);
 
     let error = StoreRelocation::declare(&store_path)
@@ -162,10 +162,10 @@ fn a_store_at_its_own_recorded_address_has_nothing_to_declare() {
 #[test]
 fn a_move_that_carried_the_file_needs_no_declaration_and_is_told_so() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let moved = directory.path().join("moved.sema");
+    let moved = directory.path().join("moved.memory");
     std::fs::rename(&original, &moved).expect("move the store, file and all");
 
     let error = StoreRelocation::declare(&moved)
@@ -189,7 +189,7 @@ fn a_move_that_carried_the_file_needs_no_declaration_and_is_told_so() {
 #[test]
 fn a_store_that_never_served_has_no_address_to_be_moved_from() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let store_path = directory.path().join("fresh.sema");
+    let store_path = directory.path().join("fresh.memory");
     let (store, _) =
         OrchestrateStore::open(&store_path, directory.path().sockets()).expect("a fresh store");
     drop(store);
@@ -206,7 +206,7 @@ fn a_store_that_never_served_has_no_address_to_be_moved_from() {
 #[test]
 fn there_is_nothing_to_declare_about_a_path_with_no_store_at_it() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let absent = directory.path().join("absent.sema");
+    let absent = directory.path().join("absent.memory");
 
     let error = StoreRelocation::declare(&absent)
         .err()
@@ -225,10 +225,10 @@ fn there_is_nothing_to_declare_about_a_path_with_no_store_at_it() {
 #[test]
 fn declaring_twice_leaves_one_declaration() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let moved = directory.path().join("moved.sema");
+    let moved = directory.path().join("moved.memory");
     std::fs::copy(&original, &moved).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
 

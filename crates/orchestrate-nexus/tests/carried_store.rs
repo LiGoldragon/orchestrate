@@ -62,7 +62,7 @@ impl Serves for Path {
 #[test]
 fn a_store_reopened_where_it_was_bound_resumes_without_complaint() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let store_path = directory.path().join("original.sema");
+    let store_path = directory.path().join("original.memory");
     let bound = directory.path().served(&store_path);
 
     let (store, resumed) = OrchestrateStore::open(&store_path, directory.path().defaults())
@@ -82,10 +82,10 @@ fn a_store_reopened_where_it_was_bound_resumes_without_complaint() {
 #[test]
 fn a_store_copied_to_a_second_path_refuses_to_open_and_names_both_paths() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let copy = directory.path().join("copy.sema");
+    let copy = directory.path().join("copy.memory");
     std::fs::copy(&original, &copy).expect("copy the store the way a backup would");
 
     let error = OrchestrateStore::open(&copy, directory.path().defaults())
@@ -101,7 +101,7 @@ fn a_store_copied_to_a_second_path_refuses_to_open_and_names_both_paths() {
 #[test]
 fn a_store_that_was_never_bound_is_not_a_copy() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let store_path = directory.path().join("fresh.sema");
+    let store_path = directory.path().join("fresh.memory");
     let (store, _) = OrchestrateStore::open(&store_path, directory.path().defaults())
         .expect("a fresh store opens");
     assert!(
@@ -117,12 +117,12 @@ fn a_store_that_was_never_bound_is_not_a_copy() {
 #[test]
 fn a_store_moved_with_its_file_intact_opens_and_re_records_its_new_address() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
     // `mv` within a filesystem. One file, one claimant, a new address: the
     // record recognises itself and nobody has to say anything.
-    let moved = directory.path().join("moved.sema");
+    let moved = directory.path().join("moved.memory");
     std::fs::rename(&original, &moved).expect("move the store");
 
     let (mut store, _) = OrchestrateStore::open(&moved, directory.path().defaults())
@@ -146,13 +146,13 @@ fn a_store_moved_with_its_file_intact_opens_and_re_records_its_new_address() {
 #[test]
 fn a_store_whose_bytes_were_carried_without_its_file_is_refused_until_declared() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
     // What a cross-filesystem `mv` does, and `tar`, and a snapshot restore:
     // new bytes in a new file, the old one gone. No record can tell this
     // from a duplication, so it is refused with one.
-    let carried = directory.path().join("carried.sema");
+    let carried = directory.path().join("carried.memory");
     std::fs::copy(&original, &carried).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
 
@@ -168,10 +168,10 @@ fn a_store_whose_bytes_were_carried_without_its_file_is_refused_until_declared()
 #[test]
 fn a_declared_move_is_admitted_and_the_declaration_is_spent_by_the_bind() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let carried = directory.path().join("carried.sema");
+    let carried = directory.path().join("carried.memory");
     std::fs::copy(&original, &carried).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
     carried.declare();
@@ -194,7 +194,7 @@ fn a_declared_move_is_admitted_and_the_declaration_is_spent_by_the_bind() {
 
     // With the declaration spent and the address re-recorded, a copy taken
     // from the relocated store finds no standing licence.
-    let third = directory.path().join("third.sema");
+    let third = directory.path().join("third.memory");
     std::fs::copy(&carried, &third).expect("copy the relocated store");
     let error = OrchestrateStore::open(&third, directory.path().defaults())
         .err()
@@ -208,17 +208,17 @@ fn a_declared_move_is_admitted_and_the_declaration_is_spent_by_the_bind() {
 #[test]
 fn a_declaration_does_not_admit_a_third_path() {
     let directory = tempfile::tempdir().expect("isolated store directory");
-    let original = directory.path().join("original.sema");
+    let original = directory.path().join("original.memory");
     directory.path().served(&original);
 
-    let carried = directory.path().join("carried.sema");
+    let carried = directory.path().join("carried.memory");
     std::fs::copy(&original, &carried).expect("carry the bytes across");
     std::fs::remove_file(&original).expect("and remove the original");
     carried.declare();
 
     // A copy taken *after* the declaration, before the move was completed.
     // It carries the declaration and is at neither end of it.
-    let third = directory.path().join("third.sema");
+    let third = directory.path().join("third.memory");
     std::fs::copy(&carried, &third).expect("copy the declared store");
 
     let error = OrchestrateStore::open(&third, directory.path().defaults())

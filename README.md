@@ -1,6 +1,6 @@
 # Orchestrate
 
-Orchestrate is a durable Lock Nexus. It owns coordination locks in one Sema
+Orchestrate is a durable Lock Nexus. It owns coordination locks in one Memory
 store and serves two typed Unix sockets.
 
 ## Packages
@@ -76,8 +76,8 @@ the standard Nexus metadata tree, and only `ReverseMetaConfiguration` on the
 meta socket unsets it.
 
 The store is
-`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema`, falling back to
-`$HOME/.local/state/orchestrate-nexus/orchestrate-nexus.sema`. It persists
+`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.memory`, falling back to
+`$HOME/.local/state/orchestrate-nexus/orchestrate-nexus.memory`. It persists
 configuration, every active Lock, and the next monotonic Lock ID.
 
 `orchestrate-upgrade-preflight` reports how many pre-0.25 PathLock rows a

@@ -9,7 +9,7 @@ use signal_orchestrate::OrchestrateNexusConfiguration;
 use thiserror::Error;
 
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
-const STORE_FILE: &str = "orchestrate-nexus.sema";
+const STORE_FILE: &str = "orchestrate-nexus.memory";
 const ORDINARY_SOCKET_FILE: &str = "orchestrate.sock";
 const META_SOCKET_FILE: &str = "orchestrate-meta.sock";
 

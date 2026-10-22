@@ -78,7 +78,7 @@ impl ServesOnePrivilegedConnection for tempfile::TempDir {
             .bind_listener(SocketAuthority::Privileged)
             .expect("bind the privileged socket");
         let (store, _) = OrchestrateStore::open(
-            &self.path().join(format!("{name}.sema")),
+            &self.path().join(format!("{name}.memory")),
             OrchestrateNexusConfiguration {
                 ordinary_socket_path: self.path().join("o.sock").display().to_string(),
                 meta_socket_path: socket_path.display().to_string(),

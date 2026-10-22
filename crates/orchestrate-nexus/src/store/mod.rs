@@ -1,6 +1,6 @@
 //! Durable Lock state owned by the Orchestrate Nexus.
 //!
-//! One process owns one Sema store. It holds three families: the standard
+//! One process owns one Memory store. It holds three families: the standard
 //! Nexus metadata tree, the Locks, and the Lock id allocator. Every durable
 //! transition passes through this module, and every one of them is typed.
 
@@ -21,10 +21,10 @@ pub use transition::Configures;
 
 use std::{fs, path::Path};
 
+use memory_engine::{Engine, EngineOpen, QueryPlan, TableReference};
 use nexus::{
     Bearing, Configurable, ConfigurationState, Identifying, Relocated, Situated, StoreIdentity,
 };
-use sema_engine::{Engine, EngineOpen, QueryPlan, TableReference};
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
 use cutover::{CarriedConfiguration, Carrying};
@@ -151,7 +151,7 @@ impl OpensStore for OrchestrateStore {
             engine.register_table(StoredAllocator::descriptor())?;
         match engine.match_records(QueryPlan::all(allocator))?.records() {
             [] => {
-                engine.assert(sema_engine::Assertion::new(
+                engine.assert(memory_engine::Assertion::new(
                     allocator,
                     StoredAllocator { next_lock_id: 1 },
                 ))?;
@@ -225,7 +225,7 @@ impl SeedsMetadata for Engine {
         if let Some(carried) = carried.as_ref().filter(|carried| carried.is_present()) {
             commit = commit.retract(
                 carried.table(),
-                sema_engine::RecordKey::new(record::CONFIGURATION_KEY),
+                memory_engine::RecordKey::new(record::CONFIGURATION_KEY),
             );
         }
         self.commit_atomic(commit)?;
@@ -261,7 +261,7 @@ impl KeepsMetadata for OrchestrateStore {
         };
         let table = self.metadata;
         self.engine
-            .mutate(sema_engine::Mutation::new(table, record))?;
+            .mutate(memory_engine::Mutation::new(table, record))?;
         Ok(())
     }
 }

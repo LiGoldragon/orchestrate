@@ -50,7 +50,7 @@ impl Founds for tempfile::TempDir {
 #[tokio::test]
 async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     let directory = tempfile::tempdir().expect("isolated Nexus store");
-    let founded = directory.founded("authority.sema");
+    let founded = directory.founded("authority.memory");
     let ordinary = directory.path().socket_paths("ordinary");
 
     assert_eq!(
@@ -119,7 +119,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
 #[tokio::test]
 async fn whether_the_privileged_configure_occurred_survives_a_restart() {
     let directory = tempfile::tempdir().expect("isolated Nexus store");
-    let store_path = directory.path().join("durable.sema");
+    let store_path = directory.path().join("durable.memory");
     let defaults = directory.path().socket_paths("default");
     let privileged = directory.path().socket_paths("privileged");
 
@@ -160,7 +160,7 @@ async fn whether_the_privileged_configure_occurred_survives_a_restart() {
 #[tokio::test]
 async fn an_unbindable_configuration_is_refused_on_both_surfaces() {
     let directory = tempfile::tempdir().expect("isolated Nexus store");
-    let founded = directory.founded("invalid.sema");
+    let founded = directory.founded("invalid.memory");
     let same_path = directory.path().join("one.sock").display().to_string();
     let invalid = OrchestrateNexusConfiguration {
         ordinary_socket_path: same_path.clone(),

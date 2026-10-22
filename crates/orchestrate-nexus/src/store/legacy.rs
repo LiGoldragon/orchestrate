@@ -9,11 +9,11 @@
 
 use std::path::Path;
 
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use sema_engine::{
+use memory_engine::{
     Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, SchemaHash,
     TableDescriptor, TableName, TableReference,
 };
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 use super::{error::StoreError, record::SCHEMA_VERSION};
 
@@ -101,7 +101,7 @@ impl CountsActivePathLocks for Engine {
 
 #[cfg(test)]
 mod tests {
-    use sema_engine::Assertion;
+    use memory_engine::Assertion;
     use signal_orchestrate::OrchestrateNexusConfiguration;
 
     use super::*;
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn preflight_does_not_create_a_missing_store() {
         let directory = tempfile::tempdir().expect("temporary preflight directory");
-        let store_path = directory.path().join("missing.sema");
+        let store_path = directory.path().join("missing.memory");
         let preflight = <LegacyStorePreflight as PreflightsLegacyStore>::inspect(&store_path)
             .expect("inspect missing store");
         assert_eq!(preflight.active_lock_count(), 0);
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn a_store_with_active_path_locks_is_counted_and_refused() {
         let directory = tempfile::tempdir().expect("temporary legacy store");
-        let store_path = directory.path().join("legacy.sema");
+        let store_path = directory.path().join("legacy.memory");
         let mut engine =
             Engine::open(EngineOpen::new(&store_path, SCHEMA_VERSION)).expect("open legacy store");
         let legacy = engine

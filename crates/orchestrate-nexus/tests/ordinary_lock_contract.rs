@@ -27,7 +27,7 @@ impl CreatesCoreFixture for CoreFixture {
     fn create() -> Self {
         let directory = tempfile::tempdir().expect("isolated Nexus store");
         let (store, _) = OrchestrateStore::open(
-            &directory.path().join("orchestrate.sema"),
+            &directory.path().join("orchestrate.memory"),
             directory.path().defaults(),
         )
         .expect("open isolated store");
@@ -200,7 +200,7 @@ async fn observe_locks_is_name_then_id_ordered() {
 #[tokio::test]
 async fn released_ids_never_reach_a_later_lock_after_restart() {
     let directory = tempfile::tempdir().expect("isolated Nexus store");
-    let store_path = directory.path().join("orchestrate.sema");
+    let store_path = directory.path().join("orchestrate.memory");
     let defaults = directory.path().defaults();
     let (store, _) = OrchestrateStore::open(&store_path, defaults.clone()).expect("open store");
     let founded = FoundedCore::found(store);

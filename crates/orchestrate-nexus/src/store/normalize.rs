@@ -5,7 +5,7 @@ use std::{
     path::{Component, Path},
 };
 
-use sema_engine::RecordPredicate;
+use memory_engine::RecordPredicate;
 use signal_orchestrate::{Lock, LockRequest};
 
 use super::{

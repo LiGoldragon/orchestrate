@@ -50,10 +50,10 @@
 
 use std::path::Path;
 
+use memory_engine::{Assertion, Engine, EngineOpen, Mutation, QueryPlan, TableReference};
 use nexus::{
     Bearing, Configurable, Identifying, Relocated, Relocating, Relocation, Situated, StoreIdentity,
 };
-use sema_engine::{Assertion, Engine, EngineOpen, Mutation, QueryPlan, TableReference};
 use signal_orchestrate::OrchestrateNexusConfiguration;
 use thiserror::Error;
 
@@ -258,8 +258,8 @@ pub enum RecoveryError {
     SocketStillClaimed { socket_path: String },
     #[error("store: {0}")]
     Store(#[from] StoreError),
-    #[error("sema engine: {0}")]
-    Engine(#[from] sema_engine::Error),
+    #[error("memory engine: {0}")]
+    Engine(#[from] memory_engine::Error),
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
 }

@@ -14,8 +14,8 @@
 //! can never come to rest with the old address recorded and the instruction
 //! still standing, and an instruction can never outlive the move it named.
 
+use memory_engine::{QueryPlan, RecordKey};
 use nexus::{Situating, Situation};
-use sema_engine::{QueryPlan, RecordKey};
 
 use crate::store::{
     OrchestrateStore, StoreError,

@@ -37,7 +37,7 @@ impl Defaults for Path {
     }
 
     fn store(&self) -> std::path::PathBuf {
-        self.join("stopping.sema")
+        self.join("stopping.memory")
     }
 }
 

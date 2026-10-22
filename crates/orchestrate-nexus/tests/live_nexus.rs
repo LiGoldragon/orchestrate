@@ -13,11 +13,11 @@ use std::{
     time::Duration,
 };
 
+use memory_engine::{Assertion, Engine, EngineOpen};
 use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
 use orchestrate_nexus::store::record::{
     Familial, SCHEMA_VERSION, StoredAllocator, StoredConfiguration, StoredLock, Storing,
 };
-use sema_engine::{Assertion, Engine, EngineOpen};
 use signal::{
     Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId, Exchanged, FIRST_EXCHANGE,
     FrameCapacity, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable, Signal,
@@ -57,7 +57,7 @@ impl CreatesIsolatedXdg for IsolatedXdg {
 
     fn store(&self) -> PathBuf {
         self.state_home
-            .join("orchestrate-nexus/orchestrate-nexus.sema")
+            .join("orchestrate-nexus/orchestrate-nexus.memory")
     }
 
     fn ordinary_socket(&self) -> PathBuf {

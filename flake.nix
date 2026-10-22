@@ -160,7 +160,7 @@
               cargoTestExtraArgs = "-p ${nexusSpec} --test relocation";
             }
           );
-          # A store the released 0.36.0 served, with its own sema-engine,
+          # A store the released 0.36.0 served, with its own memory-engine,
           # resumes here with its Locks, configuration and guard; and an open
           # refused on a family writes nothing, because every family is
           # declared to the engine's open.

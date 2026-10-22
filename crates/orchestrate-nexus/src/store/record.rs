@@ -6,12 +6,12 @@
 //! durable fact of whether the privileged Configure was ever done. Its
 //! lifecycle rule is the shared one, from the `nexus` library.
 
-use nexus::{ConfigurationState, Relocation, Situation};
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use sema_engine::{
+use memory_engine::{
     EngineOpen, EngineRecord, FamilyName, RecordKey, SchemaHash, SchemaVersion, TableDescriptor,
     TableName,
 };
+use nexus::{ConfigurationState, Relocation, Situation};
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use signal_orchestrate::{Lock, OrchestrateNexusConfiguration};
 
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);

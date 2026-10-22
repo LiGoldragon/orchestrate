@@ -4,8 +4,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
-    #[error("sema engine: {0}")]
-    Engine(#[from] sema_engine::Error),
+    #[error("memory engine: {0}")]
+    Engine(#[from] memory_engine::Error),
     #[error("the durable store has {count} Nexus metadata rows")]
     MetadataInvariant { count: usize },
     #[error(

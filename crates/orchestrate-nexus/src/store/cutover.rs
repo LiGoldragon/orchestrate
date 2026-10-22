@@ -30,7 +30,7 @@
 //! importer was written against a record shape that had already been retired
 //! when it was written.
 
-use sema_engine::{
+use memory_engine::{
     Engine, FamilyName, QueryPlan, RecordKey, SchemaHash, TableDescriptor, TableReference,
 };
 
@@ -39,7 +39,7 @@ use super::{
     record::{CONFIGURATION_KEY, CONFIGURATION_TABLE, Familial, StoredConfiguration},
 };
 
-impl sema_engine::EngineRecord for StoredConfiguration {
+impl memory_engine::EngineRecord for StoredConfiguration {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(CONFIGURATION_KEY)
     }
@@ -97,8 +97,8 @@ impl Carrying for CarriedConfiguration {
 
 #[cfg(test)]
 mod tests {
+    use memory_engine::{Assertion, Engine, EngineOpen};
     use nexus::Configurable;
-    use sema_engine::{Assertion, Engine, EngineOpen};
     use signal_orchestrate::{Lock, Observation, ObserveSelection, OrchestrateNexusConfiguration};
 
     use super::*;
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn a_previous_generation_store_carries_its_configuration_and_its_locks() {
         let directory = tempfile::tempdir().expect("temporary store");
-        let store_path = directory.path().join("previous.sema");
+        let store_path = directory.path().join("previous.memory");
         let held = Lock {
             lock_id: 7,
             lock_name: "held".to_owned(),
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn a_carried_store_refuses_ordinary_configure_until_the_meta_socket_reopens_it() {
         let directory = tempfile::tempdir().expect("temporary store");
-        let store_path = directory.path().join("previous.sema");
+        let store_path = directory.path().join("previous.memory");
         previous_generation_store(
             &store_path,
             &Lock {

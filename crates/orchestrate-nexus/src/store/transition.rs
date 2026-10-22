@@ -1,7 +1,7 @@
 //! The durable transitions of the Orchestrate Nexus.
 
+use memory_engine::{QueryPlan, RecordKey, Retraction};
 use nexus::Configurable;
-use sema_engine::{QueryPlan, RecordKey, Retraction};
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockOverlap,
     LockRejection, LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,

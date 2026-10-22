@@ -1,8 +1,8 @@
 # Upgrades
 
-## 0.37.0 to 0.37.1 -- sema-engine 0.18.0
+## 0.37.0 to 0.37.1 -- memory-engine 0.18.0
 
-No wire change on either socket and no store change. sema-engine 0.18.0
+No wire change on either socket and no store change. memory-engine 0.18.0
 `9884905f` (from 0.17.0 `489d290d`) keeps the engine storage layout number;
 it removes `with_prior`, which orchestrate never used, and adds Memorable,
 whose change-receipts table appears only on a store's first typed change,
@@ -51,7 +51,7 @@ opens as it is, with its Locks, configuration, situation and any declared
 relocation. The `store-generations` check opens one written by the released
 0.36.0 itself.
 
-Repinned: sema-engine 0.17.0 `489d290d` (from 0.15.1 `27e814a7`); sema and
+Repinned: memory-engine 0.17.0 `489d290d` (from 0.15.1 `27e814a7`); memory and
 signal-sema are unchanged.
 
 - The open declares all five families (metadata, situation, relocation, Locks,
@@ -82,7 +82,7 @@ against a 0.36.0 Nexus, or the reverse, does not talk.
 Repinned: signal 7.0.0 `66e7b153`, signal-orchestrate 4.0.0 `4e683453`,
 meta-signal-orchestrate 4.0.0 `972a3b03`, protos 0.31.0 `1febca78`,
 datom-codec 0.31.0 `09e2a9d5`, ethos-zero 13.0.0 `cf7dd128`. The lock graph
-holds one protos and one datom-codec. nexus 0.5.0 and sema-engine 0.15.1 are
+holds one protos and one datom-codec. nexus 0.5.0 and memory-engine 0.15.1 are
 unchanged.
 
 What changes on the wire:
@@ -479,9 +479,9 @@ the generated `Query` roots through Datom; the daemon exchanges the generated
 `Query` and `Response` roots as length-prefixed portable rkyv bytes. There is
 no routed wire envelope or old-contract compatibility path.
 
-The named generated records change the archives stored by Sema. Before
+The named generated records change the archives stored by Memory. Before
 installing 0.31.0, stop the old Nexus, copy the latest
-`orchestrate-nexus.sema` into isolated state, and run
+`orchestrate-nexus.memory` into isolated state, and run
 `orchestrate-store-migrate` against that copy. The migration reads the exact
 0.30 tuple-shaped `Configure`, `Lock`, and allocator records and writes the
 0.31 named records while preserving configuration, every lock field, and the
@@ -613,7 +613,7 @@ generated module matches ethos-zero output.
 
 ### Store compatibility
 
-The Sema store schema version, table names, table descriptors, and
+The Memory store schema version, table names, table descriptors, and
 record key shapes are unchanged between 0.26 and 0.27. The persisted
 rkyv archives of `Configure` and `Lock` use the same field layout
 (positional tuple structs in both versions). The `LockId` allocator
@@ -649,7 +649,7 @@ WireContract contract `1/6`, and privileged frames change to `2/5`. Replace
 every client at the same time; there is no old frame, Dotos parser, Datom
 parser, route/exchange, or text compatibility path.
 
-The durable Sema families, hashes, and schema version remain unchanged because
+The durable Memory families, hashes, and schema version remain unchanged because
 the persisted configuration, complete Lock facts, and allocator are the same
 records. Keep the store in place, but run the existing zero-argument preflight
 against the same XDG roots before starting 0.26. It still refuses a nonempty
@@ -698,7 +698,7 @@ the returned Lock ID.
 
 This breaking replacement removes the startup `Configure` Signal argv. Start
 `orchestrate-nexus` with zero arguments. It creates or resumes only
-`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.sema` (falling back to
+`$XDG_STATE_HOME/orchestrate-nexus/orchestrate-nexus.memory` (falling back to
 `$HOME/.local/state`), with runtime sockets under
 `$XDG_RUNTIME_DIR/orchestrate-nexus/`.
 
@@ -717,7 +717,7 @@ This is a breaking deployment replacement. Stop and remove the
 
 Discard the old lane, worktree, claim, and lock-projection state. Do not migrate
 it. Remove the old durable store and its projected lock files before starting the
-fresh Nexus. Start with an empty default Sema store, then verify a PathLock
+fresh Nexus. Start with an empty default Memory store, then verify a PathLock
 registration and release through the ordinary client.
 # Orchestrate 0.30.0: Signal frame and durable-record v2
 
@@ -734,7 +734,7 @@ at runtime.
 
 Stop the daemon and preserve a backup copy before running the migration. Run
 `orchestrate-store-migrate <absolute-store-path>` once while the daemon is
-offline. The Sema/redb store takes the native exclusive writable file lock, so
+offline. The Memory/redb store takes the native exclusive writable file lock, so
 the importer refuses a second concurrent owner instead of guessing from a PID
 or socket path. It validates v1 configuration and allocator rows before it
 registers any v2 table; a malformed v1 source therefore leaves no empty v2

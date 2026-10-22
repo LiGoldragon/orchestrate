@@ -10,7 +10,7 @@ privileged datom boundaries.
 
 - Use Jujutsu for version control.
 - Use Nix for build and test entry points.
-- Durable state uses `sema-engine` over the redb + rkyv substrate.
+- Durable state uses `memory-engine` over the redb + rkyv substrate.
 - Preserve the small Lock surface: no lanes, claims, worktrees, roles,
   or compatibility layer belong here.
 - The long-running executable is `orchestrate-nexus`; do not

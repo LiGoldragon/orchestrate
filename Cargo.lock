@@ -344,6 +344,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "memory"
+version = "0.1.1"
+source = "git+https://github.com/LiGoldragon/memory.git?rev=69d91c486b335575ee5e4b0eb79da27094e700b6#69d91c486b335575ee5e4b0eb79da27094e700b6"
+dependencies = [
+ "redb",
+ "rkyv",
+ "thiserror",
+]
+
+[[package]]
+name = "memory-engine"
+version = "0.18.0"
+source = "git+https://github.com/LiGoldragon/memory-engine.git?rev=abf9d85166e22440440baba03358913458905b8d#abf9d85166e22440440baba03358913458905b8d"
+dependencies = [
+ "blake3",
+ "memory",
+ "rkyv",
+ "signal-sema",
+ "thiserror",
+]
+
+[[package]]
 name = "meta-signal-orchestrate"
 version = "5.0.0"
 source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=77afda05c488e66aa756e3da32344cc33c83b2a3#77afda05c488e66aa756e3da32344cc33c83b2a3"
@@ -436,11 +458,11 @@ name = "orchestrate-nexus"
 version = "0.37.1"
 dependencies = [
  "kameo",
+ "memory-engine",
  "meta-signal-orchestrate",
  "nexus",
  "rkyv",
  "rustix",
- "sema-engine",
  "signal",
  "signal-orchestrate",
  "tempfile",
@@ -591,28 +613,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "sema"
-version = "0.1.1"
-source = "git+https://github.com/LiGoldragon/sema.git?rev=51d7927c872f0df12791bad8d39a4db6433b01a1#51d7927c872f0df12791bad8d39a4db6433b01a1"
-dependencies = [
- "redb",
- "rkyv",
- "thiserror",
-]
-
-[[package]]
-name = "sema-engine"
-version = "0.18.0"
-source = "git+https://github.com/LiGoldragon/sema-engine.git?rev=9884905ff9c660ad97a35c524e42532d5c7bac90#9884905ff9c660ad97a35c524e42532d5c7bac90"
-dependencies = [
- "blake3",
- "rkyv",
- "sema",
- "signal-sema",
- "thiserror",
-]
 
 [[package]]
 name = "serde"
