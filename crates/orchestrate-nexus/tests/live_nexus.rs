@@ -6,8 +6,9 @@
 //! Nexus that hand-rolled the same mistake; this one cannot.
 
 use std::{
+    ffi::OsString,
     io::{BufRead, BufReader},
-    os::unix::{fs::PermissionsExt, net::UnixStream},
+    os::unix::{ffi::OsStringExt, fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
@@ -99,12 +100,17 @@ struct LiveNexus {
 
 trait StartsNexus: Sized {
     fn start(binary: &str, roots: IsolatedXdg) -> Self;
+    fn start_from(command: Command, roots: IsolatedXdg) -> Self;
 }
 
 impl StartsNexus for LiveNexus {
     fn start(binary: &str, roots: IsolatedXdg) -> Self {
-        let mut child = roots
-            .command(binary)
+        let command = roots.command(binary);
+        Self::start_from(command, roots)
+    }
+
+    fn start_from(mut command: Command, roots: IsolatedXdg) -> Self {
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -640,6 +646,61 @@ fn nexus_rejects_arguments_without_opening_state() {
         .expect("run zero-argument Nexus with invalid input");
     assert!(!output.status.success());
     assert!(!roots.store().exists());
+}
+
+#[test]
+fn selected_non_utf8_roots_are_refused_without_lossy_side_effects() {
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    for variable in ["XDG_STATE_HOME", "XDG_RUNTIME_DIR"] {
+        let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+        let roots = IsolatedXdg::create(&temporary);
+        let mut bytes = temporary.path().as_os_str().as_encoded_bytes().to_vec();
+        bytes.extend_from_slice(b"/invalid-");
+        bytes.push(0xff);
+        let invalid = PathBuf::from(OsString::from_vec(bytes));
+        let lossy = PathBuf::from(invalid.to_string_lossy().into_owned());
+        let mut child = roots
+            .command(binary)
+            .env(variable, &invalid)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run Nexus with a non-UTF-8 root");
+        std::thread::sleep(Duration::from_millis(500));
+        if child.try_wait().expect("inspect Nexus status").is_none() {
+            child.kill().expect("stop a Nexus that accepted the root");
+        }
+        let output = child.wait_with_output().expect("collect Nexus output");
+
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).expect("controlled textual error");
+        assert!(stderr.contains(variable), "{stderr}");
+        assert!(stderr.contains("UTF-8"), "{stderr}");
+        assert!(!stderr.contains("panicked"), "{stderr}");
+        assert!(
+            !lossy.join("orchestrate-nexus").exists(),
+            "no replacement-character path is used"
+        );
+        assert!(!roots.store().exists(), "no Memory store is created");
+        assert!(!roots.ordinary_socket().exists(), "no socket is created");
+        assert!(
+            !roots.claim(&roots.ordinary_socket()).exists(),
+            "no socket claim is created"
+        );
+    }
+}
+
+#[test]
+fn non_utf8_home_is_irrelevant_when_xdg_state_home_is_selected() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let mut bytes = temporary.path().as_os_str().as_encoded_bytes().to_vec();
+    bytes.extend_from_slice(b"/unused-home-");
+    bytes.push(0xff);
+    let mut command = roots.command(env!("CARGO_BIN_EXE_orchestrate-nexus"));
+    command.env("HOME", OsString::from_vec(bytes));
+
+    drop(LiveNexus::start_from(command, roots));
 }
 
 #[test]

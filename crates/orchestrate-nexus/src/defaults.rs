@@ -259,11 +259,13 @@ impl LocatesXdgRoots for DefaultConfiguration {
         variable: &'static str,
         path: PathBuf,
     ) -> Result<PathBuf, DefaultConfigurationError> {
-        if path.is_absolute() {
-            Ok(path)
-        } else {
-            Err(DefaultConfigurationError::RelativePath { variable, path })
+        if !path.is_absolute() {
+            return Err(DefaultConfigurationError::RelativePath { variable, path });
         }
+        if path.to_str().is_none() {
+            return Err(DefaultConfigurationError::NonUtf8Path { variable, path });
+        }
+        Ok(path)
     }
 }
 
@@ -277,6 +279,11 @@ pub enum DefaultConfigurationError {
     MissingHomeDirectory,
     #[error("{variable} must be an absolute path: {path:?}")]
     RelativePath {
+        variable: &'static str,
+        path: PathBuf,
+    },
+    #[error("{variable} must be representable as UTF-8: {path:?}")]
+    NonUtf8Path {
         variable: &'static str,
         path: PathBuf,
     },
