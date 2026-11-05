@@ -13,7 +13,7 @@
 
 use std::{
     ffi::OsString,
-    os::unix::ffi::OsStringExt,
+    os::unix::{ffi::OsStringExt, fs::symlink},
     path::{Path, PathBuf},
 };
 
@@ -81,6 +81,31 @@ fn legacy_preflight_refuses_a_non_utf8_path_without_inspecting_a_lossy_alternati
     assert!(
         !lossy.exists(),
         "no replacement-character store is inspected"
+    );
+}
+
+#[test]
+fn legacy_preflight_reports_an_indeterminate_path_instead_of_calling_it_absent() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let first = directory.path().join("first.memory");
+    let second = directory.path().join("second.memory");
+    symlink(&second, &first).expect("first half of a symlink loop");
+    symlink(&first, &second).expect("second half of a symlink loop");
+    let error = LegacyStorePreflight::inspect(&first)
+        .err()
+        .expect("the store's existence cannot be determined");
+
+    assert!(
+        matches!(error, StoreError::Filesystem(_)),
+        "found {error:?}"
+    );
+    assert_eq!(
+        std::fs::read_link(&first).expect("the first link remains"),
+        second
+    );
+    assert_eq!(
+        std::fs::read_link(&second).expect("the second link remains"),
+        first
     );
 }
 

@@ -92,7 +92,7 @@ pub trait DeclaresRelocation: Sized {
 impl DeclaresRelocation for StoreRelocation {
     fn declare(store_path: &Path) -> Result<Self, RecoveryError> {
         let exact_store_path = store_path.exact_store_path()?;
-        if !store_path.exists() {
+        if !store_path.try_exists().map_err(StoreError::from)? {
             return Err(RecoveryError::NoStore {
                 store_path: exact_store_path.to_owned(),
             });

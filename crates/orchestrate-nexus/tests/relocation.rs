@@ -12,7 +12,7 @@
 
 use std::{
     ffi::OsString,
-    os::unix::ffi::OsStringExt,
+    os::unix::{ffi::OsStringExt, fs::symlink},
     path::{Path, PathBuf},
 };
 
@@ -87,6 +87,31 @@ fn relocation_refuses_a_non_utf8_store_path_without_naming_a_lossy_alternative()
     assert!(
         !error.to_string().contains(&lossy),
         "the refusal never substitutes a replacement-character path"
+    );
+}
+
+#[test]
+fn relocation_reports_an_indeterminate_path_instead_of_calling_it_absent() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let first = directory.path().join("first.memory");
+    let second = directory.path().join("second.memory");
+    symlink(&second, &first).expect("first half of a symlink loop");
+    symlink(&first, &second).expect("second half of a symlink loop");
+    let error = StoreRelocation::declare(&first)
+        .err()
+        .expect("the store's existence cannot be determined");
+
+    assert!(
+        matches!(error, RecoveryError::Store(StoreError::Filesystem(_))),
+        "found {error:?}"
+    );
+    assert_eq!(
+        std::fs::read_link(&first).expect("the first link remains"),
+        second
+    );
+    assert_eq!(
+        std::fs::read_link(&second).expect("the second link remains"),
+        first
     );
 }
 

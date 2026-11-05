@@ -59,7 +59,7 @@ pub trait PreflightsLegacyStore: Sized {
 impl PreflightsLegacyStore for LegacyStorePreflight {
     fn inspect(store_path: &Path) -> Result<Self, StoreError> {
         let exact_store_path = store_path.exact_store_path()?;
-        if !store_path.exists() {
+        if !store_path.try_exists()? {
             return Ok(Self {
                 active_lock_count: 0,
             });
