@@ -116,6 +116,34 @@ fn relocation_reports_an_indeterminate_path_instead_of_calling_it_absent() {
 }
 
 #[test]
+fn an_indeterminate_origin_never_earns_a_move_declaration() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let original = directory.path().join("original.memory");
+    directory.path().served(&original);
+    let moved = directory.path().join("moved.memory");
+    std::fs::copy(&original, &moved).expect("carry the store bytes");
+    std::fs::remove_file(&original).expect("remove the original store");
+    let loop_peer = directory.path().join("origin-loop-peer");
+    symlink(&loop_peer, &original).expect("first half of the origin loop");
+    symlink(&original, &loop_peer).expect("second half of the origin loop");
+    let error = StoreRelocation::declare(&moved)
+        .err()
+        .expect("the origin's absence cannot be determined");
+
+    assert!(
+        matches!(error, RecoveryError::Store(StoreError::Filesystem(_))),
+        "found {error:?}"
+    );
+    std::fs::remove_file(&original).expect("remove the first loop link");
+    std::fs::remove_file(&loop_peer).expect("remove the second loop link");
+    std::fs::rename(&moved, &original).expect("put the store back at its recorded address");
+    assert!(
+        directory.path().declaration(&original).is_none(),
+        "the refusal writes no declaration"
+    );
+}
+
+#[test]
 fn a_copy_cannot_be_declared_a_move_while_the_original_is_still_there() {
     let directory = tempfile::tempdir().expect("isolated store directory");
     let original = directory.path().join("original.memory");

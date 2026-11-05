@@ -126,7 +126,7 @@ impl DeclaresRelocation for StoreRelocation {
 
         // The origin, first, because it is the cheap half and it is the one a
         // copy fails.
-        if Path::new(&origin).exists() {
+        if Path::new(&origin).try_exists().map_err(StoreError::from)? {
             return Err(RecoveryError::OriginStillPresent { origin });
         }
 
