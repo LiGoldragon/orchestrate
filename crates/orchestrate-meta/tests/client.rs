@@ -16,8 +16,9 @@ use std::{
 
 use meta_signal_orchestrate::{Query, Response};
 use signal::{
-    Answer, Contracted, Delivery, Dispatch, FrameCapacity, FrameError, FrameReading, FrameWriting,
-    HandshakeReceipt, HandshakeRejection, Restorable, Signal, Signalizable,
+    Answer, Contracted, Delivery, Dispatch, Ending, ExchangeFault, FrameCapacity, FrameError,
+    FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection, Restorable, Signal,
+    Signalizable,
 };
 use signal_orchestrate::{ConfigurationReceipt, OrchestrateNexusConfiguration};
 
@@ -29,12 +30,21 @@ struct ClientHarness {
     socket: PathBuf,
 }
 
+#[derive(Clone, Copy)]
+enum EndTarget {
+    Opened,
+    Other,
+    Connection,
+}
+
 trait CreatesClientHarness: Sized {
     fn create() -> Self;
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
     fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output;
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
+    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Query>;
+    fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()>;
     fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
     fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool>;
 }
@@ -113,6 +123,44 @@ impl CreatesClientHarness for ClientHarness {
                 response,
             }));
             opening.query
+        })
+    }
+
+    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Query> {
+        let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept meta client");
+            let Dispatch::Greet(greeting) = stream.dispatched() else {
+                panic!("the client greets before anything else");
+            };
+            stream.deliver(Delivery::Greeted(Query::receipt(&greeting)));
+            let Dispatch::Open(opening) = stream.dispatched() else {
+                panic!("then opens one exchange");
+            };
+            let ending = match target {
+                EndTarget::Opened => {
+                    Ending::faulted(opening.exchange, ExchangeFault::UnknownExchange)
+                }
+                EndTarget::Other => Ending::faulted(
+                    opening.exchange.wrapping_add(1),
+                    ExchangeFault::UnknownExchange,
+                ),
+                EndTarget::Connection => Ending::connection_faulted(ExchangeFault::UnknownExchange),
+            };
+            stream.deliver(Delivery::End(ending));
+            opening.query
+        })
+    }
+
+    fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()> {
+        let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept meta client");
+            stream.dispatched();
+            stream.deliver(Delivery::End(Ending::faulted(
+                1,
+                ExchangeFault::UnknownExchange,
+            )));
         })
     }
 
@@ -238,4 +286,64 @@ fn a_wrong_greeted_digest_never_opens_an_exchange() {
         server.join().expect("meta fixture server"),
         "the client closes before sending a query"
     );
+}
+
+#[test]
+fn an_end_for_no_exchange_the_client_opened_is_unexpected() {
+    for at_greeting in [true, false] {
+        let harness = ClientHarness::create();
+        let server = if at_greeting {
+            let handle = harness.end_greeting_on_an_exchange();
+            EitherEnding::Greeting(handle)
+        } else {
+            let handle = harness.end_query(EndTarget::Other);
+            EitherEnding::Query(handle)
+        };
+        let output = harness.invoke(Some(QUERY));
+
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .contains("frame for no exchange this client opened")
+        );
+        server.join();
+    }
+}
+
+enum EitherEnding {
+    Greeting(std::thread::JoinHandle<()>),
+    Query(std::thread::JoinHandle<Query>),
+}
+
+trait JoinsEnding {
+    fn join(self);
+}
+
+impl JoinsEnding for EitherEnding {
+    fn join(self) {
+        match self {
+            Self::Greeting(handle) => handle.join().expect("greeting-ending fixture"),
+            Self::Query(handle) => {
+                handle.join().expect("query-ending fixture");
+            }
+        }
+    }
+}
+
+#[test]
+fn ends_for_the_opened_exchange_or_connection_remain_faults() {
+    for target in [EndTarget::Opened, EndTarget::Connection] {
+        let harness = ClientHarness::create();
+        let server = harness.end_query(target);
+        let output = harness.invoke(Some(QUERY));
+
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8(output.stderr)
+                .unwrap()
+                .starts_with("ExchangeFaulted.")
+        );
+        server.join().expect("query-ending fixture");
+    }
 }

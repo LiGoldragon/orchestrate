@@ -226,7 +226,10 @@ impl Asking for SignalConnection {
             Delivery::Answer(answer) if answer.is_connection_wide() => {
                 return Ok(answer.response);
             }
-            Delivery::End(ending) => return Err(ending.conclusion.into()),
+            Delivery::End(ending) if ending.is_connection_wide() => {
+                return Err(ending.conclusion.into());
+            }
+            Delivery::End(_) => return Err(TransportError::Unexpected),
             Delivery::Answer(_) => return Err(TransportError::Unexpected),
         }
         let exchange = self.ledger.open().map_err(TransportError::Faulted)?;
@@ -237,7 +240,12 @@ impl Asking for SignalConnection {
             {
                 Ok(answer.response)
             }
-            Delivery::End(ending) => Err(ending.conclusion.into()),
+            Delivery::End(ending)
+                if ending.exchange() == exchange || ending.is_connection_wide() =>
+            {
+                Err(ending.conclusion.into())
+            }
+            Delivery::End(_) => Err(TransportError::Unexpected),
             Delivery::Answer(_) | Delivery::Greeted(_) => Err(TransportError::Unexpected),
         }
     }
