@@ -13,6 +13,7 @@
 
 use std::{
     ffi::OsString,
+    io::ErrorKind,
     os::unix::{ffi::OsStringExt, fs::symlink},
     path::{Path, PathBuf},
 };
@@ -47,6 +48,19 @@ impl Fixture for Path {
         bytes.push(0xff);
         PathBuf::from(OsString::from_vec(bytes))
     }
+}
+
+#[test]
+fn a_store_path_without_a_parent_is_a_typed_open_error() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let error = OrchestrateStore::open(Path::new("/"), directory.path().defaults())
+        .err()
+        .expect("a filesystem root cannot name a store file");
+
+    assert!(
+        matches!(error, StoreError::Filesystem(ref source) if source.kind() == ErrorKind::InvalidInput),
+        "found {error:?}"
+    );
 }
 
 #[test]

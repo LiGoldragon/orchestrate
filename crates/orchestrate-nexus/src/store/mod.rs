@@ -21,6 +21,7 @@ pub use transition::Configures;
 
 use std::{
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -89,11 +90,10 @@ impl OpensStore for OrchestrateStore {
         if !store_path.try_exists()? && defaults.validated().is_err() {
             return Err(StoreError::InvalidConfiguration);
         }
-        fs::create_dir_all(
-            store_path
-                .parent()
-                .expect("configured store path has a parent"),
-        )?;
+        let store_directory = store_path
+            .parent()
+            .ok_or_else(|| std::io::Error::from(ErrorKind::InvalidInput))?;
+        fs::create_dir_all(store_directory)?;
         // Every family this Nexus keeps is declared to the open, so the
         // engine stamps the store and registers them in one write
         // transaction: an open that fails on a family, or a crash during it,
