@@ -27,6 +27,7 @@ use nexus::{
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
+use crate::configuration::Validates;
 use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
@@ -64,6 +65,12 @@ impl OpensStore for OrchestrateStore {
         store_path: &Path,
         defaults: OrchestrateNexusConfiguration,
     ) -> Result<(Self, OrchestrateNexusConfiguration), StoreError> {
+        // An absent path can only become a fresh store, so reject an unusable
+        // default before the engine creates anything. A populated store does
+        // not depend on today's defaults: its durable configuration wins.
+        if !store_path.try_exists()? && defaults.validated().is_err() {
+            return Err(StoreError::InvalidConfiguration);
+        }
         fs::create_dir_all(
             store_path
                 .parent()
@@ -160,6 +167,9 @@ impl OpensStore for OrchestrateStore {
             rows => return Err(StoreError::LockIdAllocatorInvariant { count: rows.len() }),
         }
         let configuration = state.desired_configuration().clone().into_public();
+        if configuration.validated().is_err() {
+            return Err(StoreError::InvalidConfiguration);
+        }
         Ok((
             Self {
                 engine,
@@ -216,6 +226,15 @@ impl SeedsMetadata for Engine {
             }
             None => ConfigurationState::from_default(StoredConfiguration::from_public(defaults)),
         };
+        if state
+            .desired_configuration()
+            .clone()
+            .into_public()
+            .validated()
+            .is_err()
+        {
+            return Err(StoreError::InvalidConfiguration);
+        }
         let mut commit = self.begin_atomic_commit().assert(
             metadata,
             StoredMetadata {

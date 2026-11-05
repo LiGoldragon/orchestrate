@@ -37,6 +37,8 @@ pub enum StoreError {
     LegacyActiveLocks { count: usize },
     #[error("the durable Lock ID allocator is exhausted")]
     LockIdExhausted,
+    #[error("the Nexus configuration cannot be bound")]
+    InvalidConfiguration,
     #[error("filesystem: {0}")]
     Filesystem(#[from] std::io::Error),
     #[error("lock path {path:?} is not absolute")]

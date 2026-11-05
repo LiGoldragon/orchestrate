@@ -603,6 +603,83 @@ fn nexus_rejects_arguments_without_opening_state() {
 }
 
 #[test]
+fn invalid_fresh_defaults_leave_no_store_or_socket_claim() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let mut roots = IsolatedXdg::create(&temporary);
+    roots.runtime_directory = temporary.path().join("r".repeat(256));
+    let ordinary = roots.ordinary_socket();
+    let output = roots
+        .command(env!("CARGO_BIN_EXE_orchestrate-nexus"))
+        .output()
+        .expect("run Nexus with an unbindable default");
+
+    assert!(!output.status.success(), "the invalid default is refused");
+    assert!(!roots.store().exists(), "no Memory store is created");
+    assert!(!ordinary.exists(), "no socket is created");
+    assert!(
+        !roots.claim(&ordinary).exists(),
+        "no socket claim is created"
+    );
+}
+
+#[test]
+fn a_populated_store_ignores_invalid_current_defaults() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let valid = IsolatedXdg::create(&temporary);
+    let valid_ordinary = valid.ordinary_socket();
+    let held = Lock {
+        lock_id: 20,
+        lock_name: "stored-configuration".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "the populated store supplies its own configuration".to_owned(),
+    };
+    valid.write_previous_generation_store(&held);
+    let invalid_defaults = IsolatedXdg {
+        state_home: valid.state_home,
+        runtime_directory: temporary.path().join("r".repeat(256)),
+    };
+
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), invalid_defaults);
+    let _ = Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&valid_ordinary);
+    drop(nexus);
+}
+
+#[test]
+fn an_invalid_stored_configuration_is_refused_before_socket_claims() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let shared_socket = roots.runtime_directory.join("shared.sock");
+    let invalid = OrchestrateNexusConfiguration {
+        ordinary_socket_path: shared_socket.display().to_string(),
+        meta_socket_path: shared_socket.display().to_string(),
+    };
+    let held = Lock {
+        lock_id: 21,
+        lock_name: "invalid-configuration".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "the store predates configuration validation".to_owned(),
+    };
+    roots.write_previous_generation_store_with_configuration_at(&roots.store(), &held, &invalid);
+
+    let output = roots
+        .command(env!("CARGO_BIN_EXE_orchestrate-nexus"))
+        .output()
+        .expect("run Nexus with an invalid stored configuration");
+
+    assert!(
+        !output.status.success(),
+        "the stored configuration is refused"
+    );
+    assert!(!shared_socket.exists(), "no socket is created");
+    assert!(
+        !roots.claim(&shared_socket).exists(),
+        "no socket claim is created"
+    );
+}
+
+#[test]
 fn malformed_archive_never_reaches_the_store() {
     use std::io::{Read, Write};
 
@@ -643,6 +720,12 @@ fn malformed_archive_never_reaches_the_store() {
 trait WritesAPreviousGenerationStore {
     fn write_previous_generation_store(&self, held: &Lock);
     fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock);
+    fn write_previous_generation_store_with_configuration_at(
+        &self,
+        store_path: &Path,
+        held: &Lock,
+        configuration: &OrchestrateNexusConfiguration,
+    );
 }
 
 impl WritesAPreviousGenerationStore for IsolatedXdg {
@@ -651,6 +734,22 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
     }
 
     fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock) {
+        self.write_previous_generation_store_with_configuration_at(
+            store_path,
+            held,
+            &OrchestrateNexusConfiguration {
+                ordinary_socket_path: self.ordinary_socket().display().to_string(),
+                meta_socket_path: self.meta_socket().display().to_string(),
+            },
+        );
+    }
+
+    fn write_previous_generation_store_with_configuration_at(
+        &self,
+        store_path: &Path,
+        held: &Lock,
+        configuration: &OrchestrateNexusConfiguration,
+    ) {
         std::fs::create_dir_all(store_path.parent().expect("store path has a parent"))
             .expect("create the state directory");
         let mut engine = Engine::open(EngineOpen::new(
@@ -665,8 +764,8 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             .assert(Assertion::new(
                 configurations,
                 StoredConfiguration {
-                    ordinary_socket: self.ordinary_socket().display().to_string(),
-                    meta_socket: self.meta_socket().display().to_string(),
+                    ordinary_socket: configuration.ordinary_socket_path.clone(),
+                    meta_socket: configuration.meta_socket_path.clone(),
                 },
             ))
             .expect("write the previous configuration");
