@@ -59,7 +59,7 @@ use thiserror::Error;
 
 use crate::{
     store::{
-        StoreError,
+        RepresentsStorePath, StoreError,
         record::{
             Familial, SCHEMA_VERSION, StoredConfiguration, StoredMetadata, StoredRelocation,
             StoredSituation, Storing,
@@ -91,21 +91,19 @@ pub trait DeclaresRelocation: Sized {
 
 impl DeclaresRelocation for StoreRelocation {
     fn declare(store_path: &Path) -> Result<Self, RecoveryError> {
+        let exact_store_path = store_path.exact_store_path()?;
         if !store_path.exists() {
             return Err(RecoveryError::NoStore {
-                store_path: store_path.display().to_string(),
+                store_path: exact_store_path.to_owned(),
             });
         }
-        let mut engine = Engine::open(EngineOpen::new(
-            store_path.display().to_string(),
-            SCHEMA_VERSION,
-        ))?;
+        let mut engine = Engine::open(EngineOpen::new(exact_store_path, SCHEMA_VERSION))?;
         let situation: TableReference<StoredSituation> =
             engine.register_table(StoredSituation::descriptor())?;
         let recorded = match engine.match_records(QueryPlan::all(situation))?.records() {
             [] => {
                 return Err(RecoveryError::NeverBound {
-                    store_path: store_path.display().to_string(),
+                    store_path: exact_store_path.to_owned(),
                 });
             }
             [recorded] => recorded.situation.clone(),

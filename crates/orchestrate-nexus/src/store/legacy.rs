@@ -15,7 +15,7 @@ use memory_engine::{
 };
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
-use super::{error::StoreError, record::SCHEMA_VERSION};
+use super::{RepresentsStorePath, error::StoreError, record::SCHEMA_VERSION};
 
 const LEGACY_TABLE: TableName = TableName::new("active_path_locks");
 
@@ -58,15 +58,13 @@ pub trait PreflightsLegacyStore: Sized {
 
 impl PreflightsLegacyStore for LegacyStorePreflight {
     fn inspect(store_path: &Path) -> Result<Self, StoreError> {
+        let exact_store_path = store_path.exact_store_path()?;
         if !store_path.exists() {
             return Ok(Self {
                 active_lock_count: 0,
             });
         }
-        let mut engine = Engine::open(EngineOpen::new(
-            store_path.display().to_string(),
-            SCHEMA_VERSION,
-        ))?;
+        let mut engine = Engine::open(EngineOpen::new(exact_store_path, SCHEMA_VERSION))?;
         Ok(Self {
             active_lock_count: engine.count_active_path_locks()?,
         })

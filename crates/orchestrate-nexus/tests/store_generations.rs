@@ -11,11 +11,17 @@
 //! here: the previous release links signal 7.0.0, this one signal 8.0.0, and
 //! signal's `links = "signal"` admits one signal per Cargo graph.
 
+use std::{
+    ffi::OsString,
+    os::unix::ffi::OsStringExt,
+    path::{Path, PathBuf},
+};
+
 use memory_engine::{Engine, EngineOpen, FamilyName, SchemaHash, TableDescriptor};
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     store::{
-        StoreError,
+        LegacyStorePreflight, PreflightsLegacyStore, StoreError,
         record::{LOCKS_TABLE, METADATA_TABLE, SCHEMA_VERSION, StoredLock},
     },
 };
@@ -23,15 +29,59 @@ use signal_orchestrate::OrchestrateNexusConfiguration;
 
 trait Fixture {
     fn defaults(&self) -> OrchestrateNexusConfiguration;
+    fn non_utf8_store(&self, label: &[u8]) -> PathBuf;
 }
 
-impl Fixture for std::path::Path {
+impl Fixture for Path {
     fn defaults(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
             ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
             meta_socket_path: self.join("meta.sock").display().to_string(),
         }
     }
+
+    fn non_utf8_store(&self, label: &[u8]) -> PathBuf {
+        let mut bytes = self.as_os_str().as_encoded_bytes().to_vec();
+        bytes.push(b'/');
+        bytes.extend_from_slice(label);
+        bytes.push(0xff);
+        PathBuf::from(OsString::from_vec(bytes))
+    }
+}
+
+#[test]
+fn store_open_refuses_a_non_utf8_path_without_opening_a_lossy_alternative() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let store_path = directory.path().non_utf8_store(b"open-");
+    let lossy = PathBuf::from(store_path.to_string_lossy().into_owned());
+    let error = OrchestrateStore::open(&store_path, directory.path().defaults())
+        .err()
+        .expect("the store path cannot be represented exactly");
+
+    assert!(
+        matches!(error, StoreError::NonUtf8StorePath { .. }),
+        "found {error:?}"
+    );
+    assert!(!lossy.exists(), "no replacement-character store is opened");
+}
+
+#[test]
+fn legacy_preflight_refuses_a_non_utf8_path_without_inspecting_a_lossy_alternative() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let store_path = directory.path().non_utf8_store(b"preflight-");
+    let lossy = PathBuf::from(store_path.to_string_lossy().into_owned());
+    let error = LegacyStorePreflight::inspect(&store_path)
+        .err()
+        .expect("the store path cannot be represented exactly");
+
+    assert!(
+        matches!(error, StoreError::NonUtf8StorePath { .. }),
+        "found {error:?}"
+    );
+    assert!(
+        !lossy.exists(),
+        "no replacement-character store is inspected"
+    );
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! The typed refusals of the durable Lock store.
 
+use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -39,6 +40,8 @@ pub enum StoreError {
     LockIdExhausted,
     #[error("the Nexus configuration cannot be bound")]
     InvalidConfiguration,
+    #[error("the store path cannot be represented exactly as UTF-8: {path:?}")]
+    NonUtf8StorePath { path: PathBuf },
     #[error("filesystem: {0}")]
     Filesystem(#[from] std::io::Error),
     #[error("lock path {path:?} is not absolute")]

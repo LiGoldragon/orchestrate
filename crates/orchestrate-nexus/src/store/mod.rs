@@ -19,7 +19,10 @@ pub use relocation::Relocates;
 pub use situation::Situates;
 pub use transition::Configures;
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use memory_engine::{Engine, EngineOpen, QueryPlan, TableReference};
 use nexus::{
@@ -51,6 +54,20 @@ pub struct OrchestrateStore {
     state: ConfigurationState<StoredConfiguration>,
 }
 
+/// A filesystem store address represented exactly at the durable String
+/// boundaries that record and report it.
+pub(crate) trait RepresentsStorePath {
+    fn exact_store_path(&self) -> Result<&str, StoreError>;
+}
+
+impl RepresentsStorePath for Path {
+    fn exact_store_path(&self) -> Result<&str, StoreError> {
+        self.to_str().ok_or_else(|| StoreError::NonUtf8StorePath {
+            path: PathBuf::from(self),
+        })
+    }
+}
+
 /// Opens the one durable store, seeding a fresh one from the executable's
 /// defaults and resuming a populated one from what it holds.
 pub trait OpensStore: Sized {
@@ -65,6 +82,7 @@ impl OpensStore for OrchestrateStore {
         store_path: &Path,
         defaults: OrchestrateNexusConfiguration,
     ) -> Result<(Self, OrchestrateNexusConfiguration), StoreError> {
+        let exact_store_path = store_path.exact_store_path()?;
         // An absent path can only become a fresh store, so reject an unusable
         // default before the engine creates anything. A populated store does
         // not depend on today's defaults: its durable configuration wins.
@@ -82,8 +100,7 @@ impl OpensStore for OrchestrateStore {
         // leaves the store unstamped rather than stamped forward. The
         // registrations below then only hand back references.
         let mut engine = Engine::open(
-            EngineOpen::new(store_path.display().to_string(), SCHEMA_VERSION)
-                .declaring_orchestrate_families(),
+            EngineOpen::new(exact_store_path, SCHEMA_VERSION).declaring_orchestrate_families(),
         )?;
         let active_path_locks = engine.count_active_path_locks()?;
         if active_path_locks != 0 {

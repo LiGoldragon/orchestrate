@@ -10,12 +10,16 @@
 //! asserts, because a recovery tool that half-wrote a declaration would be
 //! worse than one that refused.
 
-use std::path::Path;
+use std::{
+    ffi::OsString,
+    os::unix::ffi::OsStringExt,
+    path::{Path, PathBuf},
+};
 
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     recovery::{DeclaresRelocation, RecoveryError, StoreRelocation},
-    store::{Relocates, Situates},
+    store::{Relocates, Situates, StoreError},
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
@@ -25,6 +29,7 @@ trait Serves {
     fn sockets(&self) -> OrchestrateNexusConfiguration;
     fn served(&self, store_path: &Path);
     fn declaration(&self, store_path: &Path) -> Option<nexus::Relocation>;
+    fn non_utf8_store(&self) -> PathBuf;
 }
 
 impl Serves for Path {
@@ -54,6 +59,35 @@ impl Serves for Path {
             OrchestrateStore::open(store_path, self.sockets()).expect("open the store to read it");
         store.relocation().expect("read the declaration")
     }
+
+    fn non_utf8_store(&self) -> PathBuf {
+        let mut bytes = self.as_os_str().as_encoded_bytes().to_vec();
+        bytes.extend_from_slice(b"/relocate-");
+        bytes.push(0xff);
+        PathBuf::from(OsString::from_vec(bytes))
+    }
+}
+
+#[test]
+fn relocation_refuses_a_non_utf8_store_path_without_naming_a_lossy_alternative() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let store_path = directory.path().non_utf8_store();
+    let lossy = store_path.to_string_lossy().into_owned();
+    let error = StoreRelocation::declare(&store_path)
+        .err()
+        .expect("the store path cannot be represented exactly");
+
+    assert!(
+        matches!(
+            error,
+            RecoveryError::Store(StoreError::NonUtf8StorePath { .. })
+        ),
+        "found {error:?}"
+    );
+    assert!(
+        !error.to_string().contains(&lossy),
+        "the refusal never substitutes a replacement-character path"
+    );
 }
 
 #[test]
