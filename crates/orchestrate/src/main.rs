@@ -26,10 +26,14 @@ trait Invoking: Sized {
 
 impl Invoking for Invocation {
     fn from_process() -> Result<Self, String> {
-        let arguments = env::args().skip(1).collect::<Vec<_>>();
+        let arguments = env::args_os().skip(1).collect::<Vec<_>>();
         match arguments.as_slice() {
             [] => Ok(Self::Describe),
-            [source] if !source.starts_with("--") => Ok(Self::Query(source.clone())),
+            [source] if !source.as_encoded_bytes().starts_with(b"--") => source
+                .clone()
+                .into_string()
+                .map(Self::Query)
+                .map_err(|_| "inline Datom query must be UTF-8".to_owned()),
             _ => Err("accepts exactly one inline Datom query and no flags".to_owned()),
         }
     }

@@ -7,7 +7,8 @@
 //! impossible rather than merely unobserved.
 
 use std::{
-    os::unix::net::UnixListener,
+    ffi::OsStr,
+    os::unix::{ffi::OsStringExt, net::UnixListener},
     path::PathBuf,
     process::{Command, Output},
     time::Duration,
@@ -31,6 +32,7 @@ struct ClientHarness {
 trait CreatesClientHarness: Sized {
     fn create() -> Self;
     fn invoke(&self, argument: Option<&str>) -> Output;
+    fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
     fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
     fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool>;
@@ -70,6 +72,10 @@ impl CreatesClientHarness for ClientHarness {
     }
 
     fn invoke(&self, argument: Option<&str>) -> Output {
+        self.invoke_os(argument.map(OsStr::new))
+    }
+
+    fn invoke_os(&self, argument: Option<&OsStr>) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_orchestrate-meta"));
         command.env("ORCHESTRATE_META_SOCKET", &self.socket);
         if let Some(argument) = argument {
@@ -128,6 +134,19 @@ impl CreatesClientHarness for ClientHarness {
             )
         })
     }
+}
+
+#[test]
+fn a_non_utf8_query_is_a_controlled_invocation_failure() {
+    let harness = ClientHarness::create();
+    let argument = std::ffi::OsString::from_vec(vec![0xff]);
+    let output = harness.invoke_os(Some(&argument));
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "orchestrate-meta: inline Datom query must be UTF-8\n"
+    );
 }
 
 #[test]
