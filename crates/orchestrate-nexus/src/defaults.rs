@@ -3,6 +3,7 @@
 use std::{
     env, fs,
     io::ErrorKind,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 
@@ -45,7 +46,7 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
             .display()
             .to_string();
         Ok(Self {
-            store_path: Self::upgraded_store_path(&state_home)?,
+            store_path: Self::default_store_path(&state_home)?,
             configuration: OrchestrateNexusConfiguration {
                 ordinary_socket_path,
                 meta_socket_path,
@@ -62,43 +63,45 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
     }
 }
 
-trait UpgradesDefaultStore {
-    fn upgraded_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError>;
-    fn path_exists(path: &Path) -> Result<bool, DefaultConfigurationError>;
+/// Moves a discovered previous default store to the Memory path at Nexus startup.
+pub trait UpgradesDefaultStore: Sized {
+    fn upgrade_store_path(self) -> Result<Self, DefaultConfigurationError>;
 }
 
-impl UpgradesDefaultStore for DefaultConfiguration {
-    fn upgraded_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError> {
+trait ResolvesDefaultStore {
+    fn default_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError>;
+    fn path_exists(path: &Path) -> Result<bool, DefaultConfigurationError>;
+    fn same_file(first: &Path, second: &Path) -> Result<Option<bool>, DefaultConfigurationError>;
+    fn store_paths(store_path: &Path) -> (PathBuf, PathBuf);
+    fn store_path_upgrade_error(
+        previous_path: PathBuf,
+        memory_path: PathBuf,
+        source: std::io::Error,
+    ) -> DefaultConfigurationError;
+}
+
+impl ResolvesDefaultStore for DefaultConfiguration {
+    fn default_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError> {
         let state_directory = state_home.join(STATE_DIRECTORY);
         let memory_path = state_directory.join(STORE_FILE);
         let previous_path = state_directory.join(PRE_MEMORY_STORE_FILE);
-        match (
-            Self::path_exists(&memory_path)?,
-            Self::path_exists(&previous_path)?,
-        ) {
-            (true, true) => Err(DefaultConfigurationError::ConflictingStores {
-                memory_path,
-                previous_path,
-            }),
-            (true, false) | (false, false) => Ok(memory_path),
-            (false, true) => {
-                // Creating the new name without replacement makes concurrent
-                // starts converge without either one overwriting a store.
-                fs::hard_link(&previous_path, &memory_path).map_err(|source| {
-                    DefaultConfigurationError::StorePathUpgrade {
-                        previous_path: previous_path.clone(),
-                        memory_path: memory_path.clone(),
-                        source,
+        loop {
+            match (
+                Self::path_exists(&memory_path)?,
+                Self::path_exists(&previous_path)?,
+            ) {
+                (true, true) => match Self::same_file(&memory_path, &previous_path)? {
+                    Some(true) => return Ok(memory_path),
+                    Some(false) => {
+                        return Err(DefaultConfigurationError::ConflictingStores {
+                            memory_path,
+                            previous_path,
+                        });
                     }
-                })?;
-                fs::remove_file(&previous_path).map_err(|source| {
-                    DefaultConfigurationError::StorePathUpgrade {
-                        previous_path,
-                        memory_path: memory_path.clone(),
-                        source,
-                    }
-                })?;
-                Ok(memory_path)
+                    None => {}
+                },
+                (true, false) | (false, false) => return Ok(memory_path),
+                (false, true) => return Ok(previous_path),
             }
         }
     }
@@ -111,6 +114,111 @@ impl UpgradesDefaultStore for DefaultConfiguration {
                 path: path.to_path_buf(),
                 source,
             }),
+        }
+    }
+
+    fn same_file(first: &Path, second: &Path) -> Result<Option<bool>, DefaultConfigurationError> {
+        let first_metadata = match fs::symlink_metadata(first) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(DefaultConfigurationError::InspectStorePath {
+                    path: first.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        let second_metadata = match fs::symlink_metadata(second) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(DefaultConfigurationError::InspectStorePath {
+                    path: second.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        Ok(Some(
+            first_metadata.dev() == second_metadata.dev()
+                && first_metadata.ino() == second_metadata.ino(),
+        ))
+    }
+
+    fn store_paths(store_path: &Path) -> (PathBuf, PathBuf) {
+        let state_directory = store_path
+            .parent()
+            .expect("a derived default store path has a state directory");
+        (
+            state_directory.join(STORE_FILE),
+            state_directory.join(PRE_MEMORY_STORE_FILE),
+        )
+    }
+
+    fn store_path_upgrade_error(
+        previous_path: PathBuf,
+        memory_path: PathBuf,
+        source: std::io::Error,
+    ) -> DefaultConfigurationError {
+        DefaultConfigurationError::StorePathUpgrade {
+            previous_path,
+            memory_path,
+            source,
+        }
+    }
+}
+
+impl UpgradesDefaultStore for DefaultConfiguration {
+    fn upgrade_store_path(mut self) -> Result<Self, DefaultConfigurationError> {
+        let (memory_path, previous_path) = Self::store_paths(&self.store_path);
+        loop {
+            match (
+                Self::path_exists(&memory_path)?,
+                Self::path_exists(&previous_path)?,
+            ) {
+                (true, true) => match Self::same_file(&memory_path, &previous_path)? {
+                    Some(true) => match fs::remove_file(&previous_path) {
+                        Ok(()) => {}
+                        Err(source) if source.kind() == ErrorKind::NotFound => {}
+                        Err(source) => {
+                            return Err(Self::store_path_upgrade_error(
+                                previous_path,
+                                memory_path,
+                                source,
+                            ));
+                        }
+                    },
+                    Some(false) => {
+                        return Err(DefaultConfigurationError::ConflictingStores {
+                            memory_path,
+                            previous_path,
+                        });
+                    }
+                    None => {}
+                },
+                (true, false) | (false, false) => {
+                    self.store_path = memory_path;
+                    return Ok(self);
+                }
+                (false, true) => {
+                    // Creating the new name without replacement makes concurrent
+                    // starts converge without either one overwriting a store.
+                    match fs::hard_link(&previous_path, &memory_path) {
+                        Ok(()) => {}
+                        Err(source)
+                            if matches!(
+                                source.kind(),
+                                ErrorKind::AlreadyExists | ErrorKind::NotFound
+                            ) => {}
+                        Err(source) => {
+                            return Err(Self::store_path_upgrade_error(
+                                previous_path,
+                                memory_path,
+                                source,
+                            ));
+                        }
+                    }
+                }
+            }
         }
     }
 }

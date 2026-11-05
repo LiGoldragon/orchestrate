@@ -718,6 +718,80 @@ fn a_store_at_the_previous_default_path_moves_to_memory_and_resumes() {
 }
 
 #[test]
+fn an_interrupted_default_path_move_is_completed_and_resumes() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let held = Lock {
+        lock_id: 12,
+        lock_name: "interrupted-move".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "held while both default names referred to one store".to_owned(),
+    };
+    roots.write_previous_generation_store_at(&roots.previous_store(), &held);
+    std::fs::hard_link(roots.previous_store(), roots.store())
+        .expect("interrupt the move after creating the Memory name");
+
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+
+    assert!(nexus.roots.store().exists(), "the Memory path remains");
+    assert!(
+        !nexus.roots.previous_store().exists(),
+        "the redundant previous name is removed"
+    );
+    assert_eq!(
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        "the store behind both names is served"
+    );
+}
+
+#[test]
+fn upgrade_preflight_discovers_the_previous_default_without_moving_it() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let held = Lock {
+        lock_id: 14,
+        lock_name: "preflight".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "counted before startup".to_owned(),
+    };
+    roots.write_previous_generation_store_at(&roots.previous_store(), &held);
+
+    let output = roots
+        .command(env!("CARGO_BIN_EXE_orchestrate-upgrade-preflight"))
+        .output()
+        .expect("run upgrade preflight");
+
+    assert!(
+        output.status.success(),
+        "preflight reads the previous store"
+    );
+    assert!(roots.previous_store().exists(), "the previous path remains");
+    assert!(!roots.store().exists(), "the Memory path is not created");
+}
+
+#[test]
+fn relocation_discovers_the_previous_default_without_moving_it() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let held = Lock {
+        lock_id: 15,
+        lock_name: "relocation".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "inspected before startup".to_owned(),
+    };
+    roots.write_previous_generation_store_at(&roots.previous_store(), &held);
+
+    let _ = roots.relocate();
+
+    assert!(roots.previous_store().exists(), "the previous path remains");
+    assert!(!roots.store().exists(), "the Memory path is not created");
+}
+
+#[test]
 fn distinct_stores_at_both_default_paths_are_refused() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);

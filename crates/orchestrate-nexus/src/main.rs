@@ -2,11 +2,13 @@ use std::process::ExitCode;
 
 use orchestrate_nexus::{
     DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
+    UpgradesDefaultStore,
     transport::{Binding, Serving, StopsOnSignal, Termination, TransportRuntime},
 };
 
 fn main() -> ExitCode {
     match DefaultConfiguration::from_process()
+        .and_then(DefaultConfiguration::upgrade_store_path)
         .map_err(|error| error.to_string())
         .and_then(|defaults| {
             let (store, configuration) =
