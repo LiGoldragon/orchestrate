@@ -1,7 +1,8 @@
 //! Executable-owned per-user locations for Orchestrate Nexus state and sockets.
 
 use std::{
-    env,
+    env, fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -10,6 +11,7 @@ use thiserror::Error;
 
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
 const STORE_FILE: &str = "orchestrate-nexus.memory";
+const PRE_MEMORY_STORE_FILE: &str = "orchestrate-nexus.sema";
 const ORDINARY_SOCKET_FILE: &str = "orchestrate.sock";
 const META_SOCKET_FILE: &str = "orchestrate-meta.sock";
 
@@ -43,7 +45,7 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
             .display()
             .to_string();
         Ok(Self {
-            store_path: state_home.join(STATE_DIRECTORY).join(STORE_FILE),
+            store_path: Self::upgraded_store_path(&state_home)?,
             configuration: OrchestrateNexusConfiguration {
                 ordinary_socket_path,
                 meta_socket_path,
@@ -57,6 +59,59 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
 
     fn configuration(&self) -> OrchestrateNexusConfiguration {
         self.configuration.clone()
+    }
+}
+
+trait UpgradesDefaultStore {
+    fn upgraded_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError>;
+    fn path_exists(path: &Path) -> Result<bool, DefaultConfigurationError>;
+}
+
+impl UpgradesDefaultStore for DefaultConfiguration {
+    fn upgraded_store_path(state_home: &Path) -> Result<PathBuf, DefaultConfigurationError> {
+        let state_directory = state_home.join(STATE_DIRECTORY);
+        let memory_path = state_directory.join(STORE_FILE);
+        let previous_path = state_directory.join(PRE_MEMORY_STORE_FILE);
+        match (
+            Self::path_exists(&memory_path)?,
+            Self::path_exists(&previous_path)?,
+        ) {
+            (true, true) => Err(DefaultConfigurationError::ConflictingStores {
+                memory_path,
+                previous_path,
+            }),
+            (true, false) | (false, false) => Ok(memory_path),
+            (false, true) => {
+                // Creating the new name without replacement makes concurrent
+                // starts converge without either one overwriting a store.
+                fs::hard_link(&previous_path, &memory_path).map_err(|source| {
+                    DefaultConfigurationError::StorePathUpgrade {
+                        previous_path: previous_path.clone(),
+                        memory_path: memory_path.clone(),
+                        source,
+                    }
+                })?;
+                fs::remove_file(&previous_path).map_err(|source| {
+                    DefaultConfigurationError::StorePathUpgrade {
+                        previous_path,
+                        memory_path: memory_path.clone(),
+                        source,
+                    }
+                })?;
+                Ok(memory_path)
+            }
+        }
+    }
+
+    fn path_exists(path: &Path) -> Result<bool, DefaultConfigurationError> {
+        match fs::symlink_metadata(path) {
+            Ok(_) => Ok(true),
+            Err(source) if source.kind() == ErrorKind::NotFound => Ok(false),
+            Err(source) => Err(DefaultConfigurationError::InspectStorePath {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
     }
 }
 
@@ -116,5 +171,23 @@ pub enum DefaultConfigurationError {
     RelativePath {
         variable: &'static str,
         path: PathBuf,
+    },
+    #[error("both the Memory store {memory_path:?} and its previous path {previous_path:?} exist")]
+    ConflictingStores {
+        memory_path: PathBuf,
+        previous_path: PathBuf,
+    },
+    #[error("cannot inspect default store path {path:?}: {source}")]
+    InspectStorePath {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error(
+        "cannot upgrade default store path from {previous_path:?} to {memory_path:?}: {source}"
+    )]
+    StorePathUpgrade {
+        previous_path: PathBuf,
+        memory_path: PathBuf,
+        source: std::io::Error,
     },
 }

@@ -37,6 +37,7 @@ struct IsolatedXdg {
 trait CreatesIsolatedXdg: Sized {
     fn create(temporary: &tempfile::TempDir) -> Self;
     fn store(&self) -> PathBuf;
+    fn previous_store(&self) -> PathBuf;
     fn claim(&self, socket: &Path) -> PathBuf;
     fn ordinary_socket(&self) -> PathBuf;
     fn meta_socket(&self) -> PathBuf;
@@ -58,6 +59,11 @@ impl CreatesIsolatedXdg for IsolatedXdg {
     fn store(&self) -> PathBuf {
         self.state_home
             .join("orchestrate-nexus/orchestrate-nexus.memory")
+    }
+
+    fn previous_store(&self) -> PathBuf {
+        self.state_home
+            .join("orchestrate-nexus/orchestrate-nexus.sema")
     }
 
     fn ordinary_socket(&self) -> PathBuf {
@@ -636,11 +642,15 @@ fn malformed_archive_never_reaches_the_store() {
 /// schema labels and record fields.
 trait WritesAPreviousGenerationStore {
     fn write_previous_generation_store(&self, held: &Lock);
+    fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock);
 }
 
 impl WritesAPreviousGenerationStore for IsolatedXdg {
     fn write_previous_generation_store(&self, held: &Lock) {
-        let store_path = self.store();
+        self.write_previous_generation_store_at(&self.store(), held);
+    }
+
+    fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock) {
         std::fs::create_dir_all(store_path.parent().expect("store path has a parent"))
             .expect("create the state directory");
         let mut engine = Engine::open(EngineOpen::new(
@@ -678,6 +688,76 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             ))
             .expect("write the allocator");
     }
+}
+
+#[test]
+fn a_store_at_the_previous_default_path_moves_to_memory_and_resumes() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let held = Lock {
+        lock_id: 11,
+        lock_name: "live-store".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
+        lock_reason: "held across the Memory name change".to_owned(),
+    };
+    roots.write_previous_generation_store_at(&roots.previous_store(), &held);
+
+    let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
+
+    assert!(nexus.roots.store().exists(), "the Memory path exists");
+    assert!(
+        !nexus.roots.previous_store().exists(),
+        "the previous path was moved"
+    );
+    assert_eq!(
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        "the live Lock in the renamed store is served"
+    );
+}
+
+#[test]
+fn distinct_stores_at_both_default_paths_are_refused() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let memory_lock = Lock {
+        lock_id: 12,
+        lock_name: "memory".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("memory").display().to_string()],
+        lock_reason: "Memory store".to_owned(),
+    };
+    let previous_lock = Lock {
+        lock_id: 13,
+        lock_name: "previous".to_owned(),
+        flow_id: "flow-1e6136".to_owned(),
+        lock_path_vector: vec![temporary.path().join("previous").display().to_string()],
+        lock_reason: "previous store".to_owned(),
+    };
+    roots.write_previous_generation_store_at(&roots.store(), &memory_lock);
+    roots.write_previous_generation_store_at(&roots.previous_store(), &previous_lock);
+
+    let output = roots
+        .command(env!("CARGO_BIN_EXE_orchestrate-nexus"))
+        .output()
+        .expect("run Nexus with conflicting stores");
+    let stderr = String::from_utf8(output.stderr).expect("Nexus error is UTF-8");
+
+    assert!(!output.status.success(), "the Nexus refuses ambiguity");
+    assert!(
+        stderr.contains(&format!("{:?}", roots.store())),
+        "the refusal names the Memory path: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("{:?}", roots.previous_store())),
+        "the refusal names the previous path: {stderr}"
+    );
+    assert!(roots.store().exists(), "the Memory store remains");
+    assert!(
+        roots.previous_store().exists(),
+        "the previous store remains"
+    );
 }
 
 /// The cutover, driven through the sockets rather than through the store API:
