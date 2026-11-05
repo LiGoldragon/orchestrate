@@ -67,8 +67,10 @@ trait ClientConfiguring: Sized {
 impl ClientConfiguring for Client {
     fn from_process() -> Result<Self, String> {
         Ok(Self {
-            socket_path: env::var("ORCHESTRATE_SOCKET")
-                .map_err(|_| "ORCHESTRATE_SOCKET is required".to_owned())?,
+            socket_path: env::var("ORCHESTRATE_SOCKET").map_err(|error| match error {
+                env::VarError::NotPresent => "ORCHESTRATE_SOCKET is required".to_owned(),
+                env::VarError::NotUnicode(_) => "ORCHESTRATE_SOCKET must be UTF-8".to_owned(),
+            })?,
         })
     }
 }

@@ -32,6 +32,7 @@ trait CreatesClientHarness: Sized {
     fn create() -> Self;
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
+    fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output;
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
     fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
     fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool>;
@@ -75,8 +76,15 @@ impl CreatesClientHarness for ClientHarness {
     }
 
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output {
+        self.invoke_with_socket(Some(self.socket.as_os_str()), argument)
+    }
+
+    fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_orchestrate"));
-        command.env("ORCHESTRATE_SOCKET", &self.socket);
+        command.env_remove("ORCHESTRATE_SOCKET");
+        if let Some(socket) = socket {
+            command.env("ORCHESTRATE_SOCKET", socket);
+        }
         if let Some(argument) = argument {
             command.arg(argument);
         }
@@ -133,6 +141,26 @@ impl CreatesClientHarness for ClientHarness {
             )
         })
     }
+}
+
+#[test]
+fn socket_environment_failures_name_whether_the_value_is_missing_or_non_utf8() {
+    let harness = ClientHarness::create();
+    let query = OsStr::new(QUERY);
+    let missing = harness.invoke_with_socket(None, Some(query));
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(missing.stderr).unwrap(),
+        "orchestrate: ORCHESTRATE_SOCKET is required\n"
+    );
+
+    let non_utf8 = std::ffi::OsString::from_vec(vec![0xff]);
+    let unrepresentable = harness.invoke_with_socket(Some(&non_utf8), Some(query));
+    assert_eq!(unrepresentable.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(unrepresentable.stderr).unwrap(),
+        "orchestrate: ORCHESTRATE_SOCKET must be UTF-8\n"
+    );
 }
 
 #[test]
