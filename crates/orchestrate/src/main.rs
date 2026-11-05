@@ -204,11 +204,16 @@ impl Asking for SignalConnection {
     {
         self.send(&Dispatch::<Q>::Greet(Q::greeting()))?;
         match self.receive::<R>()? {
-            Delivery::Greeted(HandshakeReceipt::Greeted(_)) => {
+            Delivery::Greeted(HandshakeReceipt::Greeted(digest))
+                if digest == Q::contract_digest() =>
+            {
                 self.ledger.greet().map_err(TransportError::Faulted)?
             }
             Delivery::Greeted(HandshakeReceipt::GreetingRefused(rejection)) => {
                 return Err(TransportError::Refused(rejection));
+            }
+            Delivery::Greeted(HandshakeReceipt::Greeted(_)) => {
+                return Err(TransportError::Unexpected);
             }
             // A socket that will not admit this peer says so unprompted, as
             // an answer against the connection itself.

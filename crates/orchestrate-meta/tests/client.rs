@@ -10,11 +10,12 @@ use std::{
     os::unix::net::UnixListener,
     path::PathBuf,
     process::{Command, Output},
+    time::Duration,
 };
 
 use meta_signal_orchestrate::{Query, Response};
 use signal::{
-    Answer, Contracted, Delivery, Dispatch, FrameCapacity, FrameReading, FrameWriting,
+    Answer, Contracted, Delivery, Dispatch, FrameCapacity, FrameError, FrameReading, FrameWriting,
     HandshakeReceipt, HandshakeRejection, Restorable, Signal, Signalizable,
 };
 use signal_orchestrate::{ConfigurationReceipt, OrchestrateNexusConfiguration};
@@ -32,6 +33,7 @@ trait CreatesClientHarness: Sized {
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
     fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
+    fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool>;
 }
 
 /// The fixture's side of signal's exchange layer, framed with the shared crate.
@@ -110,6 +112,22 @@ impl CreatesClientHarness for ClientHarness {
             )));
         })
     }
+
+    fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool> {
+        let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept meta client");
+            stream.dispatched();
+            stream.deliver(Delivery::Greeted(HandshakeReceipt::Greeted(digest)));
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("bound the wait for an invalid query");
+            matches!(
+                stream.read_frame(FrameCapacity::default()),
+                Err(FrameError::Io(_))
+            )
+        })
+    }
 }
 
 #[test]
@@ -161,4 +179,16 @@ fn a_refused_greeting_is_reported_as_vocabulary() {
         "GreetingRefused.ContractMismatch.42\n"
     );
     server.join().expect("fixture server");
+}
+
+#[test]
+fn a_wrong_greeted_digest_never_opens_an_exchange() {
+    let harness = ClientHarness::create();
+    let server = harness.greet_with_wrong_digest(Query::contract_digest().wrapping_add(1));
+    let output = harness.invoke(Some(QUERY));
+    assert!(!output.status.success());
+    assert!(
+        server.join().expect("meta fixture server"),
+        "the client closes before sending a query"
+    );
 }
