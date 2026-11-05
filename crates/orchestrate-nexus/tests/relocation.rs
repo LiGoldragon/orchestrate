@@ -16,10 +16,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use memory_engine::{Engine, EngineOpen, Mutation, QueryPlan};
+use nexus::Configurable;
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     recovery::{DeclaresRelocation, RecoveryError, StoreRelocation},
-    store::{Relocates, Situates, StoreError},
+    store::{
+        Relocates, Situates, StoreError,
+        record::{
+            Familial, SCHEMA_VERSION, StoredConfiguration, StoredMetadata, StoredRelocation,
+            Storing,
+        },
+    },
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
 
@@ -28,7 +36,13 @@ use signal_orchestrate::OrchestrateNexusConfiguration;
 trait Serves {
     fn sockets(&self) -> OrchestrateNexusConfiguration;
     fn served(&self, store_path: &Path);
+    fn overwrite_configuration(
+        &self,
+        store_path: &Path,
+        configuration: &OrchestrateNexusConfiguration,
+    );
     fn declaration(&self, store_path: &Path) -> Option<nexus::Relocation>;
+    fn raw_declaration(&self, store_path: &Path) -> Option<nexus::Relocation>;
     fn non_utf8_store(&self) -> PathBuf;
 }
 
@@ -51,6 +65,30 @@ impl Serves for Path {
             .expect("record where the sockets were bound");
     }
 
+    fn overwrite_configuration(
+        &self,
+        store_path: &Path,
+        configuration: &OrchestrateNexusConfiguration,
+    ) {
+        let mut engine = Engine::open(EngineOpen::new(store_path, SCHEMA_VERSION))
+            .expect("open the fixture store directly");
+        let metadata = engine
+            .register_table(StoredMetadata::descriptor())
+            .expect("register the metadata family");
+        let mut state = match engine
+            .match_records(QueryPlan::all(metadata))
+            .expect("read the metadata")
+            .records()
+        {
+            [stored] => stored.state.clone(),
+            rows => panic!("expected one metadata row, found {}", rows.len()),
+        };
+        state.meta_configure(StoredConfiguration::from_public(configuration));
+        engine
+            .mutate(Mutation::new(metadata, StoredMetadata { state }))
+            .expect("write the fixture configuration");
+    }
+
     /// Reads whatever declaration the store carries, through a plain open —
     /// which only works for a store that is not refused, so the callers that
     /// need it on a refused store read it at the original address.
@@ -60,12 +98,84 @@ impl Serves for Path {
         store.relocation().expect("read the declaration")
     }
 
+    fn raw_declaration(&self, store_path: &Path) -> Option<nexus::Relocation> {
+        let mut engine = Engine::open(EngineOpen::new(store_path, SCHEMA_VERSION))
+            .expect("open the refused fixture store directly");
+        let relocations = engine
+            .register_table(StoredRelocation::descriptor())
+            .expect("register the relocation family");
+        match engine
+            .match_records(QueryPlan::all(relocations))
+            .expect("read relocation rows")
+            .records()
+        {
+            [] => None,
+            [stored] => Some(stored.relocation.clone()),
+            rows => panic!("expected at most one relocation row, found {}", rows.len()),
+        }
+    }
+
     fn non_utf8_store(&self) -> PathBuf {
         let mut bytes = self.as_os_str().as_encoded_bytes().to_vec();
         bytes.extend_from_slice(b"/relocate-");
         bytes.push(0xff);
         PathBuf::from(OsString::from_vec(bytes))
     }
+}
+
+#[test]
+fn relocation_refuses_invalid_stored_sockets_before_claiming_them() {
+    let directory = tempfile::tempdir().expect("isolated store directory");
+    let original = directory.path().join("original.memory");
+    directory.path().served(&original);
+
+    let current = std::env::current_dir().expect("read the test working directory");
+    let effects = tempfile::Builder::new()
+        .prefix("relocation-invalid-sockets-")
+        .tempdir_in(&current)
+        .expect("isolate relative-path effects");
+    let relative_root = effects
+        .path()
+        .strip_prefix(&current)
+        .expect("the effect fixture is below the working directory");
+    let unwanted_directory = relative_root.join("created-by-a-claim");
+    let invalid = OrchestrateNexusConfiguration {
+        ordinary_socket_path: unwanted_directory
+            .join("ordinary.sock")
+            .display()
+            .to_string(),
+        meta_socket_path: directory
+            .path()
+            .join("invalid-meta.sock")
+            .display()
+            .to_string(),
+    };
+    directory
+        .path()
+        .overwrite_configuration(&original, &invalid);
+
+    let moved = directory.path().join("moved.memory");
+    std::fs::copy(&original, &moved).expect("carry the store bytes");
+    std::fs::remove_file(&original).expect("remove the original store");
+    let error = StoreRelocation::declare(&moved)
+        .err()
+        .expect("invalid desired sockets cannot earn a declaration");
+
+    assert!(
+        matches!(
+            error,
+            RecoveryError::Store(StoreError::InvalidConfiguration)
+        ),
+        "found {error:?}"
+    );
+    assert!(
+        !effects.path().join("created-by-a-claim").exists(),
+        "validation precedes claim parent creation"
+    );
+    assert!(
+        directory.path().raw_declaration(&moved).is_none(),
+        "the refusal writes no declaration"
+    );
 }
 
 #[test]

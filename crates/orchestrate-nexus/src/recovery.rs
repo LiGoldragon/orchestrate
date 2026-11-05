@@ -58,6 +58,7 @@ use signal_orchestrate::OrchestrateNexusConfiguration;
 use thiserror::Error;
 
 use crate::{
+    configuration::Validates,
     store::{
         RepresentsStorePath, StoreError,
         record::{
@@ -216,6 +217,9 @@ impl ReadsDesiredSockets for Engine {
             [stored] => {
                 let desired: StoredConfiguration = stored.state.desired_configuration().clone();
                 let configuration: OrchestrateNexusConfiguration = desired.into_public();
+                configuration
+                    .validated()
+                    .map_err(|_| StoreError::InvalidConfiguration)?;
                 Ok(vec![
                     configuration.ordinary_socket_path,
                     configuration.meta_socket_path,
