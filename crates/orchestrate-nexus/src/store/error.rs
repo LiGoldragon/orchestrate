@@ -47,6 +47,8 @@ pub enum StoreError {
     EmptyPathSet,
     #[error("lock path {path:?} contains a parent component")]
     ParentPathComponent { path: String },
+    #[error("lock path {path:?} contains NUL")]
+    NulPath { path: String },
     #[error("Lock repeats normalized path {path:?}")]
     DuplicateNormalizedPath { path: String },
 }

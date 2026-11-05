@@ -93,6 +93,11 @@ trait NormalizesLockPaths: Sized {
 
 impl NormalizesLockPaths for NormalizedLockPath {
     fn from_source(path: &str) -> Result<Self, StoreError> {
+        if path.as_bytes().contains(&0) {
+            return Err(StoreError::NulPath {
+                path: path.to_owned(),
+            });
+        }
         let parsed = Path::new(path);
         if !parsed.is_absolute() {
             return Err(StoreError::RelativePath {
@@ -173,6 +178,10 @@ mod tests {
         assert!(matches!(
             NormalizedLockRequest::from_request(request(&["/a/b", "/a/./b"])),
             Err(StoreError::DuplicateNormalizedPath { .. })
+        ));
+        assert!(matches!(
+            NormalizedLockRequest::from_request(request(&["/held\0phantom"])),
+            Err(StoreError::NulPath { .. })
         ));
     }
 

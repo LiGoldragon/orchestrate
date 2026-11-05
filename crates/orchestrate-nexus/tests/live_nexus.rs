@@ -20,8 +20,8 @@ use orchestrate_nexus::store::record::{
 };
 use signal::{
     Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId, Exchanged, FIRST_EXCHANGE,
-    FrameCapacity, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable, Signal,
-    Signalizable,
+    FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable,
+    Signal, Signalizable,
 };
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockRequest,
@@ -346,6 +346,46 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
         OrdinaryResponse::Observed(Observation::Locks(vec![lock])),
     );
     assert!(resumed.roots.store().exists());
+}
+
+#[test]
+fn a_nul_lock_path_never_becomes_durable() {
+    let temporary = tempfile::tempdir().expect("isolated Nexus directory");
+    let roots = IsolatedXdg::create(&temporary);
+    let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
+    let nexus = LiveNexus::start(binary, roots);
+    let mut connection =
+        Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&nexus.roots.ordinary_socket());
+    connection.open(OrdinaryQuery::Lock(LockRequest {
+        lock_name: "phantom".to_owned(),
+        flow_id: "test-flow".to_owned(),
+        lock_path_vector: vec!["/held\0phantom".to_owned()],
+        lock_reason: "no Unix operation can name this path".to_owned(),
+    }));
+    assert!(
+        matches!(
+            connection.stream.read_frame(FrameCapacity::default()),
+            Err(FrameError::Io(_))
+        ),
+        "the invalid durable transition ends its connection"
+    );
+    assert_eq!(
+        nexus.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "the running Nexus holds no phantom Lock"
+    );
+
+    let roots = IsolatedXdg {
+        state_home: nexus.roots.state_home.clone(),
+        runtime_directory: nexus.roots.runtime_directory.clone(),
+    };
+    drop(nexus);
+    let resumed = LiveNexus::start(binary, roots);
+    assert_eq!(
+        resumed.ordinary(OrdinaryQuery::Observe(ObserveSelection::Locks)),
+        OrdinaryResponse::Observed(Observation::Locks(Vec::new())),
+        "restart finds no phantom Lock"
+    );
 }
 
 #[test]
