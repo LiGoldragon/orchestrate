@@ -9,6 +9,7 @@ use meta_signal_orchestrate::Response as MetaResponse;
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejectionReason, OrchestrateNexusConfiguration,
 };
+use std::os::unix::net::SocketAddr;
 
 /// What a privileged configuration transition did.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +36,10 @@ impl Validates for OrchestrateNexusConfiguration {
     fn validated(&self) -> Result<(), ConfigurationRejectionReason> {
         let paths = [&self.ordinary_socket_path, &self.meta_socket_path];
         let bindable = paths.iter().all(|path| {
-            !path.is_empty() && std::path::Path::new(path).is_absolute() && !path.ends_with('/')
+            let socket_path = std::path::Path::new(path);
+            socket_path.is_absolute()
+                && !path.ends_with('/')
+                && SocketAddr::from_pathname(socket_path).is_ok()
         });
         if bindable && self.ordinary_socket_path != self.meta_socket_path {
             Ok(())
@@ -95,6 +99,20 @@ mod tests {
                 configuration(ordinary, meta).validated(),
                 Err(ConfigurationRejectionReason::InvalidConfiguration),
                 "{ordinary:?} {meta:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_socket_path_must_fit_the_unix_address_that_will_bind_it() {
+        for invalid in [
+            "/run/orchestrate\0.sock".to_owned(),
+            format!("/run/{}.sock", "x".repeat(256)),
+        ] {
+            assert_eq!(
+                configuration(&invalid, "/run/meta.sock").validated(),
+                Err(ConfigurationRejectionReason::InvalidConfiguration),
+                "the Unix transport cannot represent {invalid:?}"
             );
         }
     }
