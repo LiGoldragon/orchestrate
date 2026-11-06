@@ -4,8 +4,8 @@ use memory_engine::{QueryPlan, RecordKey, Retraction};
 use nexus::Configurable;
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockOverlap,
-    LockRejection, LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,
-    ReleaseRejection, Response as OrdinaryResponse,
+    LockPath, LockRejection, LockRequest, MetaConfigureDone, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, ReleaseRejection, Response as OrdinaryResponse,
 };
 
 use crate::{
@@ -60,7 +60,7 @@ impl Locks for OrchestrateStore {
                 LockRejection::DuplicateName(holder)
             } else if let Some(path) = request.overlapping_path_of(&holder) {
                 LockRejection::PathOverlap(LockOverlap {
-                    lock_path: path,
+                    lock_path: LockPath(path),
                     lock: holder,
                 })
             } else {
@@ -147,7 +147,7 @@ impl Configures for OrchestrateStore {
                 .desired_configuration()
                 .clone()
                 .into_public(),
-            meta_configure_done: self.state().meta_configure_occurred(),
+            meta_configure_done: MetaConfigureDone(self.state().meta_configure_occurred()),
         }
     }
 

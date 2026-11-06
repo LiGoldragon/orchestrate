@@ -12,7 +12,10 @@ use memory_engine::{
 };
 use nexus::{ConfigurationState, Relocation, Situation};
 use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use signal_orchestrate::{Lock, OrchestrateNexusConfiguration};
+use signal_orchestrate::{
+    ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
+    OrchestrateNexusConfiguration, OrdinarySocketPath,
+};
 
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
 pub const METADATA_TABLE: TableName = TableName::new("orchestrate_nexus_metadata_v1");
@@ -201,15 +204,15 @@ pub trait Storing<Public>: Sized {
 impl Storing<OrchestrateNexusConfiguration> for StoredConfiguration {
     fn from_public(value: &OrchestrateNexusConfiguration) -> Self {
         Self {
-            ordinary_socket: value.ordinary_socket_path.clone(),
-            meta_socket: value.meta_socket_path.clone(),
+            ordinary_socket: value.ordinary_socket_path.0.0.clone(),
+            meta_socket: value.meta_socket_path.0.0.clone(),
         }
     }
 
     fn into_public(self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.ordinary_socket,
-            meta_socket_path: self.meta_socket,
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(self.ordinary_socket)),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(self.meta_socket)),
         }
     }
 }
@@ -217,21 +220,25 @@ impl Storing<OrchestrateNexusConfiguration> for StoredConfiguration {
 impl Storing<Lock> for StoredLock {
     fn from_public(value: &Lock) -> Self {
         Self {
-            lock_id: value.lock_id,
-            lock_name: value.lock_name.clone(),
-            flow_id: value.flow_id.clone(),
-            paths: value.lock_path_vector.clone(),
-            reason: value.lock_reason.clone(),
+            lock_id: value.lock_id.0,
+            lock_name: value.lock_name.0.clone(),
+            flow_id: value.flow_id.0.clone(),
+            paths: value
+                .lock_path_vector
+                .iter()
+                .map(|path| path.0.clone())
+                .collect(),
+            reason: value.lock_reason.0.clone(),
         }
     }
 
     fn into_public(self) -> Lock {
         Lock {
-            lock_id: self.lock_id,
-            lock_name: self.lock_name,
-            flow_id: self.flow_id,
-            lock_path_vector: self.paths,
-            lock_reason: self.reason,
+            lock_id: LockId(self.lock_id),
+            lock_name: LockName(self.lock_name),
+            flow_id: FlowId(self.flow_id),
+            lock_path_vector: self.paths.into_iter().map(LockPath).collect(),
+            lock_reason: LockReason(self.reason),
         }
     }
 }

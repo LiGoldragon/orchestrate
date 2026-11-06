@@ -7,6 +7,8 @@
 //! returns. This drives the real transport: two real sockets, a real client
 //! frame, and the same store file twice.
 
+use signal_orchestrate::{ConfigurationPath, LockPath, MetaSocketPath, OrdinarySocketPath};
+use signal_orchestrate::{FlowId, LockName, LockReason};
 use std::{os::unix::net::UnixStream, path::Path, time::Duration};
 
 use orchestrate_nexus::{
@@ -31,8 +33,12 @@ trait Defaults {
 impl Defaults for Path {
     fn defaults(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
-            meta_socket_path: self.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join("meta.sock").display().to_string(),
+            )),
         }
     }
 
@@ -92,13 +98,15 @@ async fn a_stopped_nexus_leaves_its_store_and_its_socket_paths_to_the_next_one()
     let ordinary = configuration.ordinary_socket_path.clone();
     let held = {
         let request = OrdinaryQuery::Lock(LockRequest {
-            lock_name: "survives".to_owned(),
-            flow_id: "test-flow".to_owned(),
-            lock_path_vector: vec![directory.path().join("held").display().to_string()],
-            lock_reason: "acquired before the stop".to_owned(),
+            lock_name: LockName("survives".to_owned()),
+            flow_id: FlowId("test-flow".to_owned()),
+            lock_path_vector: vec![LockPath(
+                directory.path().join("held").display().to_string(),
+            )],
+            lock_reason: LockReason("acquired before the stop".to_owned()),
         });
         let ordinary = ordinary.clone();
-        match tokio::task::spawn_blocking(move || ordinary.as_str().asks(&request))
+        match tokio::task::spawn_blocking(move || ordinary.0.0.as_str().asks(&request))
             .await
             .expect("run the client")
         {
@@ -126,6 +134,8 @@ async fn a_stopped_nexus_leaves_its_store_and_its_socket_paths_to_the_next_one()
 
     let observed = tokio::task::spawn_blocking(move || {
         ordinary
+            .0
+            .0
             .as_str()
             .asks(&OrdinaryQuery::Observe(ObserveSelection::Locks))
     })

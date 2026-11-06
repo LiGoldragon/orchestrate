@@ -64,8 +64,8 @@ impl Binding for TransportRuntime {
         configuration: OrchestrateNexusConfiguration,
         mut store: OrchestrateStore,
     ) -> Result<Self, TransportError> {
-        let ordinary_path = PathBuf::from(configuration.ordinary_socket_path);
-        let meta_path = PathBuf::from(configuration.meta_socket_path);
+        let ordinary_path = PathBuf::from(configuration.ordinary_socket_path.0.0);
+        let meta_path = PathBuf::from(configuration.meta_socket_path.0.0);
         let ordinary_claim = SocketClaim::claim(&ordinary_path)?;
         let meta_claim = SocketClaim::claim(&meta_path)?;
         let ordinary = BoundSocket::bound(ordinary_claim, SocketAuthority::Ordinary)?;

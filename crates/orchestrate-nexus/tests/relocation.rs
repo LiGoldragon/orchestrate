@@ -30,6 +30,7 @@ use orchestrate_nexus::{
     },
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
+use signal_orchestrate::{ConfigurationPath, MetaSocketPath, OrdinarySocketPath};
 
 /// A scratch Nexus's worth of setup: a store bound to socket paths under this
 /// directory, then closed so the file can be moved about.
@@ -49,8 +50,12 @@ trait Serves {
 impl Serves for Path {
     fn sockets(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
-            meta_socket_path: self.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join("meta.sock").display().to_string(),
+            )),
         }
     }
 
@@ -59,8 +64,8 @@ impl Serves for Path {
             OrchestrateStore::open(store_path, self.sockets()).expect("open a fresh store");
         store
             .situate(vec![
-                configuration.ordinary_socket_path,
-                configuration.meta_socket_path,
+                configuration.ordinary_socket_path.0.0,
+                configuration.meta_socket_path.0.0,
             ])
             .expect("record where the sockets were bound");
     }
@@ -140,15 +145,19 @@ fn relocation_refuses_invalid_stored_sockets_before_claiming_them() {
         .expect("the effect fixture is below the working directory");
     let unwanted_directory = relative_root.join("created-by-a-claim");
     let invalid = OrchestrateNexusConfiguration {
-        ordinary_socket_path: unwanted_directory
-            .join("ordinary.sock")
-            .display()
-            .to_string(),
-        meta_socket_path: directory
-            .path()
-            .join("invalid-meta.sock")
-            .display()
-            .to_string(),
+        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+            unwanted_directory
+                .join("ordinary.sock")
+                .display()
+                .to_string(),
+        )),
+        meta_socket_path: MetaSocketPath(ConfigurationPath(
+            directory
+                .path()
+                .join("invalid-meta.sock")
+                .display()
+                .to_string(),
+        )),
     };
     directory
         .path()
@@ -295,10 +304,10 @@ fn a_move_is_declared_once_the_original_is_gone_and_the_sockets_are_free() {
     assert!(
         declared
             .vacated_socket_vector()
-            .contains(&sockets.ordinary_socket_path)
+            .contains(&sockets.ordinary_socket_path.0.0)
             && declared
                 .vacated_socket_vector()
-                .contains(&sockets.meta_socket_path),
+                .contains(&sockets.meta_socket_path.0.0),
         "and it reports the paths it found free, which are the paths the \
          relocated Nexus is about to bind: {:?}",
         declared.vacated_socket_vector()
@@ -321,7 +330,8 @@ fn a_relocation_is_refused_while_something_still_holds_a_socket() {
     // the origin being gone is not proof that nothing is serving. The claim
     // is what says so, and this is the claim a live Nexus would be holding.
     let sockets = directory.path().sockets();
-    let held = SocketClaim::claim(Path::new(&sockets.ordinary_socket_path)).expect("hold a socket");
+    let held =
+        SocketClaim::claim(Path::new(&sockets.ordinary_socket_path.0.0)).expect("hold a socket");
 
     let error = StoreRelocation::declare(&moved)
         .err()
@@ -329,7 +339,7 @@ fn a_relocation_is_refused_while_something_still_holds_a_socket() {
     let RecoveryError::SocketStillClaimed { socket_path } = error else {
         panic!("expected a socket-still-claimed refusal, found {error:?}");
     };
-    assert_eq!(socket_path, sockets.ordinary_socket_path);
+    assert_eq!(socket_path, sockets.ordinary_socket_path.0.0);
 
     // And once it lets go, the same declaration is made.
     drop(held);

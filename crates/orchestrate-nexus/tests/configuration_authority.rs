@@ -1,6 +1,9 @@
 //! The configuration authority the Nexus keeps: who may configure it, and the
 //! durable record of whether the privileged surface ever did.
 
+use signal_orchestrate::{
+    ConfigurationPath, MetaConfigureDone, MetaSocketPath, OrdinarySocketPath,
+};
 use std::path::Path;
 
 use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
@@ -20,14 +23,16 @@ trait Defaults {
 impl Defaults for Path {
     fn socket_paths(&self, prefix: &str) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self
-                .join(format!("{prefix}-ordinary.sock"))
-                .display()
-                .to_string(),
-            meta_socket_path: self
-                .join(format!("{prefix}-meta.sock"))
-                .display()
-                .to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join(format!("{prefix}-ordinary.sock"))
+                    .display()
+                    .to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join(format!("{prefix}-meta.sock"))
+                    .display()
+                    .to_string(),
+            )),
         }
     }
 }
@@ -61,7 +66,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .expect("ordinary Configure on a fresh store"),
         OrdinaryResponse::ConfigurationAccepted(ConfigurationReceipt {
             orchestrate_nexus_configuration: ordinary,
-            meta_configure_done: false,
+            meta_configure_done: MetaConfigureDone(false),
         }),
     );
 
@@ -74,7 +79,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .expect("privileged Configure"),
         MetaResponse::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: privileged.clone(),
-            meta_configure_done: true,
+            meta_configure_done: MetaConfigureDone(true),
         }),
     );
 
@@ -99,7 +104,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .expect("reverse"),
         MetaResponse::OrdinaryConfigurationReopened(ConfigurationReceipt {
             orchestrate_nexus_configuration: privileged,
-            meta_configure_done: false,
+            meta_configure_done: MetaConfigureDone(false),
         }),
     );
     let reopened = directory.path().socket_paths("reopened");
@@ -111,7 +116,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .expect("ordinary Configure after reversal"),
         OrdinaryResponse::ConfigurationAccepted(ConfigurationReceipt {
             orchestrate_nexus_configuration: reopened,
-            meta_configure_done: false,
+            meta_configure_done: MetaConfigureDone(false),
         }),
     );
 }
@@ -163,8 +168,8 @@ async fn an_unbindable_configuration_is_refused_on_both_surfaces() {
     let founded = directory.founded("invalid.memory");
     let same_path = directory.path().join("one.sock").display().to_string();
     let invalid = OrchestrateNexusConfiguration {
-        ordinary_socket_path: same_path.clone(),
-        meta_socket_path: same_path,
+        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(same_path.clone())),
+        meta_socket_path: MetaSocketPath(ConfigurationPath(same_path)),
     };
 
     assert_eq!(

@@ -99,7 +99,10 @@ impl Carrying for CarriedConfiguration {
 mod tests {
     use memory_engine::{Assertion, Engine, EngineOpen};
     use nexus::Configurable;
-    use signal_orchestrate::{Lock, Observation, ObserveSelection, OrchestrateNexusConfiguration};
+    use signal_orchestrate::{
+        ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
+        Observation, ObserveSelection, OrchestrateNexusConfiguration, OrdinarySocketPath,
+    };
 
     use super::*;
     use crate::{
@@ -154,25 +157,33 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary store");
         let store_path = directory.path().join("previous.memory");
         let held = Lock {
-            lock_id: 7,
-            lock_name: "held".to_owned(),
-            flow_id: "flow-857335".to_owned(),
-            lock_path_vector: vec!["/held".to_owned()],
-            lock_reason: "held across the cutover".to_owned(),
+            lock_id: LockId(7),
+            lock_name: LockName("held".to_owned()),
+            flow_id: FlowId("flow-857335".to_owned()),
+            lock_path_vector: vec![LockPath("/held".to_owned())],
+            lock_reason: LockReason("held across the cutover".to_owned()),
         };
         previous_generation_store(&store_path, &held);
 
         let defaults = OrchestrateNexusConfiguration {
-            ordinary_socket_path: "/run/default-ordinary.sock".to_owned(),
-            meta_socket_path: "/run/default-meta.sock".to_owned(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                "/run/default-ordinary.sock".to_owned(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                "/run/default-meta.sock".to_owned(),
+            )),
         };
         let (store, configuration) =
             OrchestrateStore::open(&store_path, defaults.clone()).expect("open the previous store");
         assert_eq!(
             configuration,
             OrchestrateNexusConfiguration {
-                ordinary_socket_path: "/run/previous-ordinary.sock".to_owned(),
-                meta_socket_path: "/run/previous-meta.sock".to_owned(),
+                ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                    "/run/previous-ordinary.sock".to_owned()
+                )),
+                meta_socket_path: MetaSocketPath(ConfigurationPath(
+                    "/run/previous-meta.sock".to_owned()
+                )),
             },
             "the metadata tree is seeded from the previous generation's row, not from the defaults"
         );
@@ -198,7 +209,7 @@ mod tests {
         let (store, configuration) =
             OrchestrateStore::open(&store_path, defaults).expect("reopen the store");
         assert_eq!(
-            configuration.ordinary_socket_path,
+            configuration.ordinary_socket_path.0.0,
             "/run/previous-ordinary.sock"
         );
         assert_eq!(
@@ -214,23 +225,31 @@ mod tests {
         previous_generation_store(
             &store_path,
             &Lock {
-                lock_id: 7,
-                lock_name: "held".to_owned(),
-                flow_id: "flow-857335".to_owned(),
-                lock_path_vector: vec!["/held".to_owned()],
-                lock_reason: "held across the cutover".to_owned(),
+                lock_id: LockId(7),
+                lock_name: LockName("held".to_owned()),
+                flow_id: FlowId("flow-857335".to_owned()),
+                lock_path_vector: vec![LockPath("/held".to_owned())],
+                lock_reason: LockReason("held across the cutover".to_owned()),
             },
         );
         let defaults = OrchestrateNexusConfiguration {
-            ordinary_socket_path: "/run/default-ordinary.sock".to_owned(),
-            meta_socket_path: "/run/default-meta.sock".to_owned(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                "/run/default-ordinary.sock".to_owned(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                "/run/default-meta.sock".to_owned(),
+            )),
         };
         let (mut store, _) =
             OrchestrateStore::open(&store_path, defaults).expect("open the previous store");
 
         let repointed = OrchestrateNexusConfiguration {
-            ordinary_socket_path: "/tmp/stranded-ordinary.sock".to_owned(),
-            meta_socket_path: "/tmp/stranded-meta.sock".to_owned(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                "/tmp/stranded-ordinary.sock".to_owned(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                "/tmp/stranded-meta.sock".to_owned(),
+            )),
         };
         assert_eq!(
             store
@@ -248,7 +267,9 @@ mod tests {
             store
                 .receipt()
                 .orchestrate_nexus_configuration
-                .ordinary_socket_path,
+                .ordinary_socket_path
+                .0
+                .0,
             "/run/previous-ordinary.sock",
             "and the refused configuration did not take"
         );

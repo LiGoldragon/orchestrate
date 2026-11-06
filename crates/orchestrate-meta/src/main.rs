@@ -4,7 +4,7 @@
 mod generated_client;
 
 use datom_codec::{Actualizing, Budget, Datomizable, Potential};
-use generated_client::{ClientFailure, Unreachable};
+use generated_client::{ClientFailure, SocketPath, Unreachable};
 use meta_signal_orchestrate::{Query, Response};
 use protos::{Compactable, Protosizable, ReaderBudget};
 use signal::{
@@ -85,7 +85,7 @@ impl Querying for Client {
         let mut potential = Potential::<Query>::from(source);
         let mut budget = Budget {
             remaining: 10_000,
-            reader: ReaderBudget { remaining: 10_000 },
+            reader: ReaderBudget::try_from(10_000usize).unwrap(),
             depth: 0,
             maximum_depth: 256,
         };
@@ -112,8 +112,8 @@ impl Querying for Client {
                 TransportError::Refused(rejection) => ClientFailure::GreetingRefused(rejection),
                 TransportError::Faulted(fault) => ClientFailure::ExchangeFaulted(fault),
                 error => ClientFailure::Unreachable(Unreachable {
-                    socket_path: self.socket_path.clone(),
-                    transport_error: error.to_string(),
+                    socket_path: SocketPath(self.socket_path.clone()),
+                    transport_error: generated_client::TransportError(error.to_string()),
                 }),
             })
     }

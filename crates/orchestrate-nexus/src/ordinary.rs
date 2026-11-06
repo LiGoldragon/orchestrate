@@ -35,6 +35,6 @@ pub trait IdentifiesLock {
 
 impl IdentifiesLock for Lock {
     fn lock_id(&self) -> &i64 {
-        &self.lock_id
+        &self.lock_id.0
     }
 }

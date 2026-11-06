@@ -140,7 +140,7 @@ impl Message<OrdinaryQuery> for NexusCore {
                 self.store.ordinary_configure(configuration)?
             }
             OrdinaryQuery::Lock(request) => self.store.lock(request)?,
-            OrdinaryQuery::Release(lock_id) => self.store.release(lock_id)?,
+            OrdinaryQuery::Release(lock_id) => self.store.release(lock_id.0)?,
             OrdinaryQuery::Observe(selection) => {
                 OrdinaryResponse::Observed(self.store.observe(selection)?)
             }

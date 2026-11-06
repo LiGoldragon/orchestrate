@@ -27,6 +27,7 @@ use orchestrate_nexus::{
     },
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
+use signal_orchestrate::{ConfigurationPath, MetaSocketPath, OrdinarySocketPath};
 
 trait Fixture {
     fn defaults(&self) -> OrchestrateNexusConfiguration;
@@ -36,8 +37,12 @@ trait Fixture {
 impl Fixture for Path {
     fn defaults(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
-            meta_socket_path: self.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join("meta.sock").display().to_string(),
+            )),
         }
     }
 

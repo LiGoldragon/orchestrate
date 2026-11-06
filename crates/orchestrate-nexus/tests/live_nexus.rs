@@ -25,10 +25,14 @@ use signal::{
     Signal, Signalizable,
 };
 use signal_orchestrate::{
+    ConfigurationPath, MetaConfigureDone, MetaSocketPath, OrdinarySocketPath,
+};
+use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockRequest,
     Observation, ObserveSelection, OrchestrateNexusConfiguration, Query as OrdinaryQuery,
     Response as OrdinaryResponse,
 };
+use signal_orchestrate::{FlowId, LockId, LockName, LockPath, LockReason};
 
 struct IsolatedXdg {
     state_home: PathBuf,
@@ -236,7 +240,7 @@ impl Connects for Connection {
         Dispatch<Q>: Signalizable,
     {
         let exchange = self.next;
-        self.next += 1;
+        self.next = ExchangeId(self.next.0 + 1);
         self.send(&Dispatch::Open(Opening { exchange, query }));
         exchange
     }
@@ -262,7 +266,10 @@ impl Connects for Connection {
     {
         match self.hear::<R>() {
             Delivery::Answer(answer) if answer.exchange() == exchange => answer.response,
-            other => panic!("expected an answer on exchange {exchange}, found {other:?}"),
+            other => panic!(
+                "expected an answer on exchange {}, found {other:?}",
+                exchange.0
+            ),
         }
     }
 }
@@ -315,10 +322,10 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
     let mut nexus = LiveNexus::start(binary, roots);
     let owned = temporary.path().join("owned").display().to_string();
     let locked = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
-        lock_name: "live-lock".to_owned(),
-        flow_id: "test-flow".to_owned(),
-        lock_path_vector: vec![owned.clone()],
-        lock_reason: "live two socket proof".to_owned(),
+        lock_name: LockName("live-lock".to_owned()),
+        flow_id: FlowId("test-flow".to_owned()),
+        lock_path_vector: vec![LockPath(owned.clone())],
+        lock_reason: LockReason("live two socket proof".to_owned()),
     }));
     let OrdinaryResponse::Locked(lock) = locked else {
         panic!("expected Locked response, found {locked:?}");
@@ -328,14 +335,18 @@ fn nexus_serves_both_typed_sockets_and_resumes_state() {
         OrdinaryResponse::Observed(Observation::Locks(vec![lock.clone()])),
     );
     let configured = OrchestrateNexusConfiguration {
-        ordinary_socket_path: nexus.roots.ordinary_socket().display().to_string(),
-        meta_socket_path: nexus.roots.meta_socket().display().to_string(),
+        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+            nexus.roots.ordinary_socket().display().to_string(),
+        )),
+        meta_socket_path: MetaSocketPath(ConfigurationPath(
+            nexus.roots.meta_socket().display().to_string(),
+        )),
     };
     assert_eq!(
         nexus.meta(MetaQuery::Configure(configured.clone())),
         MetaResponse::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: configured,
-            meta_configure_done: true,
+            meta_configure_done: MetaConfigureDone(true),
         }),
     );
 
@@ -363,10 +374,10 @@ fn a_nul_lock_path_never_becomes_durable() {
     let mut connection =
         Connection::greeted::<OrdinaryQuery, OrdinaryResponse>(&nexus.roots.ordinary_socket());
     connection.open(OrdinaryQuery::Lock(LockRequest {
-        lock_name: "phantom".to_owned(),
-        flow_id: "test-flow".to_owned(),
-        lock_path_vector: vec!["/held\0phantom".to_owned()],
-        lock_reason: "no Unix operation can name this path".to_owned(),
+        lock_name: LockName("phantom".to_owned()),
+        flow_id: FlowId("test-flow".to_owned()),
+        lock_path_vector: vec![LockPath("/held\0phantom".to_owned())],
+        lock_reason: LockReason("no Unix operation can name this path".to_owned()),
     }));
     assert!(
         matches!(
@@ -414,10 +425,10 @@ trait Requests {
 impl Requests for tempfile::TempDir {
     fn requested(&self, name: &str, reason: String) -> OrdinaryQuery {
         OrdinaryQuery::Lock(LockRequest {
-            lock_name: name.to_owned(),
-            flow_id: "test-flow".to_owned(),
-            lock_path_vector: vec![self.path().join(name).display().to_string()],
-            lock_reason: reason,
+            lock_name: LockName(name.to_owned()),
+            flow_id: FlowId("test-flow".to_owned()),
+            lock_path_vector: vec![LockPath(self.path().join(name).display().to_string())],
+            lock_reason: LockReason(reason),
         })
     }
 }
@@ -729,11 +740,13 @@ fn a_populated_store_ignores_invalid_current_defaults() {
     let valid = IsolatedXdg::create(&temporary);
     let valid_ordinary = valid.ordinary_socket();
     let held = Lock {
-        lock_id: 20,
-        lock_name: "stored-configuration".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "the populated store supplies its own configuration".to_owned(),
+        lock_id: LockId(20),
+        lock_name: LockName("stored-configuration".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("the populated store supplies its own configuration".to_owned()),
     };
     valid.write_previous_generation_store(&held);
     let invalid_defaults = IsolatedXdg {
@@ -752,15 +765,19 @@ fn an_invalid_stored_configuration_is_refused_before_socket_claims() {
     let roots = IsolatedXdg::create(&temporary);
     let shared_socket = roots.runtime_directory.join("shared.sock");
     let invalid = OrchestrateNexusConfiguration {
-        ordinary_socket_path: shared_socket.display().to_string(),
-        meta_socket_path: shared_socket.display().to_string(),
+        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+            shared_socket.display().to_string(),
+        )),
+        meta_socket_path: MetaSocketPath(ConfigurationPath(shared_socket.display().to_string())),
     };
     let held = Lock {
-        lock_id: 21,
-        lock_name: "invalid-configuration".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "the store predates configuration validation".to_owned(),
+        lock_id: LockId(21),
+        lock_name: LockName("invalid-configuration".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("the store predates configuration validation".to_owned()),
     };
     roots.write_previous_generation_store_with_configuration_at(&roots.store(), &held, &invalid);
 
@@ -839,8 +856,12 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             store_path,
             held,
             &OrchestrateNexusConfiguration {
-                ordinary_socket_path: self.ordinary_socket().display().to_string(),
-                meta_socket_path: self.meta_socket().display().to_string(),
+                ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                    self.ordinary_socket().display().to_string(),
+                )),
+                meta_socket_path: MetaSocketPath(ConfigurationPath(
+                    self.meta_socket().display().to_string(),
+                )),
             },
         );
     }
@@ -865,8 +886,8 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             .assert(Assertion::new(
                 configurations,
                 StoredConfiguration {
-                    ordinary_socket: configuration.ordinary_socket_path.clone(),
-                    meta_socket: configuration.meta_socket_path.clone(),
+                    ordinary_socket: configuration.ordinary_socket_path.0.0.clone(),
+                    meta_socket: configuration.meta_socket_path.0.0.clone(),
                 },
             ))
             .expect("write the previous configuration");
@@ -883,7 +904,7 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             .assert(Assertion::new(
                 allocator,
                 StoredAllocator {
-                    next_lock_id: held.lock_id + 1,
+                    next_lock_id: held.lock_id.0 + 1,
                 },
             ))
             .expect("write the allocator");
@@ -895,11 +916,13 @@ fn a_store_at_the_previous_default_path_moves_to_memory_and_resumes() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let held = Lock {
-        lock_id: 11,
-        lock_name: "live-store".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "held across the Memory name change".to_owned(),
+        lock_id: LockId(11),
+        lock_name: LockName("live-store".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("held across the Memory name change".to_owned()),
     };
     roots.write_previous_generation_store_at(&roots.previous_store(), &held);
 
@@ -922,11 +945,13 @@ fn an_interrupted_default_path_move_is_completed_and_resumes() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let held = Lock {
-        lock_id: 12,
-        lock_name: "interrupted-move".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "held while both default names referred to one store".to_owned(),
+        lock_id: LockId(12),
+        lock_name: LockName("interrupted-move".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("held while both default names referred to one store".to_owned()),
     };
     roots.write_previous_generation_store_at(&roots.previous_store(), &held);
     std::fs::hard_link(roots.previous_store(), roots.store())
@@ -951,11 +976,13 @@ fn upgrade_preflight_discovers_the_previous_default_without_moving_it() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let held = Lock {
-        lock_id: 14,
-        lock_name: "preflight".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "counted before startup".to_owned(),
+        lock_id: LockId(14),
+        lock_name: LockName("preflight".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("counted before startup".to_owned()),
     };
     roots.write_previous_generation_store_at(&roots.previous_store(), &held);
 
@@ -977,11 +1004,13 @@ fn relocation_discovers_the_previous_default_without_moving_it() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let held = Lock {
-        lock_id: 15,
-        lock_name: "relocation".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "inspected before startup".to_owned(),
+        lock_id: LockId(15),
+        lock_name: LockName("relocation".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("inspected before startup".to_owned()),
     };
     roots.write_previous_generation_store_at(&roots.previous_store(), &held);
 
@@ -996,18 +1025,22 @@ fn distinct_stores_at_both_default_paths_are_refused() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let memory_lock = Lock {
-        lock_id: 12,
-        lock_name: "memory".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("memory").display().to_string()],
-        lock_reason: "Memory store".to_owned(),
+        lock_id: LockId(12),
+        lock_name: LockName("memory".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("memory").display().to_string(),
+        )],
+        lock_reason: LockReason("Memory store".to_owned()),
     };
     let previous_lock = Lock {
-        lock_id: 13,
-        lock_name: "previous".to_owned(),
-        flow_id: "flow-1e6136".to_owned(),
-        lock_path_vector: vec![temporary.path().join("previous").display().to_string()],
-        lock_reason: "previous store".to_owned(),
+        lock_id: LockId(13),
+        lock_name: LockName("previous".to_owned()),
+        flow_id: FlowId("flow-1e6136".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("previous").display().to_string(),
+        )],
+        lock_reason: LockReason("previous store".to_owned()),
     };
     roots.write_previous_generation_store_at(&roots.store(), &memory_lock);
     roots.write_previous_generation_store_at(&roots.previous_store(), &previous_lock);
@@ -1042,11 +1075,13 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
     let held = Lock {
-        lock_id: 7,
-        lock_name: "carried".to_owned(),
-        flow_id: "flow-857335".to_owned(),
-        lock_path_vector: vec![temporary.path().join("held").display().to_string()],
-        lock_reason: "held across the cutover".to_owned(),
+        lock_id: LockId(7),
+        lock_name: LockName("carried".to_owned()),
+        flow_id: FlowId("flow-857335".to_owned()),
+        lock_path_vector: vec![LockPath(
+            temporary.path().join("held").display().to_string(),
+        )],
+        lock_reason: LockReason("held across the cutover".to_owned()),
     };
     roots.write_previous_generation_store(&held);
     let nexus = LiveNexus::start(env!("CARGO_BIN_EXE_orchestrate-nexus"), roots);
@@ -1058,12 +1093,16 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     );
 
     let stranding = OrchestrateNexusConfiguration {
-        ordinary_socket_path: temporary.path().join("stranded.sock").display().to_string(),
-        meta_socket_path: temporary
-            .path()
-            .join("stranded-meta.sock")
-            .display()
-            .to_string(),
+        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+            temporary.path().join("stranded.sock").display().to_string(),
+        )),
+        meta_socket_path: MetaSocketPath(ConfigurationPath(
+            temporary
+                .path()
+                .join("stranded-meta.sock")
+                .display()
+                .to_string(),
+        )),
     };
     assert_eq!(
         nexus.ordinary(OrdinaryQuery::Configure(stranding.clone())),
@@ -1078,9 +1117,13 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     else {
         panic!("the privileged socket reopens ordinary Configure");
     };
-    assert!(!receipt.meta_configure_done);
+    assert!(!receipt.meta_configure_done.0);
     assert_eq!(
-        receipt.orchestrate_nexus_configuration.ordinary_socket_path,
+        receipt
+            .orchestrate_nexus_configuration
+            .ordinary_socket_path
+            .0
+            .0,
         nexus.roots.ordinary_socket().display().to_string(),
         "the carried configuration is what the Nexus is bound by, and the refusal left it alone"
     );
@@ -1309,10 +1352,10 @@ fn a_terminated_nexus_stops_cleanly_and_the_next_one_starts_at_once() {
     let mut nexus = LiveNexus::start(binary, roots);
     let owned = temporary.path().join("owned").display().to_string();
     let OrdinaryResponse::Locked(held) = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
-        lock_name: "across-the-stop".to_owned(),
-        flow_id: "test-flow".to_owned(),
-        lock_path_vector: vec![owned],
-        lock_reason: "held across a termination".to_owned(),
+        lock_name: LockName("across-the-stop".to_owned()),
+        flow_id: FlowId("test-flow".to_owned()),
+        lock_path_vector: vec![LockPath(owned)],
+        lock_reason: LockReason("held across a termination".to_owned()),
     })) else {
         panic!("expected a Lock to be acquired");
     };
@@ -1522,10 +1565,10 @@ fn a_carried_store_serves_again_with_its_state_once_the_move_is_declared() {
     let mut nexus = LiveNexus::start(binary, original);
     let owned = temporary.path().join("owned").display().to_string();
     let OrdinaryResponse::Locked(held) = nexus.ordinary(OrdinaryQuery::Lock(LockRequest {
-        lock_name: "across-the-move".to_owned(),
-        flow_id: "test-flow".to_owned(),
-        lock_path_vector: vec![owned],
-        lock_reason: "held across a relocation".to_owned(),
+        lock_name: LockName("across-the-move".to_owned()),
+        flow_id: FlowId("test-flow".to_owned()),
+        lock_path_vector: vec![LockPath(owned)],
+        lock_reason: LockReason("held across a relocation".to_owned()),
     })) else {
         panic!("expected a Lock to be acquired");
     };

@@ -246,7 +246,7 @@ fn a_peer_the_kernel_reports_as_another_user_is_refused_on_the_meta_socket() {
     assert_eq!(
         response,
         MetaResponse::PeerRefused(PeerRejection {
-            peer_user_id: i64::from(subordinate.first()),
+            peer_user_id: meta_signal_orchestrate::PeerUserId(i64::from(subordinate.first())),
         }),
         "the kernel's own answer for a second user reaches the rule, and the refusal names that user"
     );

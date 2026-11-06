@@ -6,7 +6,7 @@ use std::{
 };
 
 use memory_engine::RecordPredicate;
-use signal_orchestrate::{Lock, LockRequest};
+use signal_orchestrate::{Lock, LockId, LockPath, LockRequest};
 
 use super::{
     error::StoreError,
@@ -37,8 +37,8 @@ impl NormalizesLockRequests for NormalizedLockRequest {
         }
         let mut paths = BTreeSet::new();
         for path in &mut request.lock_path_vector {
-            let normalized = NormalizedLockPath::from_source(path)?.0;
-            *path = normalized.clone();
+            let normalized = NormalizedLockPath::from_source(&path.0)?.0;
+            *path = LockPath(normalized.clone());
             if !paths.insert(normalized.clone()) {
                 return Err(StoreError::DuplicateNormalizedPath { path: normalized });
             }
@@ -53,16 +53,16 @@ impl NormalizesLockRequests for NormalizedLockRequest {
     fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
         self.request.lock_path_vector.iter().find_map(|requested| {
             lock.lock_path_vector.iter().find_map(|held| {
-                NormalizedLockPath::from_normalized(requested)
-                    .overlaps(&NormalizedLockPath::from_normalized(held))
-                    .then(|| requested.clone())
+                NormalizedLockPath::from_normalized(&requested.0)
+                    .overlaps(&NormalizedLockPath::from_normalized(&held.0))
+                    .then(|| requested.0.clone())
             })
         })
     }
 
     fn into_lock(self, lock_id: i64) -> Lock {
         Lock {
-            lock_id,
+            lock_id: LockId(lock_id),
             lock_name: self.request.lock_name,
             flow_id: self.request.flow_id,
             lock_path_vector: self.request.lock_path_vector,
@@ -145,13 +145,17 @@ impl NormalizesLockPaths for NormalizedLockPath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signal_orchestrate::{FlowId, LockId, LockName, LockPath, LockReason};
 
     fn request(paths: &[&str]) -> LockRequest {
         LockRequest {
-            lock_name: "name".to_owned(),
-            flow_id: "flow".to_owned(),
-            lock_path_vector: paths.iter().map(|path| (*path).to_owned()).collect(),
-            lock_reason: "reason".to_owned(),
+            lock_name: LockName("name".to_owned()),
+            flow_id: FlowId("flow".to_owned()),
+            lock_path_vector: paths
+                .iter()
+                .map(|path| LockPath((*path).to_owned()))
+                .collect(),
+            lock_reason: LockReason("reason".to_owned()),
         }
     }
 
@@ -161,7 +165,7 @@ mod tests {
             .expect("normalize a lexical path");
         assert_eq!(
             normalized.into_lock(1).lock_path_vector,
-            vec!["/a/b/c".to_owned()]
+            vec![LockPath("/a/b/c".to_owned())]
         );
         assert!(matches!(
             NormalizedLockRequest::from_request(request(&["/a/../b"])),
@@ -188,11 +192,11 @@ mod tests {
     #[test]
     fn overlap_is_ancestry_in_either_direction_and_the_root_covers_everything() {
         let held = Lock {
-            lock_id: 1,
-            lock_name: "held".to_owned(),
-            flow_id: "flow".to_owned(),
-            lock_path_vector: vec!["/a/b".to_owned()],
-            lock_reason: "reason".to_owned(),
+            lock_id: LockId(1),
+            lock_name: LockName("held".to_owned()),
+            flow_id: FlowId("flow".to_owned()),
+            lock_path_vector: vec![LockPath("/a/b".to_owned())],
+            lock_reason: LockReason("reason".to_owned()),
         };
         for requested in ["/a/b", "/a/b/c", "/"] {
             assert_eq!(

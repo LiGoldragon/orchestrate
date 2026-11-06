@@ -7,7 +7,9 @@
 //! socket speaks.
 
 use kameo::actor::ActorRef;
-use meta_signal_orchestrate::{PeerRejection, Query as MetaQuery, Response as MetaResponse};
+use meta_signal_orchestrate::{
+    PeerRejection, PeerUserId, Query as MetaQuery, Response as MetaResponse,
+};
 use signal::{Contracted, Signalizable};
 use signal_orchestrate::{Observation, Query as OrdinaryQuery, Response as OrdinaryResponse};
 use tokio::sync::broadcast::{self, error::RecvError};
@@ -78,7 +80,7 @@ pub(crate) trait Refusing: Sized {
 impl Refusing for MetaResponse {
     fn peer_refusal(peer_user: u32) -> Option<Self> {
         Some(Self::PeerRefused(PeerRejection {
-            peer_user_id: i64::from(peer_user),
+            peer_user_id: PeerUserId(i64::from(peer_user)),
         }))
     }
 }

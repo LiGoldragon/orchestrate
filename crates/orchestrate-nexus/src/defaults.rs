@@ -7,7 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use signal_orchestrate::OrchestrateNexusConfiguration;
+use signal_orchestrate::{
+    ConfigurationPath, MetaSocketPath, OrchestrateNexusConfiguration, OrdinarySocketPath,
+};
 use thiserror::Error;
 
 const STATE_DIRECTORY: &str = "orchestrate-nexus";
@@ -48,8 +50,8 @@ impl ReadsDefaultConfiguration for DefaultConfiguration {
         Ok(Self {
             store_path: Self::default_store_path(&state_home)?,
             configuration: OrchestrateNexusConfiguration {
-                ordinary_socket_path,
-                meta_socket_path,
+                ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(ordinary_socket_path)),
+                meta_socket_path: MetaSocketPath(ConfigurationPath(meta_socket_path)),
             },
         })
     }

@@ -8,7 +8,10 @@ use signal::{
     Contracted, FrameReading, FrameWriting, Handshake, HandshakeReceipt, HandshakeRejection,
     Opening as ExchangeOpening,
 };
-use signal_orchestrate::{OrchestrateNexusConfiguration, Query as OrdinaryQuery};
+use signal_orchestrate::{
+    ConfigurationPath, MetaSocketPath, OrchestrateNexusConfiguration, OrdinarySocketPath,
+    Query as OrdinaryQuery,
+};
 use tokio::task::JoinHandle;
 
 use super::*;
@@ -80,8 +83,12 @@ impl ServesOnePrivilegedConnection for tempfile::TempDir {
         let (store, _) = OrchestrateStore::open(
             &self.path().join(format!("{name}.memory")),
             OrchestrateNexusConfiguration {
-                ordinary_socket_path: self.path().join("o.sock").display().to_string(),
-                meta_socket_path: socket_path.display().to_string(),
+                ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                    self.path().join("o.sock").display().to_string(),
+                )),
+                meta_socket_path: MetaSocketPath(ConfigurationPath(
+                    socket_path.display().to_string(),
+                )),
             },
         )
         .expect("open an isolated store");
@@ -146,7 +153,7 @@ async fn a_peer_who_is_not_the_socket_owner_is_refused_in_vocabulary_and_closed(
     assert_eq!(
         response,
         MetaResponse::PeerRefused(PeerRejection {
-            peer_user_id: i64::from(us),
+            peer_user_id: meta_signal_orchestrate::PeerUserId(i64::from(us)),
         }),
         "the peer is named a refusal in vocabulary, not left to guess at a dropped connection"
     );
@@ -267,7 +274,7 @@ async fn the_socket_owner_reaches_the_contract_on_the_same_path() {
             .hear::<MetaResponse>();
         let answered = peer
             .send(&Dispatch::Open(ExchangeOpening {
-                exchange: 1,
+                exchange: signal::ExchangeId(1),
                 query: MetaQuery::ReverseMetaConfiguration,
             }))
             .hear::<MetaResponse>();
@@ -282,7 +289,7 @@ async fn the_socket_owner_reaches_the_contract_on_the_same_path() {
     let Delivery::Answer(answer) = answered else {
         panic!("the owner is answered on the exchange it opened, found {answered:?}");
     };
-    assert_eq!(answer.exchange(), 1);
+    assert_eq!(answer.exchange(), signal::ExchangeId(1));
     assert!(
         matches!(
             answer.response,
@@ -332,7 +339,7 @@ async fn an_exchange_opened_before_the_greeting_is_a_connection_fault() {
         let mut peer = Peer::connected(&socket_path);
         let heard = peer
             .send(&Dispatch::Open(ExchangeOpening {
-                exchange: 1,
+                exchange: signal::ExchangeId(1),
                 query: MetaQuery::ReverseMetaConfiguration,
             }))
             .hear::<MetaResponse>();

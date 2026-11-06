@@ -34,14 +34,14 @@ impl Validates for OrchestrateNexusConfiguration {
     /// Both sockets are bound by absolute path and must differ: a Nexus
     /// cannot serve its privileged and its ordinary contract on one socket.
     fn validated(&self) -> Result<(), ConfigurationRejectionReason> {
-        let paths = [&self.ordinary_socket_path, &self.meta_socket_path];
+        let paths = [&self.ordinary_socket_path.0.0, &self.meta_socket_path.0.0];
         let bindable = paths.iter().all(|path| {
             let socket_path = std::path::Path::new(path);
             socket_path.is_absolute()
                 && !path.ends_with('/')
                 && SocketAddr::from_pathname(socket_path).is_ok()
         });
-        if bindable && self.ordinary_socket_path != self.meta_socket_path {
+        if bindable && self.ordinary_socket_path.0.0 != self.meta_socket_path.0.0 {
             Ok(())
         } else {
             Err(ConfigurationRejectionReason::InvalidConfiguration)
@@ -74,11 +74,12 @@ impl AnswersMeta for ConfigurationOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use signal_orchestrate::{ConfigurationPath, MetaSocketPath, OrdinarySocketPath};
 
     fn configuration(ordinary: &str, meta: &str) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: ordinary.to_owned(),
-            meta_socket_path: meta.to_owned(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(ordinary.to_owned())),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(meta.to_owned())),
         }
     }
 

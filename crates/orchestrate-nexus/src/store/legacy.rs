@@ -100,15 +100,21 @@ impl CountsActivePathLocks for Engine {
 #[cfg(test)]
 mod tests {
     use memory_engine::Assertion;
-    use signal_orchestrate::OrchestrateNexusConfiguration;
+    use signal_orchestrate::{
+        ConfigurationPath, MetaSocketPath, OrchestrateNexusConfiguration, OrdinarySocketPath,
+    };
 
     use super::*;
     use crate::store::{OpensStore, OrchestrateStore};
 
     fn defaults(directory: &Path) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: directory.join("ordinary.sock").display().to_string(),
-            meta_socket_path: directory.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                directory.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                directory.join("meta.sock").display().to_string(),
+            )),
         }
     }
 

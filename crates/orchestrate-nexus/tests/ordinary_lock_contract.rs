@@ -1,6 +1,8 @@
 //! Behavioral contract for the ordinary Lock surface, exercised where the
 //! Nexus actually applies it: through Nexus Core.
 
+use signal_orchestrate::{ConfigurationPath, LockPath, MetaSocketPath, OrdinarySocketPath};
+use signal_orchestrate::{FlowId, LockName, LockReason};
 use std::path::Path;
 
 use orchestrate_nexus::{
@@ -39,10 +41,13 @@ impl CreatesCoreFixture for CoreFixture {
 
     fn lock_request(&self, name: &str, paths: &[&str]) -> LockRequest {
         LockRequest {
-            lock_name: name.to_owned(),
-            flow_id: "test-flow".to_owned(),
-            lock_path_vector: paths.iter().map(|path| (*path).to_owned()).collect(),
-            lock_reason: "behavioral proof".to_owned(),
+            lock_name: LockName(name.to_owned()),
+            flow_id: FlowId("test-flow".to_owned()),
+            lock_path_vector: paths
+                .iter()
+                .map(|path| LockPath((*path).to_owned()))
+                .collect(),
+            lock_reason: LockReason("behavioral proof".to_owned()),
         }
     }
 
@@ -58,8 +63,12 @@ trait Defaults {
 impl Defaults for Path {
     fn defaults(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
-            meta_socket_path: self.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join("meta.sock").display().to_string(),
+            )),
         }
     }
 }
@@ -92,10 +101,16 @@ async fn locks_are_atomic_complete_and_released_by_durable_id() {
         .expect("acquire")
         .locked();
 
-    assert_eq!(acquired.lock_name, "alpha");
-    assert_eq!(acquired.flow_id, "test-flow");
-    assert_eq!(acquired.lock_path_vector, vec![first, second]);
-    assert_eq!(acquired.lock_reason, "behavioral proof");
+    assert_eq!(acquired.lock_name, LockName("alpha".to_owned()));
+    assert_eq!(acquired.flow_id, FlowId("test-flow".to_owned()));
+    assert_eq!(
+        acquired.lock_path_vector,
+        vec![LockPath(first), LockPath(second)]
+    );
+    assert_eq!(
+        acquired.lock_reason,
+        LockReason("behavioral proof".to_owned())
+    );
     assert_eq!(
         fixture
             .founded
@@ -138,7 +153,7 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
             .await
             .expect("refuse overlap"),
         Response::LockRejected(LockRejection::PathOverlap(LockOverlap {
-            lock_path: requested,
+            lock_path: LockPath(requested),
             lock: held,
         })),
     );
@@ -205,10 +220,12 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     let (store, _) = OrchestrateStore::open(&store_path, defaults.clone()).expect("open store");
     let founded = FoundedCore::found(store);
     let request = LockRequest {
-        lock_name: "alpha".to_owned(),
-        flow_id: "first-flow".to_owned(),
-        lock_path_vector: vec![directory.path().join("first").display().to_string()],
-        lock_reason: "first".to_owned(),
+        lock_name: LockName("alpha".to_owned()),
+        flow_id: FlowId("first-flow".to_owned()),
+        lock_path_vector: vec![LockPath(
+            directory.path().join("first").display().to_string(),
+        )],
+        lock_reason: LockReason("first".to_owned()),
     };
     let first = founded
         .core()
@@ -233,10 +250,12 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     let later = founded
         .core()
         .ask(Query::Lock(LockRequest {
-            lock_name: "alpha".to_owned(),
-            flow_id: "later-flow".to_owned(),
-            lock_path_vector: vec![directory.path().join("later").display().to_string()],
-            lock_reason: "later".to_owned(),
+            lock_name: LockName("alpha".to_owned()),
+            flow_id: FlowId("later-flow".to_owned()),
+            lock_path_vector: vec![LockPath(
+                directory.path().join("later").display().to_string(),
+            )],
+            lock_reason: LockReason("later".to_owned()),
         }))
         .await
         .expect("acquire later")

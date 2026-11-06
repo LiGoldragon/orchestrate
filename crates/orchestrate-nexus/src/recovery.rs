@@ -221,8 +221,8 @@ impl ReadsDesiredSockets for Engine {
                     .validated()
                     .map_err(|_| StoreError::InvalidConfiguration)?;
                 Ok(vec![
-                    configuration.ordinary_socket_path,
-                    configuration.meta_socket_path,
+                    configuration.ordinary_socket_path.0.0,
+                    configuration.meta_socket_path.0.0,
                 ])
             }
             rows => Err(StoreError::MetadataInvariant { count: rows.len() }.into()),

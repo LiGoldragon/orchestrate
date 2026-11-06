@@ -16,6 +16,7 @@
 //! `tar`, or out of a snapshot — is indistinguishable from a copy, and is
 //! refused with it. What the owner does about that is `relocation.rs`.
 
+use signal_orchestrate::{ConfigurationPath, MetaSocketPath, OrdinarySocketPath};
 use std::path::Path;
 
 use nexus::{Identifying, Situated};
@@ -32,8 +33,12 @@ trait Defaults {
 impl Defaults for Path {
     fn defaults(&self) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
-            ordinary_socket_path: self.join("ordinary.sock").display().to_string(),
-            meta_socket_path: self.join("meta.sock").display().to_string(),
+            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                self.join("ordinary.sock").display().to_string(),
+            )),
+            meta_socket_path: MetaSocketPath(ConfigurationPath(
+                self.join("meta.sock").display().to_string(),
+            )),
         }
     }
 }
@@ -51,8 +56,8 @@ impl Serves for Path {
             OrchestrateStore::open(store_path, self.defaults()).expect("open a fresh store");
         store
             .situate(vec![
-                configuration.ordinary_socket_path.clone(),
-                configuration.meta_socket_path.clone(),
+                configuration.ordinary_socket_path.0.0.clone(),
+                configuration.meta_socket_path.0.0.clone(),
             ])
             .expect("record where the sockets were bound");
         configuration

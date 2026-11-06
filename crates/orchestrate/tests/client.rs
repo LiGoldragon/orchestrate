@@ -15,9 +15,9 @@ use std::{
 };
 
 use signal::{
-    Answer, Contracted, Delivery, Dispatch, Ending, ExchangeFault, FrameCapacity, FrameError,
-    FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection, Restorable, Signal,
-    Signalizable,
+    Answer, ContractDigest, Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId,
+    FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection,
+    Restorable, Signal, Signalizable,
 };
 use signal_orchestrate::{Observation, ObserveSelection, Query, Response};
 
@@ -44,8 +44,8 @@ trait CreatesClientHarness: Sized {
     fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
     fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Query>;
     fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()>;
-    fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()>;
-    fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool>;
+    fn refuse_greeting(&self, digest: ContractDigest) -> std::thread::JoinHandle<()>;
+    fn greet_with_wrong_digest(&self, digest: ContractDigest) -> std::thread::JoinHandle<bool>;
 }
 
 /// The fixture's side of signal's exchange layer, framed with the shared crate.
@@ -141,7 +141,7 @@ impl CreatesClientHarness for ClientHarness {
                     Ending::faulted(opening.exchange, ExchangeFault::UnknownExchange)
                 }
                 EndTarget::Other => Ending::faulted(
-                    opening.exchange.wrapping_add(1),
+                    ExchangeId(opening.exchange.0.wrapping_add(1)),
                     ExchangeFault::UnknownExchange,
                 ),
                 EndTarget::Connection => Ending::connection_faulted(ExchangeFault::UnknownExchange),
@@ -157,13 +157,13 @@ impl CreatesClientHarness for ClientHarness {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
             stream.dispatched();
             stream.deliver(Delivery::End(Ending::faulted(
-                1,
+                ExchangeId(1),
                 ExchangeFault::UnknownExchange,
             )));
         })
     }
 
-    fn refuse_greeting(&self, digest: i64) -> std::thread::JoinHandle<()> {
+    fn refuse_greeting(&self, digest: ContractDigest) -> std::thread::JoinHandle<()> {
         let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
@@ -174,7 +174,7 @@ impl CreatesClientHarness for ClientHarness {
         })
     }
 
-    fn greet_with_wrong_digest(&self, digest: i64) -> std::thread::JoinHandle<bool> {
+    fn greet_with_wrong_digest(&self, digest: ContractDigest) -> std::thread::JoinHandle<bool> {
         let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
@@ -258,7 +258,7 @@ fn client_describes_contracts_and_reports_datom_failures() {
 #[test]
 fn a_refused_greeting_is_reported_as_vocabulary() {
     let harness = ClientHarness::create();
-    let server = harness.refuse_greeting(42);
+    let server = harness.refuse_greeting(ContractDigest(42));
     let output = harness.invoke(Some(QUERY));
     assert!(!output.status.success());
     assert_eq!(
@@ -271,7 +271,8 @@ fn a_refused_greeting_is_reported_as_vocabulary() {
 #[test]
 fn a_wrong_greeted_digest_never_opens_an_exchange() {
     let harness = ClientHarness::create();
-    let server = harness.greet_with_wrong_digest(Query::contract_digest().wrapping_add(1));
+    let server =
+        harness.greet_with_wrong_digest(ContractDigest(Query::contract_digest().0.wrapping_add(1)));
     let output = harness.invoke(Some(QUERY));
     assert!(!output.status.success());
     assert!(
