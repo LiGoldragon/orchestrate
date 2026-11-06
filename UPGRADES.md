@@ -1,13 +1,13 @@
 # Upgrades
 
-## 0.37.1 to 0.37.2 -- signal 10.3.0, signal-orchestrate and meta-signal-orchestrate 5.1.0, ethos-zero 19.2.0, protos and datom-codec 0.33.0
+## 0.37.1 to 0.38.0 -- signal 10.3.0, signal-orchestrate and meta-signal-orchestrate 5.1.0, ethos-zero 19.2.0, protos and datom-codec 0.33.0
 
-No wire change on either socket and no store change. signal 10.3.0 `7afb`,
+This is the first adoption of the balanced-text protos 0.33.0 substrate, so it takes a subversion, 0.38.0, although the wire, the store and the archived layout are unchanged; the break is source. No wire change on either socket and no store change. signal 10.3.0 `7afb`,
 signal-orchestrate 5.1.0 `df56` and meta-signal-orchestrate 5.1.0 `5e49` generate
 from byte-identical ethos with ethos-zero 19.2.0 `5a5d`, so both contract digests
 and the archived layout of the Lock, LockRequest and PeerRejection are those of
 0.37.1, which `tests/representation.rs` in the two contract crates shows for those
-messages. The stored records keep plain scalars, so a 0.37.2 Nexus opens a store
+messages. The stored records keep plain scalars, so a 0.38.0 Nexus opens a store
 0.37.1 served as it is, with its Locks and configuration, and writes no new table.
 
 What changes is source. The scalar declarations of the contracts are newtype structs
