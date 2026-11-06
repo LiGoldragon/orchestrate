@@ -1,5 +1,26 @@
 # Upgrades
 
+## 0.37.1 to 0.37.2 -- signal 10.3.0, signal-orchestrate and meta-signal-orchestrate 5.1.0, ethos-zero 19.2.0, protos and datom-codec 0.33.0
+
+No wire change on either socket and no store change. signal 10.3.0 `7afb`,
+signal-orchestrate 5.1.0 `df56` and meta-signal-orchestrate 5.1.0 `5e49` generate
+from byte-identical ethos with ethos-zero 19.2.0 `5a5d`, so both contract digests
+and the archived layout of the Lock, LockRequest and PeerRejection are those of
+0.37.1, which `tests/representation.rs` in the two contract crates shows for those
+messages. The stored records keep plain scalars, so a 0.37.2 Nexus opens a store
+0.37.1 served as it is, with its Locks and configuration, and writes no new table.
+
+What changes is source. The scalar declarations of the contracts are newtype structs
+in place of type aliases, and signal 10.3.0 wraps `ContractDigest` and `ExchangeId` in
+newtypes; the Nexus wraps at the contract boundary and keeps plain scalars in its
+store. The two clients regenerate their `SocketPath` and `TransportError` as newtypes.
+The session ledger and its exchange tests, the carried store, relocation, stopping and
+live Nexus tests run unchanged in meaning.
+
+Deploy: none is made by this revision; the running service stays the one the user
+environment pins. A later deploy repins the orchestrate input to this revision,
+builds, and switches, and verifies with `orchestrate 'Observe.Locks'`.
+
 ## 0.37.0 to 0.37.1 -- memory-engine 0.18.0
 
 No wire change on either socket and no store change. memory-engine 0.18.0
