@@ -1478,7 +1478,7 @@ rec {
       };
       "orchestrate" = rec {
         crateName = "orchestrate";
-        version = "0.39.0";
+        version = "0.39.1";
         edition = "2024";
         crateBin = [
           {
