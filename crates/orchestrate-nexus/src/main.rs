@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
 use orchestrate_nexus::{
-    DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration,
+    DefaultConfiguration, OpensStore, OrchestrateStore, ReadsDefaultConfiguration, ReportsUpgrade,
     UpgradesDefaultStore,
     transport::{Binding, Serving, StopsOnSignal, Termination, TransportRuntime},
 };
@@ -14,6 +14,12 @@ fn main() -> ExitCode {
             let (store, configuration) =
                 OrchestrateStore::open(defaults.store_path(), defaults.configuration())
                     .map_err(|error| error.to_string())?;
+            if store.sema_conversion().is_some() {
+                println!(
+                    "orchestrate-nexus upgraded {} from the sema format to the memory format",
+                    defaults.store_path().display()
+                );
+            }
             // Two workers, and two is the whole argument: the core is one
             // actor and its durable step is synchronous, so one worker runs
             // that step and one keeps accepting while it does. A

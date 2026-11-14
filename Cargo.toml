@@ -22,7 +22,7 @@ meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-or
 nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "64a735d" }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "3c7ade3", features = ["rkyv"] }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
-memory-engine = { git = "https://github.com/LiGoldragon/memory-engine.git", rev = "abf9d85166e22440440baba03358913458905b8d" }
+memory-engine = { git = "https://github.com/LiGoldragon/memory-engine.git", rev = "f6ba771aea9153935349a46bff809027cc404c72" }
 signal = { git = "https://github.com/LiGoldragon/signal.git", rev = "7afb68b", default-features = false }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "8335cf9", default-features = false }
 thiserror = "2"

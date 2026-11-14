@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use memory_engine::{Engine, EngineOpen, QueryPlan, TableReference};
+use memory_engine::{Engine, EngineOpen, QueryPlan, SemaConversion, TableReference};
 use nexus::{
     Bearing, Configurable, ConfigurationState, Identifying, Relocated, Situated, StoreIdentity,
 };
@@ -203,6 +203,18 @@ impl OpensStore for OrchestrateStore {
             },
             configuration,
         ))
+    }
+}
+
+/// A store says whether its open upgraded it from the format sema-engine
+/// wrote, which the engine does on the first open under the memory engine.
+pub trait ReportsUpgrade {
+    fn sema_conversion(&self) -> Option<&SemaConversion>;
+}
+
+impl ReportsUpgrade for OrchestrateStore {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        self.engine.sema_conversion()
     }
 }
 

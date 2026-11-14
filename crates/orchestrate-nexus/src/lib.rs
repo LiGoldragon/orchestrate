@@ -12,5 +12,5 @@ pub mod transport;
 pub use defaults::{DefaultConfiguration, ReadsDefaultConfiguration, UpgradesDefaultStore};
 pub use store::{
     Configures, LegacyStorePreflight, OpensStore, OrchestrateStore, PreflightsLegacyStore,
-    Relocates, Situates,
+    Relocates, ReportsUpgrade, Situates,
 };
