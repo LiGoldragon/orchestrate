@@ -17,7 +17,7 @@ publish = false
 [workspace.dependencies]
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "eabead4", features = ["rkyv"] }
 ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "970459d" }
-kameo = { version = "0.22", default-features = false, features = ["macros"] }
+kameo = { version = "0.22", default-features = false, features = ["macros", "tracing"] }
 mio = { version = "1", features = ["log"] }
 meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "27ac19c", default-features = false }
 nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "64a735d" }
@@ -27,7 +27,7 @@ memory-engine = { git = "https://github.com/LiGoldragon/memory-engine.git", rev 
 signal = { git = "https://github.com/LiGoldragon/signal.git", rev = "7afb68b", default-features = false }
 signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "e4fda9b", default-features = false }
 thiserror = "2"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time", "tracing"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
