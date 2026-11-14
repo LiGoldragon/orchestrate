@@ -2,12 +2,14 @@
 //! Nexus actually applies it: through Nexus Core.
 
 use signal_orchestrate::{ConfigurationPath, LockPath, MetaSocketPath, OrdinarySocketPath};
-use signal_orchestrate::{FlowId, LockName, LockReason};
+use signal_orchestrate::{FlowId, LockId, LockName, LockReason};
 use std::path::Path;
 
+use memory_engine::{Engine, EngineOpen, Mutation};
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     core::{FoundedCore, Founding},
+    store::record::{Familial, SCHEMA_VERSION, StoredAllocator},
 };
 use signal_orchestrate::{
     Input, Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
@@ -271,28 +273,145 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     );
 }
 
+/// A Lock request is answered for the request alone: it asks the core and
+/// returns the answer, and then shows the core still takes a sound Lock.
+trait AnswersLockRequest {
+    async fn answer_then_lock(&self, request: LockRequest) -> Output;
+}
+
+impl AnswersLockRequest for CoreFixture {
+    async fn answer_then_lock(&self, request: LockRequest) -> Output {
+        let answer = self
+            .founded
+            .core()
+            .ask(Input::Lock(request))
+            .await
+            .expect("answered");
+        let owned = self.path("owned");
+        self.founded
+            .core()
+            .ask(Input::Lock(self.lock_request("sound", &[&owned])))
+            .await
+            .expect("the core still answers")
+            .locked();
+        answer
+    }
+}
+
+/// A fault in a request's own paths is that request's rejection, named in
+/// `LockRejection`; it is no store failure.
+#[tokio::test]
+async fn a_lock_naming_no_path_is_rejected_no_path() {
+    let fixture = CoreFixture::create();
+    assert_eq!(
+        fixture
+            .answer_then_lock(fixture.lock_request("empty", &[]))
+            .await,
+        Output::LockRejected(LockRejection::NoPath),
+    );
+}
+
+#[tokio::test]
+async fn a_relative_lock_path_is_rejected_relative_path() {
+    let fixture = CoreFixture::create();
+    assert_eq!(
+        fixture
+            .answer_then_lock(fixture.lock_request("relative", &["relative/path"]))
+            .await,
+        Output::LockRejected(LockRejection::RelativePath(LockPath(
+            "relative/path".to_owned()
+        ))),
+    );
+}
+
+#[tokio::test]
+async fn a_lock_path_with_a_parent_component_is_rejected_parent_component() {
+    let fixture = CoreFixture::create();
+    let climbing = format!("{}/../elsewhere", fixture.path("inner"));
+    assert_eq!(
+        fixture
+            .answer_then_lock(fixture.lock_request("climbing", &[&climbing]))
+            .await,
+        Output::LockRejected(LockRejection::ParentComponent(LockPath(climbing))),
+    );
+}
+
+#[tokio::test]
+async fn a_lock_path_with_nul_is_rejected_nul_character() {
+    let fixture = CoreFixture::create();
+    let phantom = format!("{}\0phantom", fixture.path("held"));
+    assert_eq!(
+        fixture
+            .answer_then_lock(fixture.lock_request("phantom", &[&phantom]))
+            .await,
+        Output::LockRejected(LockRejection::NulCharacter(LockPath(phantom))),
+    );
+}
+
+#[tokio::test]
+async fn a_lock_path_repeated_once_normalized_is_rejected_duplicate_path() {
+    let fixture = CoreFixture::create();
+    let repeated = fixture.path("repeated");
+    let spelled_again = format!("{repeated}/.");
+    assert_eq!(
+        fixture
+            .answer_then_lock(fixture.lock_request("repeated", &[&repeated, &spelled_again]))
+            .await,
+        Output::LockRejected(LockRejection::DuplicatePath(LockPath(repeated))),
+    );
+}
+
 /// What the store cannot carry out is answered in the contract's own words,
-/// `Refused.Store`, and the core goes on answering.
+/// `Refused.Store`, and the core goes on answering. The store here cannot
+/// number another Lock: its allocator stands at the last Lock id there is.
 #[tokio::test]
 async fn a_request_the_store_refuses_is_answered_refused_store() {
-    let fixture = CoreFixture::create();
+    let directory = tempfile::tempdir().expect("isolated Nexus store");
+    let store_path = directory.path().join("orchestrate.memory");
+    let defaults = directory.path().defaults();
+    drop(OrchestrateStore::open(&store_path, defaults.clone()).expect("open isolated store"));
+    {
+        let mut engine = Engine::open(EngineOpen::new(
+            store_path.display().to_string(),
+            SCHEMA_VERSION,
+        ))
+        .expect("open the store's engine");
+        let allocator = engine
+            .register_table(StoredAllocator::descriptor())
+            .expect("register the allocator family");
+        engine
+            .mutate(Mutation::new(
+                allocator,
+                StoredAllocator {
+                    lock_id: LockId(i64::MAX),
+                },
+            ))
+            .expect("set the allocator at the last Lock id");
+    }
+    let (store, _) = OrchestrateStore::open(&store_path, defaults).expect("reopen store");
+    let fixture = CoreFixture {
+        directory,
+        founded: FoundedCore::found(store),
+    };
+    let owned = fixture.path("owned");
     assert_eq!(
         fixture
             .founded
             .core()
-            .ask(Input::Lock(fixture.lock_request("relative", &["relative"])))
+            .ask(Input::Lock(fixture.lock_request("alpha", &[&owned])))
             .await
             .expect("answered"),
         Output::Refused(Refusal::Store(
-            "lock path \"relative\" is not absolute".to_owned()
+            "the durable Lock ID allocator is exhausted".to_owned()
         )),
     );
-    let owned = fixture.path("owned");
-    fixture
-        .founded
-        .core()
-        .ask(Input::Lock(fixture.lock_request("alpha", &[&owned])))
-        .await
-        .expect("the core still answers")
-        .locked();
+    assert_eq!(
+        fixture
+            .founded
+            .core()
+            .ask(Input::Observe(ObserveSelection::Locks))
+            .await
+            .expect("the core still answers"),
+        Output::Observed(Observation::Locks(Vec::new())),
+    );
 }

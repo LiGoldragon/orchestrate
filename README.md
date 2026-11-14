@@ -33,7 +33,11 @@ wrappers supply them. With no argument, a client prints its Signal Ethos and
 its client-failure Ethos.
 
 The ordinary replies are `Configured`, `ConfigurationRefused`,
-`Locked`, `Released`, `Observed`, `LockRejected`, and `ReleaseRejected`. The
+`Locked`, `Released`, `Observed`, `LockRejected`, `ReleaseRejected`, and
+`Refused`. `LockRejected` names why a Lock was not taken: `DuplicateName` and
+`PathOverlap` against a held Lock, or a fault in the request's own paths,
+`NoPath`, `RelativePath`, `ParentComponent`, `NulCharacter` or `DuplicatePath`.
+`Refused.Store` is only for a store that fails. The
 meta replies are `Configured`, `OrdinaryConfigurationReopened`,
 `ConfigurationRejected`, and `PeerRefused`. Local client failures are Datom
 values:
@@ -81,7 +85,10 @@ The store is
 configuration, every active Lock, and the next monotonic Lock ID.
 
 `orchestrate-upgrade-preflight` reports how many pre-0.25 PathLock rows a
-store still carries. The Nexus refuses to start while that count is nonzero
+store still carries. It, `orchestrate-relocate` and the Nexus each open the
+store through the memory engine, which upgrades a store sema-engine wrote; each
+then prints the same line, `orchestrate-nexus upgraded <path> from the sema
+format to the memory format`, whether or not it then succeeds. The Nexus refuses to start while that count is nonzero
 and never converts such a row into a Lock: a PathLock has no Flow, and
 inventing one would attribute a coordination fact to a flow that never
 claimed it.

@@ -402,7 +402,7 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "6.0.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=fff088f#fff088f16fe0421ad392800d3c6fa936840b1aa2"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=4bb43f2#4bb43f2021b49840158f5dea2fe0db6bf83cbae1"
 dependencies = [
  "datom-codec 0.33.0",
  "ethos-zero 28.0.0",
@@ -719,7 +719,7 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "6.0.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=bf21c0c#bf21c0c7182b96db3f67ea41d88392936742f060"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=8d675ca#8d675cafd5cbc612e8b5bb92bc54b38c7a7a341b"
 dependencies = [
  "datom-codec 0.33.0",
  "ethos-zero 28.0.0",

@@ -18,13 +18,13 @@ publish = false
 datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "eabead4", features = ["rkyv"] }
 ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "970459d" }
 kameo = { version = "0.22", default-features = false, features = ["macros"] }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "fff088f", default-features = false }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "4bb43f2", default-features = false }
 nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "64a735d" }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "3c7ade3", features = ["rkyv"] }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
 memory-engine = { git = "https://github.com/LiGoldragon/memory-engine.git", rev = "ef24197b22967c6eba0b01080454ba071ccd0a59" }
 signal = { git = "https://github.com/LiGoldragon/signal.git", rev = "7afb68b", default-features = false }
-signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "bf21c0c", default-features = false }
+signal-orchestrate = { git = "https://github.com/LiGoldragon/signal-orchestrate.git", rev = "8d675ca", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 

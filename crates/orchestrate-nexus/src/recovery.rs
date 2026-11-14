@@ -50,7 +50,9 @@
 
 use std::path::Path;
 
-use memory_engine::{Assertion, Engine, EngineOpen, Mutation, QueryPlan, TableReference};
+use memory_engine::{
+    Assertion, Engine, EngineOpen, Mutation, QueryPlan, SemaConversion, TableReference,
+};
 use nexus::{
     Bearing, Configurable, Identifying, Relocated, Relocating, Relocation, Situated, StoreIdentity,
 };
@@ -60,7 +62,7 @@ use thiserror::Error;
 use crate::{
     configuration::Validates,
     store::{
-        RepresentsStorePath, StoreError,
+        ReportsUpgrade, RepresentsStorePath, StoreError,
         record::{Familial, SCHEMA_VERSION, StoredMetadata, StoredRelocation, StoredSituation},
     },
     transport::{
@@ -73,6 +75,9 @@ use crate::{
 pub struct StoreRelocation {
     relocation: Relocation,
     vacated_socket_vector: Vec<String>,
+    /// The upgrade from the sema format the engine's open made first, if the
+    /// file was a store sema-engine wrote.
+    sema_conversion: Option<SemaConversion>,
 }
 
 /// Declares, with no Nexus running, that the store now at this path is the
@@ -95,7 +100,57 @@ impl DeclaresRelocation for StoreRelocation {
                 store_path: exact_store_path.to_owned(),
             });
         }
-        let mut engine = Engine::open(EngineOpen::new(exact_store_path, SCHEMA_VERSION))?;
+        let engine = Engine::open(EngineOpen::new(exact_store_path, SCHEMA_VERSION))?;
+        // The engine may have upgraded the file from the sema format before
+        // anything below judges it; a refusal from here on carries that
+        // upgrade, so the tool can say so whether or not it declares.
+        let sema_conversion = engine.sema_conversion().cloned();
+        Self::declared_over(
+            engine,
+            store_path,
+            exact_store_path,
+            sema_conversion.clone(),
+        )
+        .map_err(|refusal| refusal.after_sema_conversion(sema_conversion))
+    }
+
+    fn origin(&self) -> &str {
+        self.relocation.origin()
+    }
+
+    fn destination(&self) -> &str {
+        self.relocation.destination()
+    }
+
+    fn vacated_socket_vector(&self) -> &[String] {
+        &self.vacated_socket_vector
+    }
+}
+
+impl ReportsUpgrade for StoreRelocation {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        self.sema_conversion.as_ref()
+    }
+}
+
+/// The declaration past the engine's open: the store's bearing, the origin,
+/// the sockets, and the record written, judged over an engine already open.
+trait DeclaresOverEngine: Sized {
+    fn declared_over(
+        engine: Engine,
+        store_path: &Path,
+        exact_store_path: &str,
+        sema_conversion: Option<SemaConversion>,
+    ) -> Result<Self, RecoveryError>;
+}
+
+impl DeclaresOverEngine for StoreRelocation {
+    fn declared_over(
+        mut engine: Engine,
+        store_path: &Path,
+        exact_store_path: &str,
+        sema_conversion: Option<SemaConversion>,
+    ) -> Result<Self, RecoveryError> {
         let situation: TableReference<StoredSituation> =
             engine.register_table(StoredSituation::descriptor())?;
         let recorded = match engine.match_records(QueryPlan::all(situation))?.records() {
@@ -179,19 +234,8 @@ impl DeclaresRelocation for StoreRelocation {
         Ok(Self {
             relocation,
             vacated_socket_vector,
+            sema_conversion,
         })
-    }
-
-    fn origin(&self) -> &str {
-        self.relocation.origin()
-    }
-
-    fn destination(&self) -> &str {
-        self.relocation.destination()
-    }
-
-    fn vacated_socket_vector(&self) -> &[String] {
-        &self.vacated_socket_vector
     }
 }
 
@@ -261,4 +305,36 @@ pub enum RecoveryError {
     Engine(#[from] memory_engine::Error),
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
+    /// A refusal to declare, after the engine's open had already upgraded
+    /// the store from the sema format: the file is a memory store from then
+    /// on.
+    #[error("{refusal}")]
+    RefusedAfterSemaConversion {
+        conversion: SemaConversion,
+        refusal: Box<RecoveryError>,
+    },
+}
+
+impl RecoveryError {
+    /// This refusal, carrying the upgrade the engine's open made first.
+    fn after_sema_conversion(self, conversion: Option<SemaConversion>) -> Self {
+        match conversion {
+            Some(conversion) => Self::RefusedAfterSemaConversion {
+                conversion,
+                refusal: Box::new(self),
+            },
+            None => self,
+        }
+    }
+}
+
+impl ReportsUpgrade for RecoveryError {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        match self {
+            Self::Engine(refusal) => refusal.sema_conversion(),
+            Self::Store(refusal) => refusal.sema_conversion(),
+            Self::RefusedAfterSemaConversion { conversion, .. } => Some(conversion),
+            _ => None,
+        }
+    }
 }

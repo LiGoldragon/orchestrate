@@ -10,11 +10,11 @@
 use std::path::Path;
 
 use memory_engine::{
-    Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, SchemaHash,
+    Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, SchemaHash, SemaConversion,
     TableDescriptor, TableName, TableReference,
 };
 
-use super::{RepresentsStorePath, error::StoreError, record::SCHEMA_VERSION};
+use super::{ReportsUpgrade, RepresentsStorePath, error::StoreError, record::SCHEMA_VERSION};
 use crate::memory::StoredPathLock;
 
 const LEGACY_TABLE: TableName = TableName::new("active_path_locks");
@@ -27,8 +27,13 @@ impl EngineRecord for StoredPathLock {
 }
 
 /// Read-only evidence about the pre-0.25 ordinary-state table.
+///
+/// Read-only but for one thing: a store sema-engine wrote is upgraded to the
+/// memory format by the engine's open, as the Nexus's own open would, and
+/// the preflight carries that upgrade so it can say so.
 pub struct LegacyStorePreflight {
     active_lock_count: usize,
+    sema_conversion: Option<SemaConversion>,
 }
 
 /// Inspects a store for active PathLock rows.
@@ -43,16 +48,30 @@ impl PreflightsLegacyStore for LegacyStorePreflight {
         if !store_path.try_exists()? {
             return Ok(Self {
                 active_lock_count: 0,
+                sema_conversion: None,
             });
         }
         let mut engine = Engine::open(EngineOpen::new(exact_store_path, SCHEMA_VERSION))?;
+        // The engine may have upgraded the file from the sema format; a
+        // refusal from here on carries that upgrade, as the Nexus's does.
+        let sema_conversion = engine.sema_conversion().cloned();
+        let active_lock_count = engine
+            .count_active_path_locks()
+            .map_err(|refusal| refusal.after_sema_conversion(sema_conversion.clone()))?;
         Ok(Self {
-            active_lock_count: engine.count_active_path_locks()?,
+            active_lock_count,
+            sema_conversion,
         })
     }
 
     fn active_lock_count(&self) -> usize {
         self.active_lock_count
+    }
+}
+
+impl ReportsUpgrade for LegacyStorePreflight {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        self.sema_conversion.as_ref()
     }
 }
 

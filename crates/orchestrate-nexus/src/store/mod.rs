@@ -20,7 +20,7 @@ pub use situation::Situates;
 pub use transition::Configures;
 
 use std::{
-    fs,
+    fmt, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
 };
@@ -229,12 +229,51 @@ impl Resumes for OrchestrateStore {
     }
 }
 
+/// The line that tells an upgrade from the sema format, printed by every
+/// program that opens the store: the Nexus, `orchestrate-relocate` and
+/// `orchestrate-upgrade-preflight`. This is the one place it is made.
+pub struct UpgradeLine<'path> {
+    store_path: &'path Path,
+}
+
+impl fmt::Display for UpgradeLine<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "orchestrate-nexus upgraded {} from the sema format to the memory format",
+            self.store_path.display()
+        )
+    }
+}
+
 /// A store, or the refusal of its open, says whether the open upgraded it
 /// from the format sema-engine wrote, which the engine does on the first
 /// open under the memory engine. The upgrade stands whether or not the open
 /// then succeeded.
 pub trait ReportsUpgrade {
     fn sema_conversion(&self) -> Option<&SemaConversion>;
+
+    /// The line an opener prints when this open upgraded the store at
+    /// `store_path`, and nothing when it found a memory store.
+    fn upgrade_line<'path>(&self, store_path: &'path Path) -> Option<UpgradeLine<'path>> {
+        self.sema_conversion().map(|_| UpgradeLine { store_path })
+    }
+}
+
+impl<Opened: ReportsUpgrade + ?Sized> ReportsUpgrade for &Opened {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        (**self).sema_conversion()
+    }
+}
+
+/// An open's outcome tells its upgrade whichever way it went.
+impl<Opened: ReportsUpgrade, Refusal: ReportsUpgrade> ReportsUpgrade for Result<Opened, Refusal> {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        match self {
+            Ok(opened) => opened.sema_conversion(),
+            Err(refusal) => refusal.sema_conversion(),
+        }
+    }
 }
 
 impl ReportsUpgrade for OrchestrateStore {

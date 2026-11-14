@@ -7,12 +7,15 @@
 //! has actually been made.
 //!
 //! It writes nothing unless the move is both real and unopposed — see
-//! `orchestrate_nexus::recovery`. Every refusal leaves the store as it was.
+//! `orchestrate_nexus::recovery`. Every refusal leaves the store as it was,
+//! but for the upgrade from the sema format the engine's open makes of a
+//! store sema-engine wrote; that upgrade is printed in the Nexus's own line
+//! whether or not the move is then declared.
 
 use std::process::ExitCode;
 
 use orchestrate_nexus::{
-    DefaultConfiguration, ReadsDefaultConfiguration,
+    DefaultConfiguration, ReadsDefaultConfiguration, ReportsUpgrade,
     recovery::{DeclaresRelocation, StoreRelocation},
 };
 
@@ -20,7 +23,13 @@ fn main() -> ExitCode {
     match DefaultConfiguration::from_process()
         .map_err(|error| error.to_string())
         .and_then(|defaults| {
-            StoreRelocation::declare(defaults.store_path()).map_err(|error| error.to_string())
+            let declared = StoreRelocation::declare(defaults.store_path());
+            // The upgrade is told whether or not the move is then declared,
+            // in the Nexus's own line.
+            if let Some(line) = declared.upgrade_line(defaults.store_path()) {
+                println!("{line}");
+            }
+            declared.map_err(|error| error.to_string())
         }) {
         Ok(declared) => {
             println!(

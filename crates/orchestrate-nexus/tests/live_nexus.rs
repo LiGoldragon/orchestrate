@@ -29,8 +29,8 @@ use signal_orchestrate::{
 };
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason,
-    Input as OrdinaryInput, Lock, LockRequest, Observation, ObserveSelection,
-    OrchestrateNexusConfiguration, Output as OrdinaryOutput, Refusal,
+    Input as OrdinaryInput, Lock, LockRejection, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Output as OrdinaryOutput,
 };
 use signal_orchestrate::{FlowId, LockId, LockName, LockPath, LockReason};
 
@@ -378,10 +378,10 @@ fn a_nul_lock_path_never_becomes_durable() {
             lock_path_vector: vec![LockPath("/held\0phantom".to_owned())],
             lock_reason: LockReason("no Unix operation can name this path".to_owned()),
         })),
-        OrdinaryOutput::Refused(Refusal::Store(
-            "lock path \"/held\\0phantom\" contains NUL".to_owned()
-        )),
-        "the store refuses the invalid durable transition in the contract's words"
+        OrdinaryOutput::LockRejected(LockRejection::NulCharacter(LockPath(
+            "/held\0phantom".to_owned()
+        ))),
+        "the request is rejected for its own fault, in the contract's words"
     );
     assert_eq!(
         nexus.ordinary(OrdinaryInput::Observe(ObserveSelection::Locks)),

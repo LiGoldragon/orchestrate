@@ -14,15 +14,12 @@ fn main() -> ExitCode {
             let opened = OrchestrateStore::open(defaults.store_path(), defaults.configuration());
             // The upgrade is told whether or not the open then succeeds: a
             // store upgraded and then refused is a memory store from now on.
-            let upgraded = match &opened {
-                Ok((store, _)) => store.sema_conversion().is_some(),
-                Err(refusal) => refusal.sema_conversion().is_some(),
-            };
-            if upgraded {
-                println!(
-                    "orchestrate-nexus upgraded {} from the sema format to the memory format",
-                    defaults.store_path().display()
-                );
+            if let Some(line) = opened
+                .as_ref()
+                .map(|(store, _)| store)
+                .upgrade_line(defaults.store_path())
+            {
+                println!("{line}");
             }
             let (store, configuration) = opened.map_err(|error| error.to_string())?;
             // Two workers, and two is the whole argument: the core is one

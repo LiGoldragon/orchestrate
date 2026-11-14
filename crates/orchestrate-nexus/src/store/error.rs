@@ -45,16 +45,6 @@ pub enum StoreError {
     NonUtf8StorePath { path: PathBuf },
     #[error("filesystem: {0}")]
     Filesystem(#[from] std::io::Error),
-    #[error("lock path {path:?} is not absolute")]
-    RelativePath { path: String },
-    #[error("Lock has no paths")]
-    EmptyPathSet,
-    #[error("lock path {path:?} contains a parent component")]
-    ParentPathComponent { path: String },
-    #[error("lock path {path:?} contains NUL")]
-    NulPath { path: String },
-    #[error("Lock repeats normalized path {path:?}")]
-    DuplicateNormalizedPath { path: String },
     /// A refusal of an open that had already upgraded the store from the
     /// sema format: the file is a memory store from then on.
     #[error("{refusal}")]

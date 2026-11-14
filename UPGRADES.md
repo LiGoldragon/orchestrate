@@ -22,7 +22,9 @@ from `orchestrate-nexus.sema` to `orchestrate-nexus.memory` and then refused as
 lacking a schema version — is upgraded on its first open: memory-engine 0.20.0
 (`ef24197`) recognises a sema-engine store by its content, converts it in place in
 one write transaction and opens it, and the Nexus prints `orchestrate-nexus upgraded
-<path> from the sema format to the memory format`. The line is printed whether or
+<path> from the sema format to the memory format`. `orchestrate-relocate` and
+`orchestrate-upgrade-preflight` open the store the same way and print the same line,
+made in one place, `UpgradeLine`. The line is printed whether or
 not the open then succeeds: a store upgraded and then refused, a carried copy among
 them, is a memory store from then on. Its Locks, allocator, metadata tree and
 situation are read as they were written; every later open finds a memory store and
@@ -34,17 +36,22 @@ Wire: both contract digests change, so the clients and the Nexus move together. 
 0.38.0 `orchestrate` or `orchestrate-meta` client is refused by a 0.39.0 Nexus at the
 greeting, and the reverse.
 
-- Ordinary, signal-orchestrate 6.0.0 (`bf21c0c`): ethos-zero 28 names the roots
+- Ordinary, signal-orchestrate 6.0.0 (`8d675ca`): ethos-zero 28 names the roots
   `Input` and `Output` and pairs them by position, so `ConfigurationRefused` moves
   after `Observed` and the archived tag of `Locked`, `Released`, `Observed` and
   `ConfigurationRefused` changes. Configure's reply `ConfigurationAccepted.{ … }` is
   now `Configured.{ … }`, each input's output named in its past tense. The held Lock
   is still `Lock`, beside the input `Lock`.
+- A Lock request whose own paths are at fault is `LockRejected`, named by the
+  fault: `NoPath`, `RelativePath.<path>`, `ParentComponent.<path>`,
+  `NulCharacter.<path>`, or `DuplicatePath.<path>` for a path given twice once
+  normalized; `LockRejected.RelativePath.relative/path`, for one. Before, such a
+  request had no output and the Nexus ended the connection.
 - Both contracts gain `Refused.Store.«…»`, after every other output, through
-  meta-signal-orchestrate 6.0.0 (`fff088f`) on the meta side: an input the store
-  could not carry out, a commit that failed or a Lock path the store refuses among
-  them, is answered with the store's words. Before, such an input had no output and
-  the Nexus ended the connection.
+  meta-signal-orchestrate 6.0.0 (`4bb43f2`) on the meta side: an input the store
+  could not carry out, a commit that failed or an exhausted Lock id among them, is
+  answered with the store's words. Before, such an input had no output and the
+  Nexus ended the connection.
 
 Every other text both clients read and print is unchanged.
 

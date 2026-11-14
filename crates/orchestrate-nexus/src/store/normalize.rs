@@ -6,38 +6,40 @@ use std::{
 };
 
 use memory_engine::RecordPredicate;
-use signal_orchestrate::{Lock, LockId, LockPath, LockRequest};
+use signal_orchestrate::{Lock, LockId, LockPath, LockRejection, LockRequest};
 
-use super::{error::StoreError, record::StoredLock};
+use super::record::StoredLock;
 
 /// A Lock request whose path values have passed Nexus normalization.
 ///
 /// This is a durable-transition input, not a second public contract type.
 /// Keeping its path and overlap rules with the request prevents transport or
-/// callers from acquiring a partially normalized Lock.
+/// callers from acquiring a partially normalized Lock. A request whose own
+/// paths are at fault is not normalized: it is rejected, in the contract's
+/// `LockRejection`, naming the fault and the path at fault.
 #[derive(Clone)]
 pub struct NormalizedLockRequest {
     request: LockRequest,
 }
 
 pub trait NormalizesLockRequests: Sized {
-    fn from_request(request: LockRequest) -> Result<Self, StoreError>;
+    fn from_request(request: LockRequest) -> Result<Self, LockRejection>;
     fn duplicates_name_of(&self, lock: &Lock) -> bool;
     fn overlapping_path_of(&self, lock: &Lock) -> Option<String>;
     fn into_lock(self, lock_id: LockId) -> Lock;
 }
 
 impl NormalizesLockRequests for NormalizedLockRequest {
-    fn from_request(mut request: LockRequest) -> Result<Self, StoreError> {
+    fn from_request(mut request: LockRequest) -> Result<Self, LockRejection> {
         if request.lock_path_vector.is_empty() {
-            return Err(StoreError::EmptyPathSet);
+            return Err(LockRejection::NoPath);
         }
         let mut paths = BTreeSet::new();
         for path in &mut request.lock_path_vector {
             let normalized = NormalizedLockPath::from_source(&path.0)?.0;
             *path = LockPath(normalized.clone());
             if !paths.insert(normalized.clone()) {
-                return Err(StoreError::DuplicateNormalizedPath { path: normalized });
+                return Err(LockRejection::DuplicatePath(LockPath(normalized)));
             }
         }
         Ok(Self { request })
@@ -81,24 +83,20 @@ impl RecordPredicate<StoredLock> for NormalizedLockRequest {
 struct NormalizedLockPath(String);
 
 trait NormalizesLockPaths: Sized {
-    fn from_source(path: &str) -> Result<Self, StoreError>;
+    fn from_source(path: &str) -> Result<Self, LockRejection>;
     fn from_normalized(path: &str) -> Self;
     fn overlaps(&self, other: &Self) -> bool;
     fn is_ancestor_of(&self, descendant: &Self) -> bool;
 }
 
 impl NormalizesLockPaths for NormalizedLockPath {
-    fn from_source(path: &str) -> Result<Self, StoreError> {
+    fn from_source(path: &str) -> Result<Self, LockRejection> {
         if path.as_bytes().contains(&0) {
-            return Err(StoreError::NulPath {
-                path: path.to_owned(),
-            });
+            return Err(LockRejection::NulCharacter(LockPath(path.to_owned())));
         }
         let parsed = Path::new(path);
         if !parsed.is_absolute() {
-            return Err(StoreError::RelativePath {
-                path: path.to_owned(),
-            });
+            return Err(LockRejection::RelativePath(LockPath(path.to_owned())));
         }
         let mut normalized = String::from("/");
         for component in parsed.components() {
@@ -111,9 +109,7 @@ impl NormalizesLockPaths for NormalizedLockPath {
                     normalized.push_str(&segment.to_string_lossy());
                 }
                 Component::ParentDir => {
-                    return Err(StoreError::ParentPathComponent {
-                        path: path.to_owned(),
-                    });
+                    return Err(LockRejection::ParentComponent(LockPath(path.to_owned())));
                 }
                 Component::Prefix(_) => unreachable!("Unix paths have no prefix component"),
             }
@@ -163,26 +159,31 @@ mod tests {
             normalized.into_lock(LockId(1)).lock_path_vector,
             vec![LockPath("/a/b/c".to_owned())]
         );
-        assert!(matches!(
-            NormalizedLockRequest::from_request(request(&["/a/../b"])),
-            Err(StoreError::ParentPathComponent { .. })
-        ));
-        assert!(matches!(
-            NormalizedLockRequest::from_request(request(&["relative"])),
-            Err(StoreError::RelativePath { .. })
-        ));
-        assert!(matches!(
-            NormalizedLockRequest::from_request(request(&[])),
-            Err(StoreError::EmptyPathSet)
-        ));
-        assert!(matches!(
-            NormalizedLockRequest::from_request(request(&["/a/b", "/a/./b"])),
-            Err(StoreError::DuplicateNormalizedPath { .. })
-        ));
-        assert!(matches!(
-            NormalizedLockRequest::from_request(request(&["/held\0phantom"])),
-            Err(StoreError::NulPath { .. })
-        ));
+        for (paths, rejection) in [
+            (
+                &["/a/../b"][..],
+                LockRejection::ParentComponent(LockPath("/a/../b".to_owned())),
+            ),
+            (
+                &["relative"][..],
+                LockRejection::RelativePath(LockPath("relative".to_owned())),
+            ),
+            (&[][..], LockRejection::NoPath),
+            (
+                &["/a/b", "/a/./b"][..],
+                LockRejection::DuplicatePath(LockPath("/a/b".to_owned())),
+            ),
+            (
+                &["/held\0phantom"][..],
+                LockRejection::NulCharacter(LockPath("/held\0phantom".to_owned())),
+            ),
+        ] {
+            assert_eq!(
+                NormalizedLockRequest::from_request(request(paths)).err(),
+                Some(rejection),
+                "{paths:?}"
+            );
+        }
     }
 
     #[test]

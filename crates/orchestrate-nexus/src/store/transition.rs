@@ -51,7 +51,12 @@ impl ReadsCurrentLocks for OrchestrateStore {
 
 impl Locks for OrchestrateStore {
     fn lock(&mut self, request: LockRequest) -> Result<Result<Lock, OrdinaryOutput>, StoreError> {
-        let request = NormalizedLockRequest::from_request(request)?;
+        // A request whose own paths are at fault is its rejection, not a
+        // store that failed.
+        let request = match NormalizedLockRequest::from_request(request) {
+            Ok(request) => request,
+            Err(rejection) => return Ok(Err(OrdinaryOutput::LockRejected(rejection))),
+        };
         // The engine reads only the held Locks this request conflicts with;
         // the first of them in Observe's order is the one the refusal names.
         let conflicting =

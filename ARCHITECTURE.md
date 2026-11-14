@@ -54,8 +54,11 @@ enters for the effect, and the output follows as an effect of it. The handler
 answers through the contract's generated dispatch, `input.answer(&answerer)`:
 `Answerer` bears both contracts' `Answering` over the store, each capability
 one store transition yielding its output's payload or a refusal of its
-contract. A store that cannot carry a transition out, a commit that failed
-among them, is answered within the contract too: each contract declares
+contract. A Lock request whose own paths are at fault — none, a relative
+path, a parent component, a NUL, or one path twice once normalized — is that
+request's `LockRejected`, named by the fault, and never reaches the engine. A
+store that cannot carry a transition out, a commit that failed among them, is
+answered within the contract too: each contract declares
 `Refused.Store`, so the dispatch's output is the whole answer and the
 handler's reply cannot fail. A subscriber whose opening state cannot be read
 is answered `Refused.Store` the same way, and a change whose state cannot be
