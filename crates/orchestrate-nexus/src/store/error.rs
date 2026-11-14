@@ -1,5 +1,6 @@
 //! The typed refusals of the durable Lock store.
 
+use memory_engine::SemaConversion;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -54,4 +55,24 @@ pub enum StoreError {
     NulPath { path: String },
     #[error("Lock repeats normalized path {path:?}")]
     DuplicateNormalizedPath { path: String },
+    /// A refusal of an open that had already upgraded the store from the
+    /// sema format: the file is a memory store from then on.
+    #[error("{refusal}")]
+    RefusedAfterSemaConversion {
+        conversion: SemaConversion,
+        refusal: Box<StoreError>,
+    },
+}
+
+impl StoreError {
+    /// This refusal of an open, carrying the upgrade the open made first.
+    pub(crate) fn after_sema_conversion(self, conversion: Option<SemaConversion>) -> Self {
+        match conversion {
+            Some(conversion) => Self::RefusedAfterSemaConversion {
+                conversion,
+                refusal: Box::new(self),
+            },
+            None => self,
+        }
+    }
 }

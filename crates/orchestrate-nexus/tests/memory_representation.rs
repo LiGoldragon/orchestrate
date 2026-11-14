@@ -5,12 +5,12 @@
 
 use nexus::{Configurable, ConfigurationState};
 use orchestrate_nexus::memory::{
-    PathLock, PathLockDescription, PathLockName, PathLockPath, PathLockPaths, StoredAllocator,
-    StoredConfiguration, StoredLock, StoredMetadata, StoredPathLock,
+    Configuration, PathLock, PathLockDescription, PathLockName, PathLockPath, PathLockPaths,
+    StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata, StoredPathLock,
 };
 use rkyv::{Archive, Serialize, rancor::Error};
 use signal_orchestrate::{
-    ConfigurationPath, FlowId, HeldLock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
+    ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
     OrchestrateNexusConfiguration, OrdinarySocketPath,
 };
 
@@ -94,7 +94,7 @@ fn configuration_038() -> Configuration038 {
 #[test]
 fn a_held_lock_archives_as_the_0_38_lock_record() {
     let generated = StoredLock {
-        held_lock: HeldLock {
+        lock: Lock {
             lock_id: LockId(169),
             lock_name: LockName("OrchestrateEthos27".into()),
             flow_id: FlowId("2e404d".into()),
@@ -133,7 +133,7 @@ fn the_metadata_tree_archives_as_the_0_38_metadata_record() {
         }
         assert_eq!(
             archived(&StoredMetadata {
-                orchestrate_nexus_configuration_configuration_state: generated,
+                configuration: Configuration(generated),
             }),
             archived(&Metadata038 { state: previous })
         );

@@ -21,16 +21,16 @@ use orchestrate_nexus::store::record::{
 };
 use signal::{
     Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId, Exchanged, FIRST_EXCHANGE,
-    FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable,
-    Signal, Signalizable,
+    FrameCapacity, FrameReading, FrameWriting, HandshakeReceipt, Opening, Restorable, Signal,
+    Signalizable,
 };
 use signal_orchestrate::{
     ConfigurationPath, MetaConfigureDone, MetaSocketPath, OrdinarySocketPath,
 };
 use signal_orchestrate::{
-    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, HeldLock,
-    Input as OrdinaryInput, LockRequest, Observation, ObserveSelection,
-    OrchestrateNexusConfiguration, Output as OrdinaryOutput,
+    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason,
+    Input as OrdinaryInput, Lock, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Output as OrdinaryOutput, Refusal,
 };
 use signal_orchestrate::{FlowId, LockId, LockName, LockPath, LockReason};
 
@@ -371,20 +371,17 @@ fn a_nul_lock_path_never_becomes_durable() {
     let roots = IsolatedXdg::create(&temporary);
     let binary = env!("CARGO_BIN_EXE_orchestrate-nexus");
     let nexus = LiveNexus::start(binary, roots);
-    let mut connection =
-        Connection::greeted::<OrdinaryInput, OrdinaryOutput>(&nexus.roots.ordinary_socket());
-    connection.open(OrdinaryInput::Lock(LockRequest {
-        lock_name: LockName("phantom".to_owned()),
-        flow_id: FlowId("test-flow".to_owned()),
-        lock_path_vector: vec![LockPath("/held\0phantom".to_owned())],
-        lock_reason: LockReason("no Unix operation can name this path".to_owned()),
-    }));
-    assert!(
-        matches!(
-            connection.stream.read_frame(FrameCapacity::default()),
-            Err(FrameError::Io(_))
-        ),
-        "the invalid durable transition ends its connection"
+    assert_eq!(
+        nexus.ordinary(OrdinaryInput::Lock(LockRequest {
+            lock_name: LockName("phantom".to_owned()),
+            flow_id: FlowId("test-flow".to_owned()),
+            lock_path_vector: vec![LockPath("/held\0phantom".to_owned())],
+            lock_reason: LockReason("no Unix operation can name this path".to_owned()),
+        })),
+        OrdinaryOutput::Refused(Refusal::Store(
+            "lock path \"/held\\0phantom\" contains NUL".to_owned()
+        )),
+        "the store refuses the invalid durable transition in the contract's words"
     );
     assert_eq!(
         nexus.ordinary(OrdinaryInput::Observe(ObserveSelection::Locks)),
@@ -739,7 +736,7 @@ fn a_populated_store_ignores_invalid_current_defaults() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let valid = IsolatedXdg::create(&temporary);
     let valid_ordinary = valid.ordinary_socket();
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(20),
         lock_name: LockName("stored-configuration".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -770,7 +767,7 @@ fn an_invalid_stored_configuration_is_refused_before_socket_claims() {
         )),
         meta_socket_path: MetaSocketPath(ConfigurationPath(shared_socket.display().to_string())),
     };
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(21),
         lock_name: LockName("invalid-configuration".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -836,22 +833,22 @@ fn malformed_archive_never_reaches_the_store() {
 /// `5f016531:src/store.rs`, the deployed 0.30.0 — the same three family names,
 /// schema labels and record fields.
 trait WritesAPreviousGenerationStore {
-    fn write_previous_generation_store(&self, held: &HeldLock);
-    fn write_previous_generation_store_at(&self, store_path: &Path, held: &HeldLock);
+    fn write_previous_generation_store(&self, held: &Lock);
+    fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock);
     fn write_previous_generation_store_with_configuration_at(
         &self,
         store_path: &Path,
-        held: &HeldLock,
+        held: &Lock,
         configuration: &OrchestrateNexusConfiguration,
     );
 }
 
 impl WritesAPreviousGenerationStore for IsolatedXdg {
-    fn write_previous_generation_store(&self, held: &HeldLock) {
+    fn write_previous_generation_store(&self, held: &Lock) {
         self.write_previous_generation_store_at(&self.store(), held);
     }
 
-    fn write_previous_generation_store_at(&self, store_path: &Path, held: &HeldLock) {
+    fn write_previous_generation_store_at(&self, store_path: &Path, held: &Lock) {
         self.write_previous_generation_store_with_configuration_at(
             store_path,
             held,
@@ -869,7 +866,7 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
     fn write_previous_generation_store_with_configuration_at(
         &self,
         store_path: &Path,
-        held: &HeldLock,
+        held: &Lock,
         configuration: &OrchestrateNexusConfiguration,
     ) {
         std::fs::create_dir_all(store_path.parent().expect("store path has a parent"))
@@ -894,12 +891,7 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
             .register_table(StoredLock::descriptor())
             .expect("register the Lock family");
         engine
-            .assert(Assertion::new(
-                locks,
-                StoredLock {
-                    held_lock: held.clone(),
-                },
-            ))
+            .assert(Assertion::new(locks, StoredLock { lock: held.clone() }))
             .expect("write a held Lock");
         let allocator = engine
             .register_table(StoredAllocator::descriptor())
@@ -919,7 +911,7 @@ impl WritesAPreviousGenerationStore for IsolatedXdg {
 fn a_store_at_the_previous_default_path_moves_to_memory_and_resumes() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(11),
         lock_name: LockName("live-store".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -948,7 +940,7 @@ fn a_store_at_the_previous_default_path_moves_to_memory_and_resumes() {
 fn an_interrupted_default_path_move_is_completed_and_resumes() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(12),
         lock_name: LockName("interrupted-move".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -979,7 +971,7 @@ fn an_interrupted_default_path_move_is_completed_and_resumes() {
 fn upgrade_preflight_discovers_the_previous_default_without_moving_it() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(14),
         lock_name: LockName("preflight".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -1007,7 +999,7 @@ fn upgrade_preflight_discovers_the_previous_default_without_moving_it() {
 fn relocation_discovers_the_previous_default_without_moving_it() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(15),
         lock_name: LockName("relocation".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -1028,7 +1020,7 @@ fn relocation_discovers_the_previous_default_without_moving_it() {
 fn distinct_stores_at_both_default_paths_are_refused() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let memory_lock = HeldLock {
+    let memory_lock = Lock {
         lock_id: LockId(12),
         lock_name: LockName("memory".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -1037,7 +1029,7 @@ fn distinct_stores_at_both_default_paths_are_refused() {
         )],
         lock_reason: LockReason("Memory store".to_owned()),
     };
-    let previous_lock = HeldLock {
+    let previous_lock = Lock {
         lock_id: LockId(13),
         lock_name: LockName("previous".to_owned()),
         flow_id: FlowId("flow-1e6136".to_owned()),
@@ -1078,7 +1070,7 @@ fn distinct_stores_at_both_default_paths_are_refused() {
 fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     let temporary = tempfile::tempdir().expect("isolated Nexus directory");
     let roots = IsolatedXdg::create(&temporary);
-    let held = HeldLock {
+    let held = Lock {
         lock_id: LockId(7),
         lock_name: LockName("carried".to_owned()),
         flow_id: FlowId("flow-857335".to_owned()),
@@ -1134,7 +1126,7 @@ fn a_resumed_previous_generation_store_keeps_ordinary_configure_shut() {
     assert!(
         matches!(
             nexus.ordinary(OrdinaryInput::Configure(stranding)),
-            OrdinaryOutput::ConfigurationAccepted(_)
+            OrdinaryOutput::Configured(_)
         ),
         "and only after the privileged reversal is the ordinary surface open again"
     );

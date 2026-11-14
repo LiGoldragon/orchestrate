@@ -1,7 +1,9 @@
 ; What the Orchestrate Nexus remembers: one Memory store, holding the
 ; standard Nexus metadata tree, where the Nexus was last bound, a declared
 ; move not yet completed, the Locks it holds, and the LockId the next Lock
-; takes. A held Lock is the contract's own HeldLock, stored whole.
+; takes. A held Lock is the contract's own Lock, stored whole. The
+; metadata tree holds the Nexus's Configuration: the desired configuration
+; and whether the meta Configure has been done.
 ;
 ; Two families are read only from an older store. StoredConfiguration is
 ; the desired configuration as 0.30 and 0.31 kept it, before the metadata
@@ -11,12 +13,12 @@
 ; Every record archives to the bytes the hand-written record it replaces
 ; wrote, so a store written before this file opens unchanged.
 Memory
-[ signal_orchestrate:[ HeldLock LockId OrchestrateNexusConfiguration ]
+[ signal_orchestrate:[ Lock LockId OrchestrateNexusConfiguration ]
   nexus:[ ConfigurationState Situation Relocation ] ]
-[ StoredMetadata.{ ConfigurationState<OrchestrateNexusConfiguration> }
+[ StoredMetadata.{ Configuration.ConfigurationState<OrchestrateNexusConfiguration> }
   StoredSituation.{ Situation }
   StoredRelocation.{ Relocation }
-  StoredLock.{ HeldLock }
+  StoredLock.{ Lock }
   StoredAllocator.{ LockId }
   StoredConfiguration.{ OrchestrateNexusConfiguration }
   PathLockName.String

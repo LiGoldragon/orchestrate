@@ -212,10 +212,8 @@ impl ReadsDesiredSockets for Engine {
             // checked.
             [] => Ok(Vec::new()),
             [stored] => {
-                let configuration: OrchestrateNexusConfiguration = stored
-                    .orchestrate_nexus_configuration_configuration_state
-                    .desired_configuration()
-                    .clone();
+                let configuration: OrchestrateNexusConfiguration =
+                    stored.configuration.0.desired_configuration().clone();
                 configuration
                     .validated()
                     .map_err(|_| StoreError::InvalidConfiguration)?;

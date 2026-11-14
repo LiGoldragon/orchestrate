@@ -243,24 +243,32 @@ impl Serving for TransportRuntime {
     }
 }
 
-/// A request the core never turned into an effect.
+/// A request the core answered, or never took.
 ///
-/// The core is reached by message, so "the store refused" and "the core was
-/// not there to ask" are different answers and must not collapse into one.
-pub(crate) trait Delivered<Effect> {
-    fn delivered(self) -> Result<Effect, TransportError>;
+/// The core is reached by message, so "the core answered with a refusal" and
+/// "the core was not there to ask" are different answers and must not
+/// collapse into one: the first is the contract's, the second the
+/// transport's.
+pub(crate) trait Delivered<Effect, Refusal> {
+    fn delivered(self) -> Result<Result<Effect, Refusal>, TransportError>;
 }
 
-impl<Effect, Entering> Delivered<Effect> for Result<Effect, SendError<Entering, StoreError>> {
-    fn delivered(self) -> Result<Effect, TransportError> {
-        self.map_err(|refusal| match refusal {
-            SendError::HandlerError(store) => TransportError::Store(store),
-            SendError::MailboxFull(_) => TransportError::CoreOverloaded,
-            SendError::Timeout(_) => TransportError::CoreOverloaded,
-            SendError::ActorNotRunning(_)
-            | SendError::ActorStopped
-            | SendError::ActorRestarting(_) => TransportError::CoreStopped,
-        })
+impl<Effect, Entering, Refusal> Delivered<Effect, Refusal>
+    for Result<Effect, SendError<Entering, Refusal>>
+{
+    fn delivered(self) -> Result<Result<Effect, Refusal>, TransportError> {
+        match self {
+            Ok(effect) => Ok(Ok(effect)),
+            Err(SendError::HandlerError(refusal)) => Ok(Err(refusal)),
+            Err(SendError::MailboxFull(_) | SendError::Timeout(_)) => {
+                Err(TransportError::CoreOverloaded)
+            }
+            Err(
+                SendError::ActorNotRunning(_)
+                | SendError::ActorStopped
+                | SendError::ActorRestarting(_),
+            ) => Err(TransportError::CoreStopped),
+        }
     }
 }
 

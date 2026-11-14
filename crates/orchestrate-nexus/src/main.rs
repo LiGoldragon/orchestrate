@@ -11,15 +11,20 @@ fn main() -> ExitCode {
         .and_then(DefaultConfiguration::upgrade_store_path)
         .map_err(|error| error.to_string())
         .and_then(|defaults| {
-            let (store, configuration) =
-                OrchestrateStore::open(defaults.store_path(), defaults.configuration())
-                    .map_err(|error| error.to_string())?;
-            if store.sema_conversion().is_some() {
+            let opened = OrchestrateStore::open(defaults.store_path(), defaults.configuration());
+            // The upgrade is told whether or not the open then succeeds: a
+            // store upgraded and then refused is a memory store from now on.
+            let upgraded = match &opened {
+                Ok((store, _)) => store.sema_conversion().is_some(),
+                Err(refusal) => refusal.sema_conversion().is_some(),
+            };
+            if upgraded {
                 println!(
                     "orchestrate-nexus upgraded {} from the sema format to the memory format",
                     defaults.store_path().display()
                 );
             }
+            let (store, configuration) = opened.map_err(|error| error.to_string())?;
             // Two workers, and two is the whole argument: the core is one
             // actor and its durable step is synchronous, so one worker runs
             // that step and one keeps accepting while it does. A

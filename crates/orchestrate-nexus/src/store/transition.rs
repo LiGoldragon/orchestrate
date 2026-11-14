@@ -4,7 +4,7 @@ use memory_engine::{QueryPlan, RecordKey, Retraction};
 use meta_signal_orchestrate::Output as MetaOutput;
 use nexus::Configurable;
 use signal_orchestrate::{
-    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, HeldLock, LockId,
+    ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason, Lock, LockId,
     LockOverlap, LockPath, LockRejection, LockRequest, MetaConfigureDone, Observation,
     ObserveSelection, OrchestrateNexusConfiguration, Output as OrdinaryOutput, ReleaseRejection,
 };
@@ -21,20 +21,20 @@ use crate::{
 
 /// Reads the Locks a plan selects, in the order Observe declares.
 trait ReadsCurrentLocks {
-    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<HeldLock>, StoreError>;
+    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<Lock>, StoreError>;
 
     /// Every Lock the store currently holds.
-    fn current_locks(&self) -> Result<Vec<HeldLock>, StoreError>;
+    fn current_locks(&self) -> Result<Vec<Lock>, StoreError>;
 }
 
 impl ReadsCurrentLocks for OrchestrateStore {
-    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<HeldLock>, StoreError> {
+    fn locks_selected_by(&self, plan: QueryPlan<StoredLock>) -> Result<Vec<Lock>, StoreError> {
         let mut locks: Vec<_> = self
             .engine
             .match_records(plan)?
             .records()
             .iter()
-            .map(|stored| stored.held_lock.clone())
+            .map(|stored| stored.lock.clone())
             .collect();
         locks.sort_by(|left, right| {
             left.lock_name
@@ -44,16 +44,13 @@ impl ReadsCurrentLocks for OrchestrateStore {
         Ok(locks)
     }
 
-    fn current_locks(&self) -> Result<Vec<HeldLock>, StoreError> {
+    fn current_locks(&self) -> Result<Vec<Lock>, StoreError> {
         self.locks_selected_by(QueryPlan::all(self.locks))
     }
 }
 
 impl Locks for OrchestrateStore {
-    fn lock(
-        &mut self,
-        request: LockRequest,
-    ) -> Result<Result<HeldLock, OrdinaryOutput>, StoreError> {
+    fn lock(&mut self, request: LockRequest) -> Result<Result<Lock, OrdinaryOutput>, StoreError> {
         let request = NormalizedLockRequest::from_request(request)?;
         // The engine reads only the held Locks this request conflicts with;
         // the first of them in Observe's order is the one the refusal names.
@@ -65,7 +62,7 @@ impl Locks for OrchestrateStore {
             } else if let Some(path) = request.overlapping_path_of(&holder) {
                 LockRejection::PathOverlap(LockOverlap {
                     lock_path: LockPath(path),
-                    held_lock: holder,
+                    lock: holder,
                 })
             } else {
                 unreachable!("the conflict predicate admits only a conflicting Lock")
@@ -90,12 +87,7 @@ impl Locks for OrchestrateStore {
         self.engine.commit_atomic(
             self.engine
                 .begin_atomic_commit()
-                .assert(
-                    self.locks,
-                    StoredLock {
-                        held_lock: lock.clone(),
-                    },
-                )
+                .assert(self.locks, StoredLock { lock: lock.clone() })
                 .mutate(
                     self.allocator,
                     StoredAllocator {
@@ -108,7 +100,7 @@ impl Locks for OrchestrateStore {
 }
 
 impl Releases for OrchestrateStore {
-    fn release(&mut self, lock_id: LockId) -> Result<Result<HeldLock, OrdinaryOutput>, StoreError> {
+    fn release(&mut self, lock_id: LockId) -> Result<Result<Lock, OrdinaryOutput>, StoreError> {
         let key = RecordKey::new(lock_id.0.to_string());
         let stored = match self
             .engine
@@ -124,7 +116,7 @@ impl Releases for OrchestrateStore {
             _ => unreachable!("Lock IDs are keys"),
         };
         self.engine.retract(Retraction::new(self.locks, key))?;
-        Ok(Ok(stored.held_lock))
+        Ok(Ok(stored.lock))
     }
 }
 

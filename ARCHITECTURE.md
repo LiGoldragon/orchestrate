@@ -54,9 +54,12 @@ enters for the effect, and the output follows as an effect of it. The handler
 answers through the contract's generated dispatch, `input.answer(&answerer)`:
 `Answerer` bears both contracts' `Answering` over the store, each capability
 one store transition yielding its output's payload or a refusal of its
-contract. A store that fails to commit has no output in either contract, so
-the answerer holds the failure and the handler returns it in place of the
-dispatch's output, which is never sent. That is
+contract. A store that cannot carry a transition out, a commit that failed
+among them, is answered within the contract too: each contract declares
+`Refused.Store`, so the dispatch's output is the whole answer and the
+handler's reply cannot fail. A subscriber whose opening state cannot be read
+is answered `Refused.Store` the same way, and a change whose state cannot be
+read back ends every subscription `Lagged`. That is
 what `Applies<Entering>` used to name in this repository; Kameo's `Message`
 is the same kind from the library the actor layer already is, so it is not
 named twice. `Attending` carries the other half — a subscriber receives the
@@ -167,7 +170,7 @@ next process's to take.
 - the standard Nexus metadata tree — the desired configuration together with
   whether the privileged Configure was ever done, held in
   `nexus::ConfigurationState`, whose lifecycle rule is the shared one;
-- one row per active Lock, the contract's `HeldLock` stored whole;
+- one row per active Lock, the contract's `Lock` stored whole;
 - one monotonic next-Lock-ID row.
 
 The records are declared in `crates/orchestrate-nexus/memory.ethos`, a Memory
@@ -183,7 +186,7 @@ a family, or a crash during it, leaves the store as it was. Lock acquisition
 reads only the held Locks the request conflicts with, through a Filter read
 plan whose predicate is the normalized request itself.
 
-A Lock is stored as the contract's own `HeldLock`, so a change to `HeldLock`
+A Lock is stored as the contract's own `Lock`, so a change to `Lock`
 in `signal-orchestrate` is a change to the store. `tests/memory_representation.rs`
 holds every record to the bytes the 0.38.0 hand-written record of its family
 wrote, so such a change fails there before it reaches a store.

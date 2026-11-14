@@ -14,7 +14,7 @@ use signal::{Contracted, Signalizable};
 use signal_orchestrate::{Input as OrdinaryInput, Observation, Output as OrdinaryOutput};
 use tokio::sync::broadcast::{self, error::RecvError};
 
-use crate::core::{Attending, NexusCore};
+use crate::core::{Announcement, Attending, NexusCore};
 
 use super::super::{Delivered, TransportError};
 
@@ -33,7 +33,7 @@ pub(crate) enum Opened<R> {
 /// One subscriber's place in the core's change stream, and how its contract
 /// frames each change.
 pub(crate) struct Announcements<R> {
-    receiver: broadcast::Receiver<Observation>,
+    receiver: broadcast::Receiver<Announcement>,
     framing: fn(Observation) -> R,
 }
 
@@ -55,8 +55,12 @@ pub(crate) trait Following<R> {
 impl<R> Following<R> for Announcements<R> {
     async fn follow(&mut self) -> Followed<R> {
         match self.receiver.recv().await {
-            Ok(observation) => Followed::Changed((self.framing)(observation)),
-            Err(RecvError::Lagged(_)) => Followed::Lagged,
+            Ok(Announcement::Changed(observation)) => {
+                Followed::Changed((self.framing)(observation))
+            }
+            // A change the core could not read back leaves the subscriber
+            // as one that fell behind: not current, and told so.
+            Ok(Announcement::Unkept) | Err(RecvError::Lagged(_)) => Followed::Lagged,
             Err(RecvError::Closed) => Followed::Closed,
         }
     }
@@ -115,17 +119,24 @@ impl SocketContract for OrdinaryInput {
             // Joining and reading the opening state are one step of the
             // core, so no change can commit between them: a subscriber
             // neither loses a change nor is sent the same one twice.
+            // A store that cannot read the state on open answers its
+            // refusal, and the exchange ends with it.
             Self::Observe(selection) => {
-                let attendance = core.ask(Attending { selection }).await.delivered()?;
-                Ok(Opened::Streaming {
-                    opening: OrdinaryOutput::Observed(attendance.opening),
-                    announcements: Announcements {
-                        receiver: attendance.announcements,
-                        framing: OrdinaryOutput::Observed,
-                    },
-                })
+                match core.ask(Attending { selection }).await.delivered()? {
+                    Ok(attendance) => Ok(Opened::Streaming {
+                        opening: OrdinaryOutput::Observed(attendance.opening),
+                        announcements: Announcements {
+                            receiver: attendance.announcements,
+                            framing: OrdinaryOutput::Observed,
+                        },
+                    }),
+                    Err(refusal) => Ok(Opened::Answered(refusal)),
+                }
             }
-            query => Ok(Opened::Answered(core.ask(query).await.delivered()?)),
+            query => {
+                let Ok(output) = core.ask(query).await.delivered()?;
+                Ok(Opened::Answered(output))
+            }
         }
     }
 }
@@ -138,6 +149,7 @@ impl SocketContract for MetaInput {
         self,
         core: &ActorRef<NexusCore>,
     ) -> Result<Opened<Self::Output>, TransportError> {
-        Ok(Opened::Answered(core.ask(self).await.delivered()?))
+        let Ok(output) = core.ask(self).await.delivered()?;
+        Ok(Opened::Answered(output))
     }
 }

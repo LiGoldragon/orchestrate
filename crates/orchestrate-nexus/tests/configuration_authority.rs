@@ -64,7 +64,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .ask(OrdinaryInput::Configure(ordinary.clone()))
             .await
             .expect("ordinary Configure on a fresh store"),
-        OrdinaryOutput::ConfigurationAccepted(ConfigurationReceipt {
+        OrdinaryOutput::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: ordinary,
             meta_configure_done: MetaConfigureDone(false),
         }),
@@ -114,7 +114,7 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
             .ask(OrdinaryInput::Configure(reopened.clone()))
             .await
             .expect("ordinary Configure after reversal"),
-        OrdinaryOutput::ConfigurationAccepted(ConfigurationReceipt {
+        OrdinaryOutput::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: reopened,
             meta_configure_done: MetaConfigureDone(false),
         }),

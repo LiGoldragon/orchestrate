@@ -14,8 +14,8 @@ use memory_engine::{
 };
 
 pub use crate::memory::{
-    StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata, StoredRelocation,
-    StoredSituation,
+    Configuration, StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata,
+    StoredRelocation, StoredSituation,
 };
 
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
@@ -75,7 +75,7 @@ impl EngineRecord for StoredRelocation {
 /// A held Lock is keyed by its LockId, the one release target.
 impl EngineRecord for StoredLock {
     fn record_key(&self) -> RecordKey {
-        RecordKey::new(self.held_lock.lock_id.0.to_string())
+        RecordKey::new(self.lock.lock_id.0.to_string())
     }
 }
 

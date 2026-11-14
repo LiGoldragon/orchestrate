@@ -23,7 +23,7 @@ use orchestrate_nexus::{
     recovery::{DeclaresRelocation, RecoveryError, StoreRelocation},
     store::{
         Relocates, Situates, StoreError,
-        record::{Familial, SCHEMA_VERSION, StoredMetadata, StoredRelocation},
+        record::{Configuration, Familial, SCHEMA_VERSION, StoredMetadata, StoredRelocation},
     },
 };
 use signal_orchestrate::OrchestrateNexusConfiguration;
@@ -82,9 +82,7 @@ impl Serves for Path {
             .expect("read the metadata")
             .records()
         {
-            [stored] => stored
-                .orchestrate_nexus_configuration_configuration_state
-                .clone(),
+            [stored] => stored.configuration.0.clone(),
             rows => panic!("expected one metadata row, found {}", rows.len()),
         };
         state.meta_configure(configuration.clone());
@@ -92,7 +90,7 @@ impl Serves for Path {
             .mutate(Mutation::new(
                 metadata,
                 StoredMetadata {
-                    orchestrate_nexus_configuration_configuration_state: state,
+                    configuration: Configuration(state),
                 },
             ))
             .expect("write the fixture configuration");

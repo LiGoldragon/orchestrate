@@ -35,7 +35,7 @@ use crate::configuration::Validates;
 use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
-    CONFIGURATION_TABLE, DeclaresOrchestrateFamilies, Familial, SCHEMA_VERSION,
+    CONFIGURATION_TABLE, Configuration, DeclaresOrchestrateFamilies, Familial, SCHEMA_VERSION,
     SUPERSEDED_SITUATION_TABLE, StoredAllocator, StoredLock, StoredMetadata, StoredRelocation,
     StoredSituation,
 };
@@ -100,9 +100,34 @@ impl OpensStore for OrchestrateStore {
         // transaction: an open that fails on a family, or a crash during it,
         // leaves the store unstamped rather than stamped forward. The
         // registrations below then only hand back references.
-        let mut engine = Engine::open(
+        let engine = Engine::open(
             EngineOpen::new(exact_store_path, SCHEMA_VERSION).declaring_orchestrate_families(),
         )?;
+        // The engine may have upgraded the file from the sema format before
+        // anything below judges it; a refusal from here on carries that
+        // upgrade, so the opener can say so whether or not the open succeeds.
+        let conversion = engine.sema_conversion().cloned();
+        Self::resumed(engine, store_path, defaults)
+            .map_err(|refusal| refusal.after_sema_conversion(conversion))
+    }
+}
+
+/// The open past the engine: the families, the metadata tree, the store's
+/// bearing and the allocator, judged over an engine already open.
+trait Resumes: Sized {
+    fn resumed(
+        engine: Engine,
+        store_path: &Path,
+        defaults: OrchestrateNexusConfiguration,
+    ) -> Result<(Self, OrchestrateNexusConfiguration), StoreError>;
+}
+
+impl Resumes for OrchestrateStore {
+    fn resumed(
+        mut engine: Engine,
+        store_path: &Path,
+        defaults: OrchestrateNexusConfiguration,
+    ) -> Result<(Self, OrchestrateNexusConfiguration), StoreError> {
         let active_path_locks = engine.count_active_path_locks()?;
         if active_path_locks != 0 {
             return Err(StoreError::LegacyActiveLocks {
@@ -113,9 +138,7 @@ impl OpensStore for OrchestrateStore {
             engine.register_table(StoredMetadata::descriptor())?;
         let state = match engine.match_records(QueryPlan::all(metadata))?.records() {
             [] => engine.seed_metadata(metadata, &defaults)?,
-            [stored] => stored
-                .orchestrate_nexus_configuration_configuration_state
-                .clone(),
+            [stored] => stored.configuration.0.clone(),
             rows => return Err(StoreError::MetadataInvariant { count: rows.len() }),
         };
         // A store guarded only by its path cannot tell a move from a copy,
@@ -206,8 +229,10 @@ impl OpensStore for OrchestrateStore {
     }
 }
 
-/// A store says whether its open upgraded it from the format sema-engine
-/// wrote, which the engine does on the first open under the memory engine.
+/// A store, or the refusal of its open, says whether the open upgraded it
+/// from the format sema-engine wrote, which the engine does on the first
+/// open under the memory engine. The upgrade stands whether or not the open
+/// then succeeded.
 pub trait ReportsUpgrade {
     fn sema_conversion(&self) -> Option<&SemaConversion>;
 }
@@ -215,6 +240,16 @@ pub trait ReportsUpgrade {
 impl ReportsUpgrade for OrchestrateStore {
     fn sema_conversion(&self) -> Option<&SemaConversion> {
         self.engine.sema_conversion()
+    }
+}
+
+impl ReportsUpgrade for StoreError {
+    fn sema_conversion(&self) -> Option<&SemaConversion> {
+        match self {
+            Self::Engine(refusal) => refusal.sema_conversion(),
+            Self::RefusedAfterSemaConversion { conversion, .. } => Some(conversion),
+            _ => None,
+        }
     }
 }
 
@@ -264,7 +299,7 @@ impl SeedsMetadata for Engine {
         let mut commit = self.begin_atomic_commit().assert(
             metadata,
             StoredMetadata {
-                orchestrate_nexus_configuration_configuration_state: state.clone(),
+                configuration: Configuration(state.clone()),
             },
         );
         if let Some(carried) = carried.as_ref().filter(|carried| carried.is_present()) {
@@ -302,7 +337,7 @@ impl KeepsMetadata for OrchestrateStore {
 
     fn persist_state(&mut self) -> Result<(), StoreError> {
         let record = StoredMetadata {
-            orchestrate_nexus_configuration_configuration_state: self.state.clone(),
+            configuration: Configuration(self.state.clone()),
         };
         let table = self.metadata;
         self.engine

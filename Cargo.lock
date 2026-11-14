@@ -177,8 +177,8 @@ dependencies = [
 
 [[package]]
 name = "ethos-zero"
-version = "27.0.0"
-source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=8c95310#8c95310c4c372cfe115cdebc3e85021b98cf2974"
+version = "28.0.0"
+source = "git+https://github.com/LiGoldragon/ethos-zero.git?rev=970459d#970459d100ddee5f62a76c05642ecfabefba6329"
 dependencies = [
  "datom-codec 0.33.1",
  "prettyplease",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "memory-engine"
 version = "0.20.0"
-source = "git+https://github.com/LiGoldragon/memory-engine.git?rev=f6ba771aea9153935349a46bff809027cc404c72#f6ba771aea9153935349a46bff809027cc404c72"
+source = "git+https://github.com/LiGoldragon/memory-engine.git?rev=ef24197b22967c6eba0b01080454ba071ccd0a59#ef24197b22967c6eba0b01080454ba071ccd0a59"
 dependencies = [
  "blake3",
  "memory",
@@ -402,10 +402,10 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "6.0.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=055950b#055950b7c385bc00f39c0abec0c6755ebbde7171"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=fff088f#fff088f16fe0421ad392800d3c6fa936840b1aa2"
 dependencies = [
  "datom-codec 0.33.0",
- "ethos-zero 27.0.0",
+ "ethos-zero 28.0.0",
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3)",
  "rkyv",
  "signal",
@@ -463,7 +463,7 @@ name = "orchestrate"
 version = "0.39.0"
 dependencies = [
  "datom-codec 0.33.0",
- "ethos-zero 27.0.0",
+ "ethos-zero 28.0.0",
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3)",
  "rkyv",
  "signal",
@@ -477,7 +477,7 @@ name = "orchestrate-meta"
 version = "0.39.0"
 dependencies = [
  "datom-codec 0.33.0",
- "ethos-zero 27.0.0",
+ "ethos-zero 28.0.0",
  "meta-signal-orchestrate",
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3)",
  "rkyv",
@@ -491,7 +491,7 @@ dependencies = [
 name = "orchestrate-nexus"
 version = "0.39.0"
 dependencies = [
- "ethos-zero 27.0.0",
+ "ethos-zero 28.0.0",
  "kameo",
  "memory-engine",
  "meta-signal-orchestrate",
@@ -719,10 +719,10 @@ dependencies = [
 [[package]]
 name = "signal-orchestrate"
 version = "6.0.0"
-source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=8335cf9#8335cf90e72ef343d4cb5b19f0801801555a070a"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=bf21c0c#bf21c0c7182b96db3f67ea41d88392936742f060"
 dependencies = [
  "datom-codec 0.33.0",
- "ethos-zero 27.0.0",
+ "ethos-zero 28.0.0",
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3)",
  "rkyv",
  "signal",

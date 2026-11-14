@@ -6,7 +6,7 @@ use std::{
 };
 
 use memory_engine::RecordPredicate;
-use signal_orchestrate::{HeldLock, LockId, LockPath, LockRequest};
+use signal_orchestrate::{Lock, LockId, LockPath, LockRequest};
 
 use super::{error::StoreError, record::StoredLock};
 
@@ -22,9 +22,9 @@ pub struct NormalizedLockRequest {
 
 pub trait NormalizesLockRequests: Sized {
     fn from_request(request: LockRequest) -> Result<Self, StoreError>;
-    fn duplicates_name_of(&self, lock: &HeldLock) -> bool;
-    fn overlapping_path_of(&self, lock: &HeldLock) -> Option<String>;
-    fn into_lock(self, lock_id: LockId) -> HeldLock;
+    fn duplicates_name_of(&self, lock: &Lock) -> bool;
+    fn overlapping_path_of(&self, lock: &Lock) -> Option<String>;
+    fn into_lock(self, lock_id: LockId) -> Lock;
 }
 
 impl NormalizesLockRequests for NormalizedLockRequest {
@@ -43,11 +43,11 @@ impl NormalizesLockRequests for NormalizedLockRequest {
         Ok(Self { request })
     }
 
-    fn duplicates_name_of(&self, lock: &HeldLock) -> bool {
+    fn duplicates_name_of(&self, lock: &Lock) -> bool {
         self.request.lock_name == lock.lock_name
     }
 
-    fn overlapping_path_of(&self, lock: &HeldLock) -> Option<String> {
+    fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
         self.request.lock_path_vector.iter().find_map(|requested| {
             lock.lock_path_vector.iter().find_map(|held| {
                 NormalizedLockPath::from_normalized(&requested.0)
@@ -57,8 +57,8 @@ impl NormalizesLockRequests for NormalizedLockRequest {
         })
     }
 
-    fn into_lock(self, lock_id: LockId) -> HeldLock {
-        HeldLock {
+    fn into_lock(self, lock_id: LockId) -> Lock {
+        Lock {
             lock_id,
             lock_name: self.request.lock_name,
             flow_id: self.request.flow_id,
@@ -73,8 +73,7 @@ impl NormalizesLockRequests for NormalizedLockRequest {
 /// overlaps a path it asks for. Lock acquisition reads only those.
 impl RecordPredicate<StoredLock> for NormalizedLockRequest {
     fn admits(&self, held: &StoredLock) -> bool {
-        self.duplicates_name_of(&held.held_lock)
-            || self.overlapping_path_of(&held.held_lock).is_some()
+        self.duplicates_name_of(&held.lock) || self.overlapping_path_of(&held.lock).is_some()
     }
 }
 
@@ -188,7 +187,7 @@ mod tests {
 
     #[test]
     fn overlap_is_ancestry_in_either_direction_and_the_root_covers_everything() {
-        let held = HeldLock {
+        let held = Lock {
             lock_id: LockId(1),
             lock_name: LockName("held".to_owned()),
             flow_id: FlowId("flow".to_owned()),

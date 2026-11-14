@@ -36,11 +36,11 @@ use meta_signal_orchestrate::{
     Answerable as AnswerableMeta, Input as MetaInput, Output as MetaOutput,
 };
 use signal_orchestrate::{
-    Answerable as AnswerableOrdinary, ConfigurationReceipt, ConfigurationRejection,
-    ConfigurationRejectionReason, HeldLock, Input as OrdinaryInput, LockId, LockRequest,
-    Observation, ObserveSelection, OrchestrateNexusConfiguration, Output as OrdinaryOutput,
+    Answerable as AnswerableOrdinary, ConfigurationReceipt, Input as OrdinaryInput, Lock, LockId,
+    LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,
+    Output as OrdinaryOutput, Refusal,
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, convert::Infallible};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -108,7 +108,7 @@ impl Founding for FoundedCore {
 /// The decision-making engine of the Orchestrate Nexus.
 pub struct NexusCore {
     store: OrchestrateStore,
-    announcements: broadcast::Sender<Observation>,
+    announcements: broadcast::Sender<Announcement>,
 }
 
 /// There is no `on_stop` here, and that is a statement rather than an
@@ -132,119 +132,120 @@ impl Actor for NexusCore {
 }
 
 /// Each input is answered through its contract's generated dispatch,
-/// `input.answer(&answerer)`; a Lock taken or released is then announced to
-/// every subscriber.
+/// `input.answer(&answerer)`, and the output it yields is the whole answer: a
+/// store that could not carry the input out answers `Refused.Store` within
+/// it, so the reply cannot fail (`Infallible`). A Lock taken or released is
+/// then announced to every subscriber.
 impl Message<OrdinaryInput> for NexusCore {
-    type Reply = Result<OrdinaryOutput, StoreError>;
+    type Reply = Result<OrdinaryOutput, Infallible>;
 
     async fn handle(
         &mut self,
         entering: OrdinaryInput,
         _: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let answerer = Answerer::over(&mut self.store);
-        let output = entering.answer(&answerer);
-        let output = answerer.concluded(output)?;
+        let output = entering.answer(&Answerer::over(&mut self.store));
         if matches!(
             output,
             OrdinaryOutput::Locked(_) | OrdinaryOutput::Released(_)
         ) {
-            let _ = self
-                .announcements
-                .send(self.store.observe(ObserveSelection::Locks)?);
+            self.announce();
         }
         Ok(output)
     }
 }
 
 impl Message<MetaInput> for NexusCore {
-    type Reply = Result<MetaOutput, StoreError>;
+    type Reply = Result<MetaOutput, Infallible>;
 
     async fn handle(
         &mut self,
         entering: MetaInput,
         _: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let answerer = Answerer::over(&mut self.store);
-        let output = entering.answer(&answerer);
-        answerer.concluded(output)
+        Ok(entering.answer(&Answerer::over(&mut self.store)))
     }
+}
+
+/// Tells every subscriber what the store holds after a change.
+trait Announces {
+    fn announce(&mut self);
+}
+
+impl Announces for NexusCore {
+    /// A change whose state cannot be read back is announced as unkept:
+    /// every subscriber's exchange then ends `Lagged`, as one that fell
+    /// behind does, and opening `Observe` again gives the state on open.
+    fn announce(&mut self) {
+        let announcement = match self.store.observe(ObserveSelection::Locks) {
+            Ok(observation) => Announcement::Changed(observation),
+            Err(_) => Announcement::Unkept,
+        };
+        let _ = self.announcements.send(announcement);
+    }
+}
+
+/// What the change stream carries to every subscriber.
+#[derive(Clone, Debug)]
+pub enum Announcement {
+    /// The state after a change.
+    Changed(Observation),
+    /// A change whose state could not be read; no subscriber can be kept
+    /// current by the stream past it.
+    Unkept,
 }
 
 /// One input being answered against the store the core owns.
 ///
-/// The generated `Answering` lends each capability `&self` and lets it refuse
-/// only with its contract's `Output`, so the store is reached through a cell,
-/// and a store that fails to commit, the one answer neither contract has an
-/// output for, is held here and answers the input in place of the output the
-/// dispatch returned. That output is `Unsent` and is never delivered.
+/// The generated `Answering` lends each capability `&self`, so the store is
+/// reached through a cell. A capability answers with its contract's own
+/// output: what the input's output carries, a refusal the transition chose,
+/// or, when the store could not carry it out, `Refused.Store`.
 struct Answerer<'core> {
     store: RefCell<&'core mut OrchestrateStore>,
-    failure: RefCell<Option<StoreError>>,
 }
 
 trait Answers<'core>: Sized {
     fn over(store: &'core mut OrchestrateStore) -> Self;
-    /// Runs one store transition, holding its failure if it fails.
+    /// Runs one store transition; a store failure is the contract's refusal.
     #[allow(clippy::result_large_err)]
-    fn attempt<Carried, Refusal: Unsent>(
+    fn attempt<Carried, Answered: RefusedByStore>(
         &self,
-        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Refusal>, StoreError>,
-    ) -> Result<Carried, Refusal>;
-    /// The dispatch's output, or the store failure that answers in its place.
-    fn concluded<Answered>(self, output: Answered) -> Result<Answered, StoreError>;
+        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Answered>, StoreError>,
+    ) -> Result<Carried, Answered>;
 }
 
 impl<'core> Answers<'core> for Answerer<'core> {
     fn over(store: &'core mut OrchestrateStore) -> Self {
         Self {
             store: RefCell::new(store),
-            failure: RefCell::new(None),
         }
     }
 
-    fn attempt<Carried, Refusal: Unsent>(
+    fn attempt<Carried, Answered: RefusedByStore>(
         &self,
-        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Refusal>, StoreError>,
-    ) -> Result<Carried, Refusal> {
-        let mut store = self.store.borrow_mut();
-        match transition(&mut store) {
-            Ok(answered) => answered,
-            Err(failure) => {
-                self.failure.replace(Some(failure));
-                Err(Refusal::unsent())
-            }
-        }
-    }
-
-    fn concluded<Answered>(self, output: Answered) -> Result<Answered, StoreError> {
-        match self.failure.into_inner() {
-            Some(failure) => Err(failure),
-            None => Ok(output),
-        }
+        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Answered>, StoreError>,
+    ) -> Result<Carried, Answered> {
+        transition(&mut self.store.borrow_mut())
+            .unwrap_or_else(|failure| Err(Answered::refused_by_store(failure)))
     }
 }
 
-/// The output an input is left with when the store fails beneath it; the
-/// failure answers in its place, so it is never sent.
-trait Unsent {
-    fn unsent() -> Self;
+/// A contract's output for an input its store could not carry out:
+/// `Refused.Store`, in the store's own words.
+pub trait RefusedByStore {
+    fn refused_by_store(failure: StoreError) -> Self;
 }
 
-impl Unsent for OrdinaryOutput {
-    fn unsent() -> Self {
-        Self::ConfigurationRefused(ConfigurationRejection {
-            configuration_rejection_reason: ConfigurationRejectionReason::InvalidConfiguration,
-        })
+impl RefusedByStore for OrdinaryOutput {
+    fn refused_by_store(failure: StoreError) -> Self {
+        Self::Refused(Refusal::Store(failure.to_string()))
     }
 }
 
-impl Unsent for MetaOutput {
-    fn unsent() -> Self {
-        Self::ConfigurationRejected(meta_signal_orchestrate::ConfigurationRejection {
-            configuration_rejection_reason:
-                meta_signal_orchestrate::ConfigurationRejectionReason::InvalidConfiguration,
-        })
+impl RefusedByStore for MetaOutput {
+    fn refused_by_store(failure: StoreError) -> Self {
+        Self::Refused(Refusal::Store(failure.to_string()))
     }
 }
 
@@ -256,11 +257,11 @@ impl signal_orchestrate::Answering for Answerer<'_> {
         self.attempt(|store| store.ordinary_configure(orchestrate_nexus_configuration.clone()))
     }
 
-    fn lock(&self, lock_request: &LockRequest) -> Result<HeldLock, OrdinaryOutput> {
+    fn lock(&self, lock_request: &LockRequest) -> Result<Lock, OrdinaryOutput> {
         self.attempt(|store| store.lock(lock_request.clone()))
     }
 
-    fn release(&self, lock_id: &LockId) -> Result<HeldLock, OrdinaryOutput> {
+    fn release(&self, lock_id: &LockId) -> Result<Lock, OrdinaryOutput> {
         self.attempt(|store| store.release(*lock_id))
     }
 
@@ -296,11 +297,13 @@ pub struct Attending {
 /// promise, and did not.
 pub struct Attendance {
     pub opening: Observation,
-    pub announcements: broadcast::Receiver<Observation>,
+    pub announcements: broadcast::Receiver<Announcement>,
 }
 
+/// A store that cannot read the state on open refuses the subscriber with
+/// `Refused.Store`, and nothing joins the stream.
 impl Message<Attending> for NexusCore {
-    type Reply = Result<Attendance, StoreError>;
+    type Reply = Result<Attendance, OrdinaryOutput>;
 
     async fn handle(
         &mut self,
@@ -308,7 +311,10 @@ impl Message<Attending> for NexusCore {
         _: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
         Ok(Attendance {
-            opening: self.store.observe(attending.selection)?,
+            opening: self
+                .store
+                .observe(attending.selection)
+                .map_err(OrdinaryOutput::refused_by_store)?,
             announcements: self.announcements.subscribe(),
         })
     }

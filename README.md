@@ -32,7 +32,7 @@ orchestrate-meta 'Configure.{ «/run/user/1001/orchestrate-nexus/orchestrate.soc
 wrappers supply them. With no argument, a client prints its Signal Ethos and
 its client-failure Ethos.
 
-The ordinary replies are `ConfigurationAccepted`, `ConfigurationRefused`,
+The ordinary replies are `Configured`, `ConfigurationRefused`,
 `Locked`, `Released`, `Observed`, `LockRejected`, and `ReleaseRejected`. The
 meta replies are `Configured`, `OrdinaryConfigurationReopened`,
 `ConfigurationRejected`, and `PeerRefused`. Local client failures are Datom

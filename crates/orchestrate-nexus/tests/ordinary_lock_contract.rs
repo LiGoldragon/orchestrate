@@ -10,8 +10,8 @@ use orchestrate_nexus::{
     core::{FoundedCore, Founding},
 };
 use signal_orchestrate::{
-    HeldLock, Input, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
-    OrchestrateNexusConfiguration, Output, ReleaseRejection,
+    Input, Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Output, Refusal, ReleaseRejection,
 };
 
 struct CoreFixture {
@@ -74,11 +74,11 @@ impl Defaults for Path {
 }
 
 trait ReadsResponse {
-    fn locked(self) -> HeldLock;
+    fn locked(self) -> Lock;
 }
 
 impl ReadsResponse for Output {
-    fn locked(self) -> HeldLock {
+    fn locked(self) -> Lock {
         match self {
             Self::Locked(lock) => lock,
             other => panic!("expected Locked response, found {other:?}"),
@@ -154,7 +154,7 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
             .expect("refuse overlap"),
         Output::LockRejected(LockRejection::PathOverlap(LockOverlap {
             lock_path: LockPath(requested),
-            held_lock: held,
+            lock: held,
         })),
     );
 
@@ -269,4 +269,30 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
             .expect("reject stale release"),
         Output::ReleaseRejected(ReleaseRejection::UnknownLockId),
     );
+}
+
+/// What the store cannot carry out is answered in the contract's own words,
+/// `Refused.Store`, and the core goes on answering.
+#[tokio::test]
+async fn a_request_the_store_refuses_is_answered_refused_store() {
+    let fixture = CoreFixture::create();
+    assert_eq!(
+        fixture
+            .founded
+            .core()
+            .ask(Input::Lock(fixture.lock_request("relative", &["relative"])))
+            .await
+            .expect("answered"),
+        Output::Refused(Refusal::Store(
+            "lock path \"relative\" is not absolute".to_owned()
+        )),
+    );
+    let owned = fixture.path("owned");
+    fixture
+        .founded
+        .core()
+        .ask(Input::Lock(fixture.lock_request("alpha", &[&owned])))
+        .await
+        .expect("the core still answers")
+        .locked();
 }

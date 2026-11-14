@@ -7,10 +7,14 @@
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
+pub struct Configuration(
+    pub nexus::ConfigurationState<signal_orchestrate::OrchestrateNexusConfiguration>,
+);
+#[rustfmt::skip]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct StoredMetadata {
-    pub orchestrate_nexus_configuration_configuration_state: nexus::ConfigurationState<
-        signal_orchestrate::OrchestrateNexusConfiguration,
-    >,
+    pub configuration: Configuration,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -28,7 +32,7 @@ pub struct StoredRelocation {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "datom", derive(datom_codec::Datomizable, datom_codec::Composing))]
 pub struct StoredLock {
-    pub held_lock: signal_orchestrate::HeldLock,
+    pub lock: signal_orchestrate::Lock,
 }
 #[rustfmt::skip]
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, Debug, PartialEq, Eq, Hash)]

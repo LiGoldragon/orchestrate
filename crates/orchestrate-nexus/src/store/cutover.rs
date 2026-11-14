@@ -103,9 +103,8 @@ mod tests {
     use memory_engine::{Assertion, Engine, EngineOpen};
     use nexus::Configurable;
     use signal_orchestrate::{
-        ConfigurationPath, FlowId, HeldLock, LockId, LockName, LockPath, LockReason,
-        MetaSocketPath, Observation, ObserveSelection, OrchestrateNexusConfiguration,
-        OrdinarySocketPath,
+        ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
+        Observation, ObserveSelection, OrchestrateNexusConfiguration, OrdinarySocketPath,
     };
 
     use super::*;
@@ -124,7 +123,7 @@ mod tests {
     ///
     /// The shape is the one witnessed in `5f016531:src/store.rs`, the deployed
     /// 0.30.0: the same three family names, schema labels and record fields.
-    fn previous_generation_store(store_path: &std::path::Path, held: &HeldLock) {
+    fn previous_generation_store(store_path: &std::path::Path, held: &Lock) {
         let mut engine = Engine::open(EngineOpen::new(store_path, SCHEMA_VERSION)).expect("open");
         let configurations = engine
             .register_table(StoredConfiguration::descriptor())
@@ -148,12 +147,7 @@ mod tests {
             .register_table(StoredLock::descriptor())
             .expect("register the Lock family");
         engine
-            .assert(Assertion::new(
-                locks,
-                StoredLock {
-                    held_lock: held.clone(),
-                },
-            ))
+            .assert(Assertion::new(locks, StoredLock { lock: held.clone() }))
             .expect("write a held Lock");
         let allocator = engine
             .register_table(StoredAllocator::descriptor())
@@ -170,7 +164,7 @@ mod tests {
     fn a_previous_generation_store_carries_its_configuration_and_its_locks() {
         let directory = tempfile::tempdir().expect("temporary store");
         let store_path = directory.path().join("previous.memory");
-        let held = HeldLock {
+        let held = Lock {
             lock_id: LockId(7),
             lock_name: LockName("held".to_owned()),
             flow_id: FlowId("flow-857335".to_owned()),
@@ -238,7 +232,7 @@ mod tests {
         let store_path = directory.path().join("previous.memory");
         previous_generation_store(
             &store_path,
-            &HeldLock {
+            &Lock {
                 lock_id: LockId(7),
                 lock_name: LockName("held".to_owned()),
                 flow_id: FlowId("flow-857335".to_owned()),
