@@ -7,12 +7,11 @@
   "git+https://github.com/LiGoldragon/ethos-zero?rev=5a5daca#19.2.0": "0n9wvmghq0zaqa86xib2bc6q4nis6f0rmcbgb6xdas5dhlm3nnak",
   "git+https://github.com/LiGoldragon/memory-engine.git?rev=ef24197b22967c6eba0b01080454ba071ccd0a59#memory-engine@0.20.0": "0qr2kmd74c2mqfiafw7lcns6iq2x2appc7aq636zrqhvsv1450c5",
   "git+https://github.com/LiGoldragon/memory.git?rev=e78519c2fc8f213246328bf28f9e38f9a216f76e#memory@0.2.0": "0hkqy89l7h93a5pn0kkyq6sbvz7wnawn86f19j6lgvqza0s6mcrb",
-  "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=a2804fa#meta-signal-orchestrate@6.0.0": "0b6prcqj4gq3zi8yvb08kllk3dxrfa07842w8yfnbzir26xqb9vm",
+  "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=13fde8e#meta-signal-orchestrate@6.0.0": "0j07hl1x8dn58kcr5khpaa6zi70bksc5crz3nhp7xwx3q5jlyk74",
   "git+https://github.com/LiGoldragon/nexus.git?rev=ec097e3#nexus@0.5.0": "0c0qm66wilv27gpi4c18l812sk70hs28pvsbdvhbb89gffq1pl6f",
   "git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3#protos@0.33.0": "1crw7gc7b870xxk9pavzfpyav44163izylndfr8affbsm6hd863s",
   "git+https://github.com/LiGoldragon/protos.git?rev=c93b598#protos@0.33.0": "00rwpzkxqmwhmxr2dkv9ay9wfvjxbprvvv23lfxmqamm2264r2gb",
   "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#signal-orchestrate@6.0.0": "1gjf4f9cj7plahrr7q5m6i561i88v6mmh28qis2cjx5zyh16sgvp",
-  "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=e4fda9b#signal-orchestrate@6.0.0": "1j9hnf82b80pxmsf84zrbn52w1gv47nrh0mbn350gq4fdskvhalm",
   "git+https://github.com/LiGoldragon/signal-sema.git?rev=4f3a24e6677ab9d200672851016c4c760c1e36e8#signal-sema@0.2.0": "0q6pgw0ymn5ylqlcnqldn7pf1dpv43vi07vqwf7lj5wd04bm3qac",
   "git+https://github.com/LiGoldragon/signal.git?rev=7afb68b#signal@10.3.0": "0yyv9bylafhnpas51gz8ppmvv0r77rmfjc0yslkjk7f82rijvrm3"
 }

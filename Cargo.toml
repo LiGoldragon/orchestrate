@@ -19,7 +19,7 @@ datom-codec = { git = "https://github.com/LiGoldragon/datom-codec.git", rev = "0
 ethos-zero = { git = "https://github.com/LiGoldragon/ethos-zero.git", rev = "970459d" }
 kameo = { version = "0.22", default-features = false, features = ["macros", "tracing"] }
 mio = { version = "1", features = ["log"] }
-meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "a2804fa", default-features = false }
+meta-signal-orchestrate = { git = "https://github.com/LiGoldragon/meta-signal-orchestrate.git", rev = "13fde8e", default-features = false }
 nexus = { git = "https://github.com/LiGoldragon/nexus.git", rev = "ec097e3" }
 protos = { git = "https://github.com/LiGoldragon/protos.git", rev = "c93b598", features = ["rkyv"] }
 rkyv = { version = "0.8", default-features = false, features = ["std", "bytecheck", "little_endian", "pointer_width_32", "unaligned"] }
