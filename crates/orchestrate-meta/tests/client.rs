@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use meta_signal_orchestrate::{Input, Output};
+use meta_signal_orchestrate::{Input, Output as MetaOutput};
 use signal::{
     Answer, ContractDigest, Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId,
     FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection,
@@ -45,7 +45,7 @@ trait CreatesClientHarness: Sized {
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
     fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output;
-    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input>;
+    fn answer_once(&self, response: MetaOutput) -> std::thread::JoinHandle<Input>;
     fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Input>;
     fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()>;
     fn refuse_greeting(&self, digest: ContractDigest) -> std::thread::JoinHandle<()>;
@@ -55,7 +55,7 @@ trait CreatesClientHarness: Sized {
 /// The fixture's side of signal's exchange layer, framed with the shared crate.
 trait Answers {
     fn dispatched(&mut self) -> Dispatch<Input>;
-    fn deliver(&mut self, delivery: Delivery<Output>);
+    fn deliver(&mut self, delivery: Delivery<MetaOutput>);
 }
 
 impl Answers for std::os::unix::net::UnixStream {
@@ -68,7 +68,7 @@ impl Answers for std::os::unix::net::UnixStream {
             .expect("restore the dispatch")
     }
 
-    fn deliver(&mut self, delivery: Delivery<Output>) {
+    fn deliver(&mut self, delivery: Delivery<MetaOutput>) {
         let signal = delivery.signalize().expect("archive the delivery");
         self.write_frame(&signal, FrameCapacity::default())
             .expect("write the delivery");
@@ -105,7 +105,7 @@ impl CreatesClientHarness for ClientHarness {
         command.output().expect("run meta client")
     }
 
-    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input> {
+    fn answer_once(&self, response: MetaOutput) -> std::thread::JoinHandle<Input> {
         let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept meta client");
@@ -237,7 +237,7 @@ fn client_actualizes_datoms_and_textualizes_typed_responses() {
         )),
         meta_socket_path: MetaSocketPath(ConfigurationPath("/tmp/meta.sock".to_owned())),
     };
-    let server = harness.answer_once(Output::Configured(ConfigurationReceipt {
+    let server = harness.answer_once(MetaOutput::Configured(ConfigurationReceipt {
         orchestrate_nexus_configuration: configure.clone(),
         meta_configure_done: MetaConfigureDone(true),
     }));

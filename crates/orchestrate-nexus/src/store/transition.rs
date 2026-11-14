@@ -65,7 +65,7 @@ impl Locks for OrchestrateStore {
             } else if let Some(path) = request.overlapping_path_of(&holder) {
                 LockRejection::PathOverlap(LockOverlap {
                     lock_path: LockPath(path),
-                    lock: holder,
+                    held_lock: holder,
                 })
             } else {
                 unreachable!("the conflict predicate admits only a conflicting Lock")

@@ -154,7 +154,7 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
             .expect("refuse overlap"),
         Output::LockRejected(LockRejection::PathOverlap(LockOverlap {
             lock_path: LockPath(requested),
-            lock: held,
+            held_lock: held,
         })),
     );
 

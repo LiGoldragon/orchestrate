@@ -19,7 +19,7 @@ use signal::{
     FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection,
     Restorable, Signal, Signalizable,
 };
-use signal_orchestrate::{Input, Observation, ObserveSelection, Output};
+use signal_orchestrate::{Input, Observation, ObserveSelection, Output as OrdinaryOutput};
 
 /// A query this contract reads.
 const QUERY: &str = "Observe.Locks";
@@ -41,7 +41,7 @@ trait CreatesClientHarness: Sized {
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
     fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output;
-    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input>;
+    fn answer_once(&self, response: OrdinaryOutput) -> std::thread::JoinHandle<Input>;
     fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Input>;
     fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()>;
     fn refuse_greeting(&self, digest: ContractDigest) -> std::thread::JoinHandle<()>;
@@ -51,7 +51,7 @@ trait CreatesClientHarness: Sized {
 /// The fixture's side of signal's exchange layer, framed with the shared crate.
 trait Answers {
     fn dispatched(&mut self) -> Dispatch<Input>;
-    fn deliver(&mut self, delivery: Delivery<Output>);
+    fn deliver(&mut self, delivery: Delivery<OrdinaryOutput>);
 }
 
 impl Answers for std::os::unix::net::UnixStream {
@@ -64,7 +64,7 @@ impl Answers for std::os::unix::net::UnixStream {
             .expect("restore the dispatch")
     }
 
-    fn deliver(&mut self, delivery: Delivery<Output>) {
+    fn deliver(&mut self, delivery: Delivery<OrdinaryOutput>) {
         let signal = delivery.signalize().expect("archive the delivery");
         self.write_frame(&signal, FrameCapacity::default())
             .expect("write the delivery");
@@ -101,7 +101,7 @@ impl CreatesClientHarness for ClientHarness {
         command.output().expect("run ordinary client")
     }
 
-    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input> {
+    fn answer_once(&self, response: OrdinaryOutput) -> std::thread::JoinHandle<Input> {
         let listener = UnixListener::bind(&self.socket).expect("bind ordinary fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept ordinary client");
@@ -227,7 +227,7 @@ fn a_non_utf8_query_is_a_controlled_invocation_failure() {
 #[test]
 fn client_actualizes_datoms_and_textualizes_typed_responses() {
     let harness = ClientHarness::create();
-    let server = harness.answer_once(Output::Observed(Observation::Locks(Vec::new())));
+    let server = harness.answer_once(OrdinaryOutput::Observed(Observation::Locks(Vec::new())));
     let output = harness.invoke(Some("Observe.Locks"));
     assert!(output.status.success());
     assert_eq!(
