@@ -36,7 +36,7 @@ Wire: both contract digests change, so the clients and the Nexus move together. 
 0.38.0 `orchestrate` or `orchestrate-meta` client is refused by a 0.39.0 Nexus at the
 greeting, and the reverse.
 
-- Ordinary, signal-orchestrate 6.0.0 (`8d675ca`): ethos-zero 28 names the roots
+- Ordinary, signal-orchestrate 6.0.0 (`e4fda9b`): ethos-zero 28 names the roots
   `Input` and `Output` and pairs them by position, so `ConfigurationRefused` moves
   after `Observed` and the archived tag of `Locked`, `Released`, `Observed` and
   `ConfigurationRefused` changes. Configure's reply `ConfigurationAccepted.{ … }` is
@@ -48,7 +48,7 @@ greeting, and the reverse.
   normalized; `LockRejected.RelativePath.relative/path`, for one. Before, such a
   request had no output and the Nexus ended the connection.
 - Both contracts gain `Refused.Store.«…»`, after every other output, through
-  meta-signal-orchestrate 6.0.0 (`4bb43f2`) on the meta side: an input the store
+  meta-signal-orchestrate 6.0.0 (`27ac19c`) on the meta side: an input the store
   could not carry out, a commit that failed or an exhausted Lock id among them, is
   answered with the store's words. Before, such an input had no output and the
   Nexus ended the connection.

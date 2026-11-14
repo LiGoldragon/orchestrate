@@ -23,6 +23,7 @@ pub struct NormalizedLockRequest {
 }
 
 pub trait NormalizesLockRequests: Sized {
+    #[allow(clippy::result_large_err)]
     fn from_request(request: LockRequest) -> Result<Self, LockRejection>;
     fn duplicates_name_of(&self, lock: &Lock) -> bool;
     fn overlapping_path_of(&self, lock: &Lock) -> Option<String>;
@@ -83,6 +84,7 @@ impl RecordPredicate<StoredLock> for NormalizedLockRequest {
 struct NormalizedLockPath(String);
 
 trait NormalizesLockPaths: Sized {
+    #[allow(clippy::result_large_err)]
     fn from_source(path: &str) -> Result<Self, LockRejection>;
     fn from_normalized(path: &str) -> Self;
     fn overlaps(&self, other: &Self) -> bool;
