@@ -30,10 +30,10 @@ use std::marker::PhantomData;
 use kameo::actor::ActorRef;
 use nexus::{Permissive, SocketAuthority};
 use signal::{
-    Answer, AsyncFrameReading, AsyncFrameWriting, CONNECTION_EXCHANGE, Delivery, Dispatch, Ending,
-    ExchangeFault, ExchangeId, Exchanged, FrameCapacity, FrameError, Restorable, Signal,
-    Signalizable,
+    Answer, CONNECTION_EXCHANGE, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId, Exchanged,
+    FrameCapacity, FrameError, Restorable, Signal, Signalizable,
 };
+use signal_transport::{AsyncFrameReading, AsyncFrameWriting};
 use tokio::{
     net::{
         UnixStream,

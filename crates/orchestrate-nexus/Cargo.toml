@@ -39,7 +39,8 @@ nexus.workspace = true
 rkyv.workspace = true
 rustix = { version = "1", features = ["fs"] }
 memory-engine.workspace = true
-signal = { workspace = true, features = ["transport"] }
+signal.workspace = true
+signal-transport.workspace = true
 signal-orchestrate.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
