@@ -33,6 +33,7 @@ path = "src/bin/orchestrate_relocate.rs"
 # check witnesses that the built configuration keeps it that way.
 [dependencies]
 kameo.workspace = true
+mio.workspace = true
 meta-signal-orchestrate.workspace = true
 nexus.workspace = true
 rkyv.workspace = true

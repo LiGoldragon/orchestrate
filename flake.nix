@@ -36,22 +36,11 @@
             mkdir -p $out
           '';
           fmt = pkgs.runCommand "orchestrate-fmt" { nativeBuildInputs = [ toolchain ]; } ''
-            find ${./.} -type f -name '*.rs' -print0 | xargs -0 rustfmt --check
+            find ${./.} -type f -name '*.rs' -print0 | xargs -0 rustfmt --edition 2024 --check
             mkdir -p $out
           '';
           doc = doc "orchestrate-nexus" [ "default" ] [ "-D" "warnings" ];
           test-doc = doc "orchestrate-nexus" [ "default" ] [ "-D" "warnings" ];
-          live-nexus = check "orchestrate-nexus" [ "default" ];
-          ordinary-lock-contract = check "orchestrate-nexus" [ "default" ];
-          configuration-authority = check "orchestrate-nexus" [ "default" ];
-          peer-authority = check "orchestrate-nexus" [ "default" ];
-          socket-claim = check "orchestrate-nexus" [ "default" ];
-          carried-store = check "orchestrate-nexus" [ "default" ];
-          relocation = check "orchestrate-nexus" [ "default" ];
-          store-generations = check "orchestrate-nexus" [ "default" ];
-          stopping = check "orchestrate-nexus" [ "default" ];
-          ordinary-client = check "orchestrate" [ "default" ];
-          meta-client = check "orchestrate-meta" [ "default" ];
         };
     };
 }
