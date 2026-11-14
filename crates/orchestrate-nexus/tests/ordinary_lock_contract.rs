@@ -89,7 +89,7 @@ impl ReadsResponse for Output {
 }
 
 #[tokio::test]
-async fn locks_are_atomic_complete_and_released_by_durable_id() {
+async fn multi_path_locks_are_atomic_complete_and_released_by_durable_id() {
     let fixture = CoreFixture::create();
     let first = fixture.path("first");
     let second = fixture.path("second");
