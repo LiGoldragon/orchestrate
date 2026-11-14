@@ -1090,6 +1090,96 @@ rec {
         };
         resolvedDefaultFeatures = [ "rkyv" ];
       };
+      "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#signal-orchestrate@6.0.0" = rec {
+        crateName = "signal-orchestrate";
+        version = "6.0.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/signal-orchestrate.git";
+          rev = "7b65ea685aae24160552decdde7d8ffad992d286";
+          sha256 = "1gjf4f9cj7plahrr7q5m6i561i88v6mmh28qis2cjx5zyh16sgvp";
+        };
+        libName = "signal_orchestrate";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec 0.33.1";
+            optional = true;
+          }
+          {
+            name = "protos";
+            packageId = "git+https://github.com/LiGoldragon/protos.git?rev=c93b598#protos@0.33.0";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "ethos-zero";
+            packageId = "ethos-zero 28.0.0";
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" ];
+        };
+        resolvedDefaultFeatures = [ "datom" ];
+      };
+      "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=e4fda9b#signal-orchestrate@6.0.0" = rec {
+        crateName = "signal-orchestrate";
+        version = "6.0.0";
+        edition = "2024";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/LiGoldragon/signal-orchestrate.git";
+          rev = "e4fda9b18c39386d1a81aef9b8a129862f4e8137";
+          sha256 = "1j9hnf82b80pxmsf84zrbn52w1gv47nrh0mbn350gq4fdskvhalm";
+        };
+        libName = "signal_orchestrate";
+        dependencies = [
+          {
+            name = "datom-codec";
+            packageId = "datom-codec 0.33.0";
+            optional = true;
+          }
+          {
+            name = "protos";
+            packageId = "git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3#protos@0.33.0";
+            optional = true;
+          }
+          {
+            name = "rkyv";
+            packageId = "rkyv";
+            usesDefaultFeatures = false;
+            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
+          }
+          {
+            name = "signal";
+            packageId = "signal";
+            usesDefaultFeatures = false;
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "ethos-zero";
+            packageId = "ethos-zero 28.0.0";
+          }
+        ];
+        features = {
+          "datom" = [ "dep:datom-codec" "dep:protos" ];
+        };
+        resolvedDefaultFeatures = [ "datom" ];
+      };
       "hashbrown" = rec {
         crateName = "hashbrown";
         version = "0.17.1";
@@ -1406,20 +1496,25 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/meta-signal-orchestrate.git";
-          rev = "27ac19c92613ecb12b5ec82c1daed51a955d2a14";
-          sha256 = "1sr1rcxs8r60p5bsppcdi2wry7dwpkbdwdm60qk0gzigy235qc9q";
+          rev = "a2804facc69fc862285fe7a4b0070eb558abbb2c";
+          sha256 = "0b6prcqj4gq3zi8yvb08kllk3dxrfa07842w8yfnbzir26xqb9vm";
         };
         libName = "meta_signal_orchestrate";
         dependencies = [
           {
             name = "datom-codec";
-            packageId = "datom-codec 0.33.0";
+            packageId = "datom-codec 0.33.1";
             optional = true;
           }
           {
             name = "protos";
-            packageId = "git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3#protos@0.33.0";
+            packageId = "git+https://github.com/LiGoldragon/protos.git?rev=c93b598#protos@0.33.0";
             optional = true;
+          }
+          {
+            name = "signal-orchestrate";
+            packageId = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=e4fda9b#signal-orchestrate@6.0.0";
+            usesDefaultFeatures = false;
           }
           {
             name = "rkyv";
@@ -1430,11 +1525,6 @@ rec {
           {
             name = "signal";
             packageId = "signal";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "signal-orchestrate";
-            packageId = "signal-orchestrate";
             usesDefaultFeatures = false;
           }
         ];
@@ -1611,6 +1701,12 @@ rec {
             features = [ "rkyv" ];
           }
           {
+            name = "signal-orchestrate";
+            packageId = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#signal-orchestrate@6.0.0";
+            usesDefaultFeatures = false;
+            features = [ "datom" ];
+          }
+          {
             name = "rkyv";
             packageId = "rkyv";
             usesDefaultFeatures = false;
@@ -1619,12 +1715,6 @@ rec {
           {
             name = "signal";
             packageId = "signal";
-            usesDefaultFeatures = false;
-            features = [ "datom" ];
-          }
-          {
-            name = "signal-orchestrate";
-            packageId = "signal-orchestrate";
             usesDefaultFeatures = false;
             features = [ "datom" ];
           }
@@ -1705,7 +1795,7 @@ rec {
         devDependencies = [
           {
             name = "signal-orchestrate";
-            packageId = "signal-orchestrate";
+            packageId = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#signal-orchestrate@6.0.0";
             usesDefaultFeatures = false;
             features = [ "datom" ];
           }
@@ -1743,6 +1833,11 @@ rec {
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./crates/orchestrate-nexus; };
         libName = "orchestrate_nexus";
         dependencies = [
+          {
+            name = "signal-orchestrate";
+            packageId = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#signal-orchestrate@6.0.0";
+            usesDefaultFeatures = false;
+          }
           {
             name = "kameo";
             packageId = "kameo";
@@ -1783,11 +1878,6 @@ rec {
             packageId = "signal";
             usesDefaultFeatures = false;
             features = [ "transport" ];
-          }
-          {
-            name = "signal-orchestrate";
-            packageId = "signal-orchestrate";
-            usesDefaultFeatures = false;
           }
           {
             name = "thiserror";
@@ -2488,51 +2578,6 @@ rec {
           }
         ];
 
-      };
-      "signal-orchestrate" = rec {
-        crateName = "signal-orchestrate";
-        version = "6.0.0";
-        edition = "2024";
-        workspace_member = null;
-        src = pkgs.fetchgit {
-          url = "https://github.com/LiGoldragon/signal-orchestrate.git";
-          rev = "e4fda9b18c39386d1a81aef9b8a129862f4e8137";
-          sha256 = "1j9hnf82b80pxmsf84zrbn52w1gv47nrh0mbn350gq4fdskvhalm";
-        };
-        libName = "signal_orchestrate";
-        dependencies = [
-          {
-            name = "datom-codec";
-            packageId = "datom-codec 0.33.0";
-            optional = true;
-          }
-          {
-            name = "protos";
-            packageId = "git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3#protos@0.33.0";
-            optional = true;
-          }
-          {
-            name = "rkyv";
-            packageId = "rkyv";
-            usesDefaultFeatures = false;
-            features = [ "std" "bytecheck" "little_endian" "pointer_width_32" "unaligned" ];
-          }
-          {
-            name = "signal";
-            packageId = "signal";
-            usesDefaultFeatures = false;
-          }
-        ];
-        buildDependencies = [
-          {
-            name = "ethos-zero";
-            packageId = "ethos-zero 28.0.0";
-          }
-        ];
-        features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" ];
-        };
-        resolvedDefaultFeatures = [ "datom" ];
       };
       "signal-sema" = rec {
         crateName = "signal-sema";

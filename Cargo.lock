@@ -410,14 +410,14 @@ dependencies = [
 [[package]]
 name = "meta-signal-orchestrate"
 version = "6.0.0"
-source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=27ac19c#27ac19c92613ecb12b5ec82c1daed51a955d2a14"
+source = "git+https://github.com/LiGoldragon/meta-signal-orchestrate.git?rev=a2804fa#a2804facc69fc862285fe7a4b0070eb558abbb2c"
 dependencies = [
- "datom-codec 0.33.0",
+ "datom-codec 0.33.1",
  "ethos-zero 28.0.0",
- "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=3c7ade3)",
+ "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=c93b598)",
  "rkyv",
  "signal",
- "signal-orchestrate",
+ "signal-orchestrate 6.0.0 (git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=e4fda9b)",
 ]
 
 [[package]]
@@ -478,7 +478,7 @@ dependencies = [
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=c93b598)",
  "rkyv",
  "signal",
- "signal-orchestrate",
+ "signal-orchestrate 6.0.0 (git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6)",
  "tempfile",
  "thiserror",
 ]
@@ -493,7 +493,7 @@ dependencies = [
  "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=c93b598)",
  "rkyv",
  "signal",
- "signal-orchestrate",
+ "signal-orchestrate 6.0.0 (git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6)",
  "tempfile",
  "thiserror",
 ]
@@ -511,7 +511,7 @@ dependencies = [
  "rkyv",
  "rustix",
  "signal",
- "signal-orchestrate",
+ "signal-orchestrate 6.0.0 (git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6)",
  "tempfile",
  "thiserror",
  "tokio",
@@ -726,6 +726,18 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "signal-orchestrate"
+version = "6.0.0"
+source = "git+https://github.com/LiGoldragon/signal-orchestrate.git?rev=7b65ea6#7b65ea685aae24160552decdde7d8ffad992d286"
+dependencies = [
+ "datom-codec 0.33.1",
+ "ethos-zero 28.0.0",
+ "protos 0.33.0 (git+https://github.com/LiGoldragon/protos.git?rev=c93b598)",
+ "rkyv",
+ "signal",
 ]
 
 [[package]]
