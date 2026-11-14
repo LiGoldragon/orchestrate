@@ -1295,8 +1295,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/meta-signal-orchestrate";
-          rev = "463ff8b2eddeab63488f12162d32274421ae66cb";
-          sha256 = "14znfwc3z7w551yminmkzdj1k1z2i73am9fz230sjwyllrk30bh0";
+          rev = "c571dd68c27331c13dd8c7ac4579820d625c0a68";
+          sha256 = "0mz3y68jljzv5g0rvplz66ymy08hiipib928y5kyxpsr2ivihncb";
         };
         libName = "meta_signal_orchestrate";
         dependencies = [
@@ -2397,8 +2397,8 @@ rec {
         workspace_member = null;
         src = pkgs.fetchgit {
           url = "https://github.com/LiGoldragon/signal-orchestrate";
-          rev = "2b17beab3a79e937b73bc506f457fa342505de5f";
-          sha256 = "0nn506j80pv1mlbidqifgdgsax24h3nvhjqkxdfm40w3gbifkq00";
+          rev = "29bd345925a40786a407454e88e8199b93b8d917";
+          sha256 = "000v9wm39kmasbar6hf4m0m513ln28phpndxsghrb942b3kz519w";
         };
         libName = "signal_orchestrate";
         dependencies = [
@@ -2431,7 +2431,7 @@ rec {
           }
         ];
         features = {
-          "datom" = [ "dep:datom-codec" "dep:protos" ];
+          "datom" = [ "dep:datom-codec" "dep:protos" "signal/datom" ];
         };
         resolvedDefaultFeatures = [ "datom" ];
       };
