@@ -8,10 +8,10 @@
 
 use kameo::actor::ActorRef;
 use meta_signal_orchestrate::{
-    PeerRejection, PeerUserId, Query as MetaQuery, Response as MetaResponse,
+    Input as MetaInput, Output as MetaOutput, PeerRejection, PeerUserId,
 };
 use signal::{Contracted, Signalizable};
-use signal_orchestrate::{Observation, Query as OrdinaryQuery, Response as OrdinaryResponse};
+use signal_orchestrate::{Input as OrdinaryInput, Observation, Output as OrdinaryOutput};
 use tokio::sync::broadcast::{self, error::RecvError};
 
 use crate::core::{Attending, NexusCore};
@@ -77,7 +77,7 @@ pub(crate) trait Refusing: Sized {
     fn peer_refusal(peer_user: u32) -> Option<Self>;
 }
 
-impl Refusing for MetaResponse {
+impl Refusing for MetaOutput {
     fn peer_refusal(peer_user: u32) -> Option<Self> {
         Some(Self::PeerRefused(PeerRejection {
             peer_user_id: PeerUserId(i64::from(peer_user)),
@@ -85,7 +85,7 @@ impl Refusing for MetaResponse {
     }
 }
 
-impl Refusing for OrdinaryResponse {
+impl Refusing for OrdinaryOutput {
     fn peer_refusal(_: u32) -> Option<Self> {
         None
     }
@@ -94,23 +94,23 @@ impl Refusing for OrdinaryResponse {
 /// A socket's query root: it settles its contract by the greeting, and opens
 /// an exchange against the core.
 pub(crate) trait SocketContract: Contracted + Sized + Send + 'static {
-    type Response: Refusing + Signalizable + Send + Sync + 'static;
+    type Output: Refusing + Signalizable + Send + Sync + 'static;
 
     async fn opened(
         self,
         core: &ActorRef<NexusCore>,
-    ) -> Result<Opened<Self::Response>, TransportError>;
+    ) -> Result<Opened<Self::Output>, TransportError>;
 }
 
 /// The ordinary contract: `Observe` streams, every other query is answered
 /// once.
-impl SocketContract for OrdinaryQuery {
-    type Response = OrdinaryResponse;
+impl SocketContract for OrdinaryInput {
+    type Output = OrdinaryOutput;
 
     async fn opened(
         self,
         core: &ActorRef<NexusCore>,
-    ) -> Result<Opened<Self::Response>, TransportError> {
+    ) -> Result<Opened<Self::Output>, TransportError> {
         match self {
             // Joining and reading the opening state are one step of the
             // core, so no change can commit between them: a subscriber
@@ -118,10 +118,10 @@ impl SocketContract for OrdinaryQuery {
             Self::Observe(selection) => {
                 let attendance = core.ask(Attending { selection }).await.delivered()?;
                 Ok(Opened::Streaming {
-                    opening: OrdinaryResponse::Observed(attendance.opening),
+                    opening: OrdinaryOutput::Observed(attendance.opening),
                     announcements: Announcements {
                         receiver: attendance.announcements,
-                        framing: OrdinaryResponse::Observed,
+                        framing: OrdinaryOutput::Observed,
                     },
                 })
             }
@@ -131,13 +131,13 @@ impl SocketContract for OrdinaryQuery {
 }
 
 /// The privileged contract: every query is answered once.
-impl SocketContract for MetaQuery {
-    type Response = MetaResponse;
+impl SocketContract for MetaInput {
+    type Output = MetaOutput;
 
     async fn opened(
         self,
         core: &ActorRef<NexusCore>,
-    ) -> Result<Opened<Self::Response>, TransportError> {
+    ) -> Result<Opened<Self::Output>, TransportError> {
         Ok(Opened::Answered(core.ask(self).await.delivered()?))
     }
 }

@@ -61,10 +61,7 @@ use crate::{
     configuration::Validates,
     store::{
         RepresentsStorePath, StoreError,
-        record::{
-            Familial, SCHEMA_VERSION, StoredConfiguration, StoredMetadata, StoredRelocation,
-            StoredSituation, Storing,
-        },
+        record::{Familial, SCHEMA_VERSION, StoredMetadata, StoredRelocation, StoredSituation},
     },
     transport::{
         TransportError,
@@ -215,8 +212,10 @@ impl ReadsDesiredSockets for Engine {
             // checked.
             [] => Ok(Vec::new()),
             [stored] => {
-                let desired: StoredConfiguration = stored.state.desired_configuration().clone();
-                let configuration: OrchestrateNexusConfiguration = desired.into_public();
+                let configuration: OrchestrateNexusConfiguration = stored
+                    .orchestrate_nexus_configuration_configuration_state
+                    .desired_configuration()
+                    .clone();
                 configuration
                     .validated()
                     .map_err(|_| StoreError::InvalidConfiguration)?;

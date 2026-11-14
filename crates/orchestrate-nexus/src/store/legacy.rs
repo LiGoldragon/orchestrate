@@ -13,35 +13,16 @@ use memory_engine::{
     Engine, EngineOpen, EngineRecord, FamilyName, QueryPlan, RecordKey, SchemaHash,
     TableDescriptor, TableName, TableReference,
 };
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 
 use super::{RepresentsStorePath, error::StoreError, record::SCHEMA_VERSION};
+use crate::memory::StoredPathLock;
 
 const LEGACY_TABLE: TableName = TableName::new("active_path_locks");
 
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyName(String);
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyPath(String);
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyPaths(Vec<LegacyPath>);
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyReason(String);
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyLock {
-    path_lock_name: LegacyName,
-    path_lock_paths: LegacyPaths,
-    path_lock_description: LegacyReason,
-}
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone)]
-struct LegacyStoredLock {
-    name: String,
-    lock: LegacyLock,
-}
-
-impl EngineRecord for LegacyStoredLock {
+/// A PathLock row is keyed by its name.
+impl EngineRecord for StoredPathLock {
     fn record_key(&self) -> RecordKey {
-        RecordKey::new(self.name.clone())
+        RecordKey::new(self.path_lock_name.0.clone())
     }
 }
 
@@ -87,12 +68,11 @@ impl CountsActivePathLocks for Engine {
             // asking must not add an empty family to its durable catalog.
             return Ok(0);
         }
-        let legacy: TableReference<LegacyStoredLock> =
-            self.register_table(TableDescriptor::new(
-                LEGACY_TABLE,
-                FamilyName::new("orchestrate-path-lock"),
-                SchemaHash::for_label("orchestrate-path-lock-v1"),
-            ))?;
+        let legacy: TableReference<StoredPathLock> = self.register_table(TableDescriptor::new(
+            LEGACY_TABLE,
+            FamilyName::new("orchestrate-path-lock"),
+            SchemaHash::for_label("orchestrate-path-lock-v1"),
+        ))?;
         Ok(self.match_records(QueryPlan::all(legacy))?.records().len())
     }
 }
@@ -105,7 +85,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::store::{OpensStore, OrchestrateStore};
+    use crate::{
+        memory::{PathLock, PathLockDescription, PathLockName, PathLockPath, PathLockPaths},
+        store::{OpensStore, OrchestrateStore},
+    };
 
     fn defaults(directory: &Path) -> OrchestrateNexusConfiguration {
         OrchestrateNexusConfiguration {
@@ -144,12 +127,12 @@ mod tests {
         engine
             .assert(Assertion::new(
                 legacy,
-                LegacyStoredLock {
-                    name: "active".to_owned(),
-                    lock: LegacyLock {
-                        path_lock_name: LegacyName("active".to_owned()),
-                        path_lock_paths: LegacyPaths(vec![LegacyPath("/owned".to_owned())]),
-                        path_lock_description: LegacyReason("legacy".to_owned()),
+                StoredPathLock {
+                    path_lock_name: PathLockName("active".to_owned()),
+                    path_lock: PathLock {
+                        path_lock_name: PathLockName("active".to_owned()),
+                        path_lock_paths: PathLockPaths(vec![PathLockPath("/owned".to_owned())]),
+                        path_lock_description: PathLockDescription("legacy".to_owned()),
                     },
                 },
             ))

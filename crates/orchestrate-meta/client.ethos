@@ -5,7 +5,7 @@ Library
   TransportError.String
   Unreachable.{ SocketPath TransportError }
   ClientFailure.[ Unreadable.Error
-                  Unreachable.Unreachable
+                  Unreachable
                   GreetingRefused.HandshakeRejection
                   ExchangeFaulted.ExchangeFault ] ]
 []

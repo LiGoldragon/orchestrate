@@ -10,8 +10,8 @@ use orchestrate_nexus::{
     core::{FoundedCore, Founding},
 };
 use signal_orchestrate::{
-    Lock, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
-    OrchestrateNexusConfiguration, Query, ReleaseRejection, Response,
+    HeldLock, Input, LockOverlap, LockRejection, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Output, ReleaseRejection,
 };
 
 struct CoreFixture {
@@ -74,11 +74,11 @@ impl Defaults for Path {
 }
 
 trait ReadsResponse {
-    fn locked(self) -> Lock;
+    fn locked(self) -> HeldLock;
 }
 
-impl ReadsResponse for Response {
-    fn locked(self) -> Lock {
+impl ReadsResponse for Output {
+    fn locked(self) -> HeldLock {
         match self {
             Self::Locked(lock) => lock,
             other => panic!("expected Locked response, found {other:?}"),
@@ -94,7 +94,7 @@ async fn locks_are_atomic_complete_and_released_by_durable_id() {
     let acquired = fixture
         .founded
         .core()
-        .ask(Query::Lock(
+        .ask(Input::Lock(
             fixture.lock_request("alpha", &[&first, &second]),
         ))
         .await
@@ -115,10 +115,10 @@ async fn locks_are_atomic_complete_and_released_by_durable_id() {
         fixture
             .founded
             .core()
-            .ask(Query::Release(acquired.lock_id))
+            .ask(Input::Release(acquired.lock_id))
             .await
             .expect("release"),
-        Response::Released(acquired),
+        Output::Released(acquired),
     );
 }
 
@@ -129,7 +129,7 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
     let held = fixture
         .founded
         .core()
-        .ask(Query::Lock(fixture.lock_request("alpha", &[&owned])))
+        .ask(Input::Lock(fixture.lock_request("alpha", &[&owned])))
         .await
         .expect("acquire")
         .locked();
@@ -139,20 +139,20 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
         fixture
             .founded
             .core()
-            .ask(Query::Lock(fixture.lock_request("alpha", &[&elsewhere])))
+            .ask(Input::Lock(fixture.lock_request("alpha", &[&elsewhere])))
             .await
             .expect("refuse duplicate name"),
-        Response::LockRejected(LockRejection::DuplicateName(held.clone())),
+        Output::LockRejected(LockRejection::DuplicateName(held.clone())),
     );
     let requested = format!("{owned}/child");
     assert_eq!(
         fixture
             .founded
             .core()
-            .ask(Query::Lock(fixture.lock_request("beta", &[&requested])))
+            .ask(Input::Lock(fixture.lock_request("beta", &[&requested])))
             .await
             .expect("refuse overlap"),
-        Response::LockRejected(LockRejection::PathOverlap(LockOverlap {
+        Output::LockRejected(LockRejection::PathOverlap(LockOverlap {
             lock_path: LockPath(requested),
             lock: held,
         })),
@@ -163,21 +163,21 @@ async fn duplicate_names_and_overlapping_paths_are_typed_refusals() {
         fixture
             .founded
             .core()
-            .ask(Query::Lock(
+            .ask(Input::Lock(
                 fixture.lock_request("gamma", &[&independent, &owned])
             ))
             .await
             .expect("refuse partial overlap"),
-        Response::LockRejected(LockRejection::PathOverlap(_)),
+        Output::LockRejected(LockRejection::PathOverlap(_)),
     ));
     assert!(matches!(
         fixture
             .founded
             .core()
-            .ask(Query::Lock(fixture.lock_request("delta", &[&independent])))
+            .ask(Input::Lock(fixture.lock_request("delta", &[&independent])))
             .await
             .expect("acquire independent"),
-        Response::Locked(_),
+        Output::Locked(_),
     ));
 }
 
@@ -188,7 +188,7 @@ async fn observe_locks_is_name_then_id_ordered() {
     let beta = fixture
         .founded
         .core()
-        .ask(Query::Lock(fixture.lock_request("beta", &[&beta_path])))
+        .ask(Input::Lock(fixture.lock_request("beta", &[&beta_path])))
         .await
         .expect("acquire beta")
         .locked();
@@ -196,7 +196,7 @@ async fn observe_locks_is_name_then_id_ordered() {
     let alpha = fixture
         .founded
         .core()
-        .ask(Query::Lock(fixture.lock_request("alpha", &[&alpha_path])))
+        .ask(Input::Lock(fixture.lock_request("alpha", &[&alpha_path])))
         .await
         .expect("acquire alpha")
         .locked();
@@ -205,10 +205,10 @@ async fn observe_locks_is_name_then_id_ordered() {
         fixture
             .founded
             .core()
-            .ask(Query::Observe(ObserveSelection::Locks))
+            .ask(Input::Observe(ObserveSelection::Locks))
             .await
             .expect("observe"),
-        Response::Observed(Observation::Locks(vec![alpha, beta])),
+        Output::Observed(Observation::Locks(vec![alpha, beta])),
     );
 }
 
@@ -229,17 +229,17 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     };
     let first = founded
         .core()
-        .ask(Query::Lock(request))
+        .ask(Input::Lock(request))
         .await
         .expect("acquire first")
         .locked();
     assert_eq!(
         founded
             .core()
-            .ask(Query::Release(first.lock_id))
+            .ask(Input::Release(first.lock_id))
             .await
             .expect("release first"),
-        Response::Released(first.clone()),
+        Output::Released(first.clone()),
     );
     // The core owns the store, so the restart below is a real one: the file
     // is released when the core stops and not a moment before.
@@ -249,7 +249,7 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     let founded = FoundedCore::found(store);
     let later = founded
         .core()
-        .ask(Query::Lock(LockRequest {
+        .ask(Input::Lock(LockRequest {
             lock_name: LockName("alpha".to_owned()),
             flow_id: FlowId("later-flow".to_owned()),
             lock_path_vector: vec![LockPath(
@@ -264,9 +264,9 @@ async fn released_ids_never_reach_a_later_lock_after_restart() {
     assert_eq!(
         founded
             .core()
-            .ask(Query::Release(first.lock_id))
+            .ask(Input::Release(first.lock_id))
             .await
             .expect("reject stale release"),
-        Response::ReleaseRejected(ReleaseRejection::UnknownLockId),
+        Output::ReleaseRejected(ReleaseRejection::UnknownLockId),
     );
 }

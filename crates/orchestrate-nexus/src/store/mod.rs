@@ -36,9 +36,10 @@ use cutover::{CarriedConfiguration, Carrying};
 use legacy::CountsActivePathLocks;
 use record::{
     CONFIGURATION_TABLE, DeclaresOrchestrateFamilies, Familial, SCHEMA_VERSION,
-    SUPERSEDED_SITUATION_TABLE, StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata,
-    StoredRelocation, StoredSituation, Storing,
+    SUPERSEDED_SITUATION_TABLE, StoredAllocator, StoredLock, StoredMetadata, StoredRelocation,
+    StoredSituation,
 };
+use signal_orchestrate::LockId;
 
 /// The single owner of the Nexus's durable state.
 pub struct OrchestrateStore {
@@ -52,7 +53,7 @@ pub struct OrchestrateStore {
     relocation: TableReference<StoredRelocation>,
     locks: TableReference<StoredLock>,
     allocator: TableReference<StoredAllocator>,
-    state: ConfigurationState<StoredConfiguration>,
+    state: ConfigurationState<OrchestrateNexusConfiguration>,
 }
 
 /// A filesystem store address represented exactly at the durable String
@@ -112,7 +113,9 @@ impl OpensStore for OrchestrateStore {
             engine.register_table(StoredMetadata::descriptor())?;
         let state = match engine.match_records(QueryPlan::all(metadata))?.records() {
             [] => engine.seed_metadata(metadata, &defaults)?,
-            [stored] => stored.state.clone(),
+            [stored] => stored
+                .orchestrate_nexus_configuration_configuration_state
+                .clone(),
             rows => return Err(StoreError::MetadataInvariant { count: rows.len() }),
         };
         // A store guarded only by its path cannot tell a move from a copy,
@@ -177,13 +180,13 @@ impl OpensStore for OrchestrateStore {
             [] => {
                 engine.assert(memory_engine::Assertion::new(
                     allocator,
-                    StoredAllocator { next_lock_id: 1 },
+                    StoredAllocator { lock_id: LockId(1) },
                 ))?;
             }
             [_] => {}
             rows => return Err(StoreError::LockIdAllocatorInvariant { count: rows.len() }),
         }
-        let configuration = state.desired_configuration().clone().into_public();
+        let configuration = state.desired_configuration().clone();
         if configuration.validated().is_err() {
             return Err(StoreError::InvalidConfiguration);
         }
@@ -209,7 +212,7 @@ trait SeedsMetadata {
         &mut self,
         metadata: TableReference<StoredMetadata>,
         defaults: &OrchestrateNexusConfiguration,
-    ) -> Result<ConfigurationState<StoredConfiguration>, StoreError>;
+    ) -> Result<ConfigurationState<OrchestrateNexusConfiguration>, StoreError>;
 }
 
 impl SeedsMetadata for Engine {
@@ -222,7 +225,7 @@ impl SeedsMetadata for Engine {
         &mut self,
         metadata: TableReference<StoredMetadata>,
         defaults: &OrchestrateNexusConfiguration,
-    ) -> Result<ConfigurationState<StoredConfiguration>, StoreError> {
+    ) -> Result<ConfigurationState<OrchestrateNexusConfiguration>, StoreError> {
         let carried = if self.catalog().is_registered(&CONFIGURATION_TABLE) {
             Some(CarriedConfiguration::read_from(self)?)
         } else {
@@ -241,21 +244,15 @@ impl SeedsMetadata for Engine {
                 state.meta_configure(carried.clone());
                 state
             }
-            None => ConfigurationState::from_default(StoredConfiguration::from_public(defaults)),
+            None => ConfigurationState::from_default(defaults.clone()),
         };
-        if state
-            .desired_configuration()
-            .clone()
-            .into_public()
-            .validated()
-            .is_err()
-        {
+        if state.desired_configuration().validated().is_err() {
             return Err(StoreError::InvalidConfiguration);
         }
         let mut commit = self.begin_atomic_commit().assert(
             metadata,
             StoredMetadata {
-                state: state.clone(),
+                orchestrate_nexus_configuration_configuration_state: state.clone(),
             },
         );
         if let Some(carried) = carried.as_ref().filter(|carried| carried.is_present()) {
@@ -273,8 +270,8 @@ impl SeedsMetadata for Engine {
 /// to be and whether its privileged surface has ever configured it.
 pub trait KeepsMetadata {
     fn table(&self) -> TableReference<StoredMetadata>;
-    fn state(&self) -> &ConfigurationState<StoredConfiguration>;
-    fn state_mut(&mut self) -> &mut ConfigurationState<StoredConfiguration>;
+    fn state(&self) -> &ConfigurationState<OrchestrateNexusConfiguration>;
+    fn state_mut(&mut self) -> &mut ConfigurationState<OrchestrateNexusConfiguration>;
     fn persist_state(&mut self) -> Result<(), StoreError>;
 }
 
@@ -283,17 +280,17 @@ impl KeepsMetadata for OrchestrateStore {
         self.metadata
     }
 
-    fn state(&self) -> &ConfigurationState<StoredConfiguration> {
+    fn state(&self) -> &ConfigurationState<OrchestrateNexusConfiguration> {
         &self.state
     }
 
-    fn state_mut(&mut self) -> &mut ConfigurationState<StoredConfiguration> {
+    fn state_mut(&mut self) -> &mut ConfigurationState<OrchestrateNexusConfiguration> {
         &mut self.state
     }
 
     fn persist_state(&mut self) -> Result<(), StoreError> {
         let record = StoredMetadata {
-            state: self.state.clone(),
+            orchestrate_nexus_configuration_configuration_state: self.state.clone(),
         };
         let table = self.metadata;
         self.engine

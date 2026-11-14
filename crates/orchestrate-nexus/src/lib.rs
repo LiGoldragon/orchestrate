@@ -3,6 +3,7 @@
 pub mod configuration;
 pub mod core;
 pub mod defaults;
+pub mod memory;
 pub mod ordinary;
 pub mod recovery;
 pub mod store;

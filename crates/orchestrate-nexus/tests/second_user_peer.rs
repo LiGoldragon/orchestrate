@@ -35,7 +35,7 @@ use std::{
     time::Duration,
 };
 
-use meta_signal_orchestrate::{PeerRejection, Response as MetaResponse};
+use meta_signal_orchestrate::{Output as MetaOutput, PeerRejection};
 use signal::{FrameCapacity, FrameReading, Restorable, Signal};
 
 /// The subordinate user id range a host grants the current user.
@@ -235,7 +235,7 @@ fn a_peer_the_kernel_reports_as_another_user_is_refused_on_the_meta_socket() {
     );
 
     let frame = std::fs::read(&frame_path).expect("the probe wrote the frame it was sent");
-    let delivery = Signal::<signal::Delivery<MetaResponse>>::from(frame)
+    let delivery = Signal::<signal::Delivery<MetaOutput>>::from(frame)
         .restore()
         .expect("restore the frame as the meta contract's delivery");
     let signal::Delivery::Answer(answer) = delivery else {
@@ -245,7 +245,7 @@ fn a_peer_the_kernel_reports_as_another_user_is_refused_on_the_meta_socket() {
     let response = answer.response;
     assert_eq!(
         response,
-        MetaResponse::PeerRefused(PeerRejection {
+        MetaOutput::PeerRefused(PeerRejection {
             peer_user_id: meta_signal_orchestrate::PeerUserId(i64::from(subordinate.first())),
         }),
         "the kernel's own answer for a second user reaches the rule, and the refusal names that user"

@@ -33,6 +33,7 @@
 use memory_engine::{
     Engine, FamilyName, QueryPlan, RecordKey, SchemaHash, TableDescriptor, TableReference,
 };
+use signal_orchestrate::OrchestrateNexusConfiguration;
 
 use super::{
     error::StoreError,
@@ -64,7 +65,7 @@ pub struct CarriedConfiguration {
 /// Reads what the previous generation stored, and clears it once carried.
 pub trait Carrying: Sized {
     fn read_from(engine: &mut Engine) -> Result<Self, StoreError>;
-    fn configuration(&self) -> Option<&StoredConfiguration>;
+    fn configuration(&self) -> Option<&OrchestrateNexusConfiguration>;
     fn table(&self) -> TableReference<StoredConfiguration>;
     fn is_present(&self) -> bool {
         self.configuration().is_some()
@@ -86,8 +87,10 @@ impl Carrying for CarriedConfiguration {
         })
     }
 
-    fn configuration(&self) -> Option<&StoredConfiguration> {
-        self.configuration.as_ref()
+    fn configuration(&self) -> Option<&OrchestrateNexusConfiguration> {
+        self.configuration
+            .as_ref()
+            .map(|stored| &stored.orchestrate_nexus_configuration)
     }
 
     fn table(&self) -> TableReference<StoredConfiguration> {
@@ -100,17 +103,17 @@ mod tests {
     use memory_engine::{Assertion, Engine, EngineOpen};
     use nexus::Configurable;
     use signal_orchestrate::{
-        ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
-        Observation, ObserveSelection, OrchestrateNexusConfiguration, OrdinarySocketPath,
+        ConfigurationPath, FlowId, HeldLock, LockId, LockName, LockPath, LockReason,
+        MetaSocketPath, Observation, ObserveSelection, OrchestrateNexusConfiguration,
+        OrdinarySocketPath,
     };
 
     use super::*;
     use crate::{
-        configuration::{ConfigurationOutcome, Configured},
         ordinary::Observes,
         store::{
             Configures, KeepsMetadata, OpensStore, OrchestrateStore,
-            record::{Familial, SCHEMA_VERSION, StoredAllocator, StoredLock, Storing},
+            record::{Familial, SCHEMA_VERSION, StoredAllocator, StoredLock},
         },
     };
 
@@ -121,7 +124,7 @@ mod tests {
     ///
     /// The shape is the one witnessed in `5f016531:src/store.rs`, the deployed
     /// 0.30.0: the same three family names, schema labels and record fields.
-    fn previous_generation_store(store_path: &std::path::Path, held: &Lock) {
+    fn previous_generation_store(store_path: &std::path::Path, held: &HeldLock) {
         let mut engine = Engine::open(EngineOpen::new(store_path, SCHEMA_VERSION)).expect("open");
         let configurations = engine
             .register_table(StoredConfiguration::descriptor())
@@ -130,8 +133,14 @@ mod tests {
             .assert(Assertion::new(
                 configurations,
                 StoredConfiguration {
-                    ordinary_socket: "/run/previous-ordinary.sock".to_owned(),
-                    meta_socket: "/run/previous-meta.sock".to_owned(),
+                    orchestrate_nexus_configuration: OrchestrateNexusConfiguration {
+                        ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(
+                            "/run/previous-ordinary.sock".to_owned(),
+                        )),
+                        meta_socket_path: MetaSocketPath(ConfigurationPath(
+                            "/run/previous-meta.sock".to_owned(),
+                        )),
+                    },
                 },
             ))
             .expect("write the previous configuration");
@@ -139,7 +148,12 @@ mod tests {
             .register_table(StoredLock::descriptor())
             .expect("register the Lock family");
         engine
-            .assert(Assertion::new(locks, StoredLock::from_public(held)))
+            .assert(Assertion::new(
+                locks,
+                StoredLock {
+                    held_lock: held.clone(),
+                },
+            ))
             .expect("write a held Lock");
         let allocator = engine
             .register_table(StoredAllocator::descriptor())
@@ -147,7 +161,7 @@ mod tests {
         engine
             .assert(Assertion::new(
                 allocator,
-                StoredAllocator { next_lock_id: 8 },
+                StoredAllocator { lock_id: LockId(8) },
             ))
             .expect("write the allocator");
     }
@@ -156,7 +170,7 @@ mod tests {
     fn a_previous_generation_store_carries_its_configuration_and_its_locks() {
         let directory = tempfile::tempdir().expect("temporary store");
         let store_path = directory.path().join("previous.memory");
-        let held = Lock {
+        let held = HeldLock {
             lock_id: LockId(7),
             lock_name: LockName("held".to_owned()),
             flow_id: FlowId("flow-857335".to_owned()),
@@ -224,7 +238,7 @@ mod tests {
         let store_path = directory.path().join("previous.memory");
         previous_generation_store(
             &store_path,
-            &Lock {
+            &HeldLock {
                 lock_id: LockId(7),
                 lock_name: LockName("held".to_owned()),
                 flow_id: FlowId("flow-857335".to_owned()),
@@ -255,12 +269,12 @@ mod tests {
             store
                 .ordinary_configure(repointed.clone())
                 .expect("ordinary Configure against a carried store"),
-            signal_orchestrate::Response::ConfigurationRefused(
+            Err(signal_orchestrate::Output::ConfigurationRefused(
                 signal_orchestrate::ConfigurationRejection {
                     configuration_rejection_reason:
                         signal_orchestrate::ConfigurationRejectionReason::MetaConfigureOccurred,
                 }
-            ),
+            )),
             "an ordinary peer cannot repoint the sockets of a Nexus carried across the cutover"
         );
         assert_eq!(
@@ -274,17 +288,18 @@ mod tests {
             "and the refused configuration did not take"
         );
 
-        let ConfigurationOutcome::Configured(Configured::Reopened(_)) = store
+        let reopened = store
             .reverse_meta_configuration()
-            .expect("the meta socket reopens ordinary Configure")
-        else {
-            panic!("the reversal is the meta socket's own operation");
-        };
-        assert!(matches!(
+            .expect("the meta socket reopens ordinary Configure");
+        assert!(
+            !reopened.meta_configure_done.0,
+            "the reversal is the meta socket's own operation"
+        );
+        assert!(
             store
                 .ordinary_configure(repointed)
-                .expect("ordinary Configure after the reversal"),
-            signal_orchestrate::Response::ConfigurationAccepted(_)
-        ));
+                .expect("ordinary Configure after the reversal")
+                .is_ok()
+        );
     }
 }

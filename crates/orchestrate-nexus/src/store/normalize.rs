@@ -6,12 +6,9 @@ use std::{
 };
 
 use memory_engine::RecordPredicate;
-use signal_orchestrate::{Lock, LockId, LockPath, LockRequest};
+use signal_orchestrate::{HeldLock, LockId, LockPath, LockRequest};
 
-use super::{
-    error::StoreError,
-    record::{StoredLock, Storing},
-};
+use super::{error::StoreError, record::StoredLock};
 
 /// A Lock request whose path values have passed Nexus normalization.
 ///
@@ -25,9 +22,9 @@ pub struct NormalizedLockRequest {
 
 pub trait NormalizesLockRequests: Sized {
     fn from_request(request: LockRequest) -> Result<Self, StoreError>;
-    fn duplicates_name_of(&self, lock: &Lock) -> bool;
-    fn overlapping_path_of(&self, lock: &Lock) -> Option<String>;
-    fn into_lock(self, lock_id: i64) -> Lock;
+    fn duplicates_name_of(&self, lock: &HeldLock) -> bool;
+    fn overlapping_path_of(&self, lock: &HeldLock) -> Option<String>;
+    fn into_lock(self, lock_id: LockId) -> HeldLock;
 }
 
 impl NormalizesLockRequests for NormalizedLockRequest {
@@ -46,11 +43,11 @@ impl NormalizesLockRequests for NormalizedLockRequest {
         Ok(Self { request })
     }
 
-    fn duplicates_name_of(&self, lock: &Lock) -> bool {
+    fn duplicates_name_of(&self, lock: &HeldLock) -> bool {
         self.request.lock_name == lock.lock_name
     }
 
-    fn overlapping_path_of(&self, lock: &Lock) -> Option<String> {
+    fn overlapping_path_of(&self, lock: &HeldLock) -> Option<String> {
         self.request.lock_path_vector.iter().find_map(|requested| {
             lock.lock_path_vector.iter().find_map(|held| {
                 NormalizedLockPath::from_normalized(&requested.0)
@@ -60,9 +57,9 @@ impl NormalizesLockRequests for NormalizedLockRequest {
         })
     }
 
-    fn into_lock(self, lock_id: i64) -> Lock {
-        Lock {
-            lock_id: LockId(lock_id),
+    fn into_lock(self, lock_id: LockId) -> HeldLock {
+        HeldLock {
+            lock_id,
             lock_name: self.request.lock_name,
             flow_id: self.request.flow_id,
             lock_path_vector: self.request.lock_path_vector,
@@ -76,8 +73,8 @@ impl NormalizesLockRequests for NormalizedLockRequest {
 /// overlaps a path it asks for. Lock acquisition reads only those.
 impl RecordPredicate<StoredLock> for NormalizedLockRequest {
     fn admits(&self, held: &StoredLock) -> bool {
-        let held = held.clone().into_public();
-        self.duplicates_name_of(&held) || self.overlapping_path_of(&held).is_some()
+        self.duplicates_name_of(&held.held_lock)
+            || self.overlapping_path_of(&held.held_lock).is_some()
     }
 }
 
@@ -164,7 +161,7 @@ mod tests {
         let normalized = NormalizedLockRequest::from_request(request(&["/a/./b//c"]))
             .expect("normalize a lexical path");
         assert_eq!(
-            normalized.into_lock(1).lock_path_vector,
+            normalized.into_lock(LockId(1)).lock_path_vector,
             vec![LockPath("/a/b/c".to_owned())]
         );
         assert!(matches!(
@@ -191,7 +188,7 @@ mod tests {
 
     #[test]
     fn overlap_is_ancestry_in_either_direction_and_the_root_covers_everything() {
-        let held = Lock {
+        let held = HeldLock {
             lock_id: LockId(1),
             lock_name: LockName("held".to_owned()),
             flow_id: FlowId("flow".to_owned()),

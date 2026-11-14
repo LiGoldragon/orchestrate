@@ -3,14 +3,14 @@ use std::{
 };
 
 use kameo::actor::Spawn;
-use meta_signal_orchestrate::{PeerRejection, Query as MetaQuery, Response as MetaResponse};
+use meta_signal_orchestrate::{Input as MetaInput, Output as MetaOutput, PeerRejection};
 use signal::{
     Contracted, FrameReading, FrameWriting, Handshake, HandshakeReceipt, HandshakeRejection,
     Opening as ExchangeOpening,
 };
 use signal_orchestrate::{
-    ConfigurationPath, MetaSocketPath, OrchestrateNexusConfiguration, OrdinarySocketPath,
-    Query as OrdinaryQuery,
+    ConfigurationPath, Input as OrdinaryInput, MetaSocketPath, OrchestrateNexusConfiguration,
+    OrdinarySocketPath,
 };
 use tokio::task::JoinHandle;
 
@@ -50,7 +50,7 @@ impl ServesOnePrivilegedConnection for tempfile::TempDir {
         let (socket_path, listener, core) = self.one_socket("privileged.sock");
         let handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept one connection");
-            let session = Session::<MetaQuery>::opened(
+            let session = Session::<MetaInput>::opened(
                 stream,
                 SocketAuthority::Privileged,
                 SocketOwner::named(owner),
@@ -64,7 +64,7 @@ impl ServesOnePrivilegedConnection for tempfile::TempDir {
         let (socket_path, listener, core) = self.one_socket("ordinary-privileged.sock");
         let handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("accept one connection");
-            let session = Session::<OrdinaryQuery>::opened(
+            let session = Session::<OrdinaryInput>::opened(
                 stream,
                 SocketAuthority::Privileged,
                 SocketOwner::named(owner),
@@ -109,11 +109,11 @@ impl ServesOnePrivilegedConnection for tempfile::TempDir {
 
 /// One connection from this process, which never writes a query.
 trait Probes {
-    fn refusal(self) -> (MetaResponse, Vec<u8>);
+    fn refusal(self) -> (MetaOutput, Vec<u8>);
 }
 
 impl Probes for PathBuf {
-    fn refusal(self) -> (MetaResponse, Vec<u8>) {
+    fn refusal(self) -> (MetaOutput, Vec<u8>) {
         let mut stream = StandardUnixStream::connect(&self).expect("connect");
         // Bounded, so a frame the session never sends fails the test
         // rather than hanging the harness.
@@ -123,7 +123,7 @@ impl Probes for PathBuf {
         let body = stream
             .read_frame(FrameCapacity::default())
             .expect("read the refusal frame");
-        let delivery = Signal::<Delivery<MetaResponse>>::from(Vec::from(body))
+        let delivery = Signal::<Delivery<MetaOutput>>::from(Vec::from(body))
             .restore()
             .expect("restore the refusal");
         let Delivery::Answer(answer) = delivery else {
@@ -152,7 +152,7 @@ async fn a_peer_who_is_not_the_socket_owner_is_refused_in_vocabulary_and_closed(
         .expect("run the peer");
     assert_eq!(
         response,
-        MetaResponse::PeerRefused(PeerRejection {
+        MetaOutput::PeerRefused(PeerRejection {
             peer_user_id: meta_signal_orchestrate::PeerUserId(i64::from(us)),
         }),
         "the peer is named a refusal in vocabulary, not left to guess at a dropped connection"
@@ -270,21 +270,21 @@ async fn the_socket_owner_reaches_the_contract_on_the_same_path() {
     let (greeted, answered) = tokio::task::spawn_blocking(move || {
         let mut peer = Peer::connected(&socket_path);
         let greeted = peer
-            .send(&Dispatch::<MetaQuery>::Greet(MetaQuery::greeting()))
-            .hear::<MetaResponse>();
+            .send(&Dispatch::<MetaInput>::Greet(MetaInput::greeting()))
+            .hear::<MetaOutput>();
         let answered = peer
             .send(&Dispatch::Open(ExchangeOpening {
                 exchange: signal::ExchangeId(1),
-                query: MetaQuery::ReverseMetaConfiguration,
+                query: MetaInput::ReverseMetaConfiguration,
             }))
-            .hear::<MetaResponse>();
+            .hear::<MetaOutput>();
         (greeted, answered)
     })
     .await
     .expect("run the peer");
     assert_eq!(
         greeted,
-        Delivery::Greeted(HandshakeReceipt::Greeted(MetaQuery::contract_digest()))
+        Delivery::Greeted(HandshakeReceipt::Greeted(MetaInput::contract_digest()))
     );
     let Delivery::Answer(answer) = answered else {
         panic!("the owner is answered on the exchange it opened, found {answered:?}");
@@ -293,7 +293,7 @@ async fn the_socket_owner_reaches_the_contract_on_the_same_path() {
     assert!(
         matches!(
             answer.response,
-            MetaResponse::OrdinaryConfigurationReopened(_)
+            MetaOutput::OrdinaryConfigurationReopened(_)
         ),
         "the owner is admitted and answered on the contract, found {:?}",
         answer.response
@@ -312,8 +312,8 @@ async fn a_peer_greeting_with_another_contract_is_refused_and_closed() {
     let (greeted, rest) = tokio::task::spawn_blocking(move || {
         let mut peer = Peer::connected(&socket_path);
         let greeted = peer
-            .send(&Dispatch::<OrdinaryQuery>::Greet(OrdinaryQuery::greeting()))
-            .hear::<MetaResponse>();
+            .send(&Dispatch::<OrdinaryInput>::Greet(OrdinaryInput::greeting()))
+            .hear::<MetaOutput>();
         (greeted, peer.rest())
     })
     .await
@@ -321,7 +321,7 @@ async fn a_peer_greeting_with_another_contract_is_refused_and_closed() {
     assert_eq!(
         greeted,
         Delivery::Greeted(HandshakeReceipt::GreetingRefused(
-            HandshakeRejection::ContractMismatch(MetaQuery::contract_digest())
+            HandshakeRejection::ContractMismatch(MetaInput::contract_digest())
         ))
     );
     assert!(rest.is_empty(), "nothing follows a refused greeting");
@@ -340,9 +340,9 @@ async fn an_exchange_opened_before_the_greeting_is_a_connection_fault() {
         let heard = peer
             .send(&Dispatch::Open(ExchangeOpening {
                 exchange: signal::ExchangeId(1),
-                query: MetaQuery::ReverseMetaConfiguration,
+                query: MetaInput::ReverseMetaConfiguration,
             }))
-            .hear::<MetaResponse>();
+            .hear::<MetaOutput>();
         (heard, peer.rest())
     })
     .await
@@ -365,9 +365,9 @@ async fn a_repeated_greeting_is_a_connection_fault() {
     let heard = tokio::task::spawn_blocking(move || {
         let mut peer = Peer::connected(&socket_path);
         let greeting =
-            Dispatch::<MetaQuery>::Greet(Handshake::of_source(meta_signal_orchestrate::ETHOS));
-        peer.send(&greeting).hear::<MetaResponse>();
-        peer.send(&greeting).hear::<MetaResponse>()
+            Dispatch::<MetaInput>::Greet(Handshake::of_source(meta_signal_orchestrate::ETHOS));
+        peer.send(&greeting).hear::<MetaOutput>();
+        peer.send(&greeting).hear::<MetaOutput>()
     })
     .await
     .expect("run the peer");

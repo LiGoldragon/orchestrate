@@ -20,8 +20,8 @@ use signal::{
     HandshakeReceipt, Opening, Restorable, Signal, Signalizable,
 };
 use signal_orchestrate::{
-    LockRequest, Observation, ObserveSelection, OrchestrateNexusConfiguration,
-    Query as OrdinaryQuery, Response as OrdinaryResponse,
+    Input as OrdinaryInput, LockRequest, Observation, ObserveSelection,
+    OrchestrateNexusConfiguration, Output as OrdinaryOutput,
 };
 use tokio::sync::oneshot;
 
@@ -50,16 +50,16 @@ impl Defaults for Path {
 /// One exchange on the ordinary socket, framed with the crate the Nexus
 /// frames with.
 trait Asks {
-    fn asks(&self, query: &OrdinaryQuery) -> OrdinaryResponse;
+    fn asks(&self, query: &OrdinaryInput) -> OrdinaryOutput;
 }
 
 impl Asks for str {
-    fn asks(&self, query: &OrdinaryQuery) -> OrdinaryResponse {
+    fn asks(&self, query: &OrdinaryInput) -> OrdinaryOutput {
         let mut stream = UnixStream::connect(self).expect("connect the ordinary socket");
         stream
             .set_read_timeout(Some(Duration::from_secs(10)))
             .expect("bound the wait for a frame");
-        let mut hear = |dispatch: Dispatch<OrdinaryQuery>| {
+        let mut hear = |dispatch: Dispatch<OrdinaryInput>| {
             let signal = dispatch.signalize().expect("archive the dispatch");
             stream
                 .write_frame(&signal, FrameCapacity::default())
@@ -67,13 +67,13 @@ impl Asks for str {
             let body = stream
                 .read_frame(FrameCapacity::default())
                 .expect("read the delivery");
-            Signal::<Delivery<OrdinaryResponse>>::from(Vec::from(body))
+            Signal::<Delivery<OrdinaryOutput>>::from(Vec::from(body))
                 .restore()
                 .expect("restore the delivery")
         };
         assert_eq!(
-            hear(Dispatch::Greet(OrdinaryQuery::greeting())),
-            Delivery::Greeted(HandshakeReceipt::Greeted(OrdinaryQuery::contract_digest()))
+            hear(Dispatch::Greet(OrdinaryInput::greeting())),
+            Delivery::Greeted(HandshakeReceipt::Greeted(OrdinaryInput::contract_digest()))
         );
         match hear(Dispatch::Open(Opening {
             exchange: FIRST_EXCHANGE,
@@ -97,7 +97,7 @@ async fn a_stopped_nexus_leaves_its_store_and_its_socket_paths_to_the_next_one()
 
     let ordinary = configuration.ordinary_socket_path.clone();
     let held = {
-        let request = OrdinaryQuery::Lock(LockRequest {
+        let request = OrdinaryInput::Lock(LockRequest {
             lock_name: LockName("survives".to_owned()),
             flow_id: FlowId("test-flow".to_owned()),
             lock_path_vector: vec![LockPath(
@@ -110,7 +110,7 @@ async fn a_stopped_nexus_leaves_its_store_and_its_socket_paths_to_the_next_one()
             .await
             .expect("run the client")
         {
-            OrdinaryResponse::Locked(lock) => lock,
+            OrdinaryOutput::Locked(lock) => lock,
             other => panic!("expected Locked, found {other:?}"),
         }
     };
@@ -137,13 +137,13 @@ async fn a_stopped_nexus_leaves_its_store_and_its_socket_paths_to_the_next_one()
             .0
             .0
             .as_str()
-            .asks(&OrdinaryQuery::Observe(ObserveSelection::Locks))
+            .asks(&OrdinaryInput::Observe(ObserveSelection::Locks))
     })
     .await
     .expect("run the client");
     assert_eq!(
         observed,
-        OrdinaryResponse::Observed(Observation::Locks(vec![held])),
+        OrdinaryOutput::Observed(Observation::Locks(vec![held])),
         "and the Lock it wrote before it stopped is there to be served"
     );
 

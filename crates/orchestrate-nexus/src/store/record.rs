@@ -1,20 +1,21 @@
-//! The durable records the Nexus keeps, and their public counterparts.
+//! The durable records the Nexus keeps: their keys, their families, and the
+//! open that declares them.
 //!
-//! Three families carry ordinary state — the standard Nexus metadata tree,
-//! the Locks, and the Lock id allocator. The metadata tree is the one the
-//! Nexus keeps about itself: the desired configuration together with the
-//! durable fact of whether the privileged Configure was ever done. Its
-//! lifecycle rule is the shared one, from the `nexus` library.
+//! The records themselves are declared in `memory.ethos` and generated into
+//! `crate::memory`. Three families carry ordinary state — the standard Nexus
+//! metadata tree, the Locks, and the Lock id allocator. The metadata tree is
+//! the one the Nexus keeps about itself: the desired configuration together
+//! with the durable fact of whether the privileged Configure was ever done.
+//! Its lifecycle rule is the shared one, from the `nexus` library.
 
 use memory_engine::{
     EngineOpen, EngineRecord, FamilyName, RecordKey, SchemaHash, SchemaVersion, TableDescriptor,
     TableName,
 };
-use nexus::{ConfigurationState, Relocation, Situation};
-use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
-use signal_orchestrate::{
-    ConfigurationPath, FlowId, Lock, LockId, LockName, LockPath, LockReason, MetaSocketPath,
-    OrchestrateNexusConfiguration, OrdinarySocketPath,
+
+pub use crate::memory::{
+    StoredAllocator, StoredConfiguration, StoredLock, StoredMetadata, StoredRelocation,
+    StoredSituation,
 };
 
 pub const SCHEMA_VERSION: SchemaVersion = SchemaVersion::new(1);
@@ -36,19 +37,7 @@ pub const SITUATION_KEY: &str = "situation";
 pub const RELOCATION_KEY: &str = "relocation";
 pub const ALLOCATOR_KEY: &str = "next";
 
-/// The socket paths the Nexus binds, as they are stored.
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, Debug, PartialEq, Eq)]
-pub struct StoredConfiguration {
-    pub ordinary_socket: String,
-    pub meta_socket: String,
-}
-
 /// The standard metadata tree: everything standard about this Nexus.
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, Debug, PartialEq, Eq)]
-pub struct StoredMetadata {
-    pub state: ConfigurationState<StoredConfiguration>,
-}
-
 impl EngineRecord for StoredMetadata {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(METADATA_KEY)
@@ -64,11 +53,6 @@ impl EngineRecord for StoredMetadata {
 /// configuration. Keeping them apart also means a store written before this
 /// family existed simply has no row here, rather than a metadata tree that
 /// has to be migrated to a new shape.
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, Debug, PartialEq, Eq)]
-pub struct StoredSituation {
-    pub situation: Situation,
-}
-
 impl EngineRecord for StoredSituation {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(SITUATION_KEY)
@@ -82,37 +66,20 @@ impl EngineRecord for StoredSituation {
 /// can hear from — the store file itself, with no Nexus running — and read
 /// exactly once, by the open it was written for. There is at most one,
 /// because a store has at most one move it has not yet completed.
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, Debug, PartialEq, Eq)]
-pub struct StoredRelocation {
-    pub relocation: Relocation,
-}
-
 impl EngineRecord for StoredRelocation {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(RELOCATION_KEY)
     }
 }
 
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
-pub struct StoredLock {
-    pub lock_id: i64,
-    pub lock_name: String,
-    pub flow_id: String,
-    pub paths: Vec<String>,
-    pub reason: String,
-}
-
+/// A held Lock is keyed by its LockId, the one release target.
 impl EngineRecord for StoredLock {
     fn record_key(&self) -> RecordKey {
-        RecordKey::new(self.lock_id.to_string())
+        RecordKey::new(self.held_lock.lock_id.0.to_string())
     }
 }
 
-#[derive(Archive, RkyvSerialize, RkyvDeserialize, Clone, PartialEq, Eq)]
-pub struct StoredAllocator {
-    pub next_lock_id: i64,
-}
-
+/// The allocator holds the LockId the next Lock takes.
 impl EngineRecord for StoredAllocator {
     fn record_key(&self) -> RecordKey {
         RecordKey::new(ALLOCATOR_KEY)
@@ -191,54 +158,5 @@ impl DeclaresOrchestrateFamilies for EngineOpen {
             .with_family(&StoredRelocation::descriptor())
             .with_family(&StoredLock::descriptor())
             .with_family(&StoredAllocator::descriptor())
-    }
-}
-
-/// A durable record and the public value it carries are the same fact in two
-/// places; the conversion belongs to the durable side.
-pub trait Storing<Public>: Sized {
-    fn from_public(value: &Public) -> Self;
-    fn into_public(self) -> Public;
-}
-
-impl Storing<OrchestrateNexusConfiguration> for StoredConfiguration {
-    fn from_public(value: &OrchestrateNexusConfiguration) -> Self {
-        Self {
-            ordinary_socket: value.ordinary_socket_path.0.0.clone(),
-            meta_socket: value.meta_socket_path.0.0.clone(),
-        }
-    }
-
-    fn into_public(self) -> OrchestrateNexusConfiguration {
-        OrchestrateNexusConfiguration {
-            ordinary_socket_path: OrdinarySocketPath(ConfigurationPath(self.ordinary_socket)),
-            meta_socket_path: MetaSocketPath(ConfigurationPath(self.meta_socket)),
-        }
-    }
-}
-
-impl Storing<Lock> for StoredLock {
-    fn from_public(value: &Lock) -> Self {
-        Self {
-            lock_id: value.lock_id.0,
-            lock_name: value.lock_name.0.clone(),
-            flow_id: value.flow_id.0.clone(),
-            paths: value
-                .lock_path_vector
-                .iter()
-                .map(|path| path.0.clone())
-                .collect(),
-            reason: value.lock_reason.0.clone(),
-        }
-    }
-
-    fn into_public(self) -> Lock {
-        Lock {
-            lock_id: LockId(self.lock_id),
-            lock_name: LockName(self.lock_name),
-            flow_id: FlowId(self.flow_id),
-            lock_path_vector: self.paths.into_iter().map(LockPath).collect(),
-            lock_reason: LockReason(self.reason),
-        }
     }
 }

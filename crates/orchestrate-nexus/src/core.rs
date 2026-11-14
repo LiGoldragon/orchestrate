@@ -32,14 +32,18 @@ use kameo::{
     mailbox,
     message::{Context, Message},
 };
-use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
-use signal_orchestrate::{
-    Observation, ObserveSelection, Query as OrdinaryQuery, Response as OrdinaryResponse,
+use meta_signal_orchestrate::{
+    Answerable as AnswerableMeta, Input as MetaInput, Output as MetaOutput,
 };
+use signal_orchestrate::{
+    Answerable as AnswerableOrdinary, ConfigurationReceipt, ConfigurationRejection,
+    ConfigurationRejectionReason, HeldLock, Input as OrdinaryInput, LockId, LockRequest,
+    Observation, ObserveSelection, OrchestrateNexusConfiguration, Output as OrdinaryOutput,
+};
+use std::cell::RefCell;
 use tokio::sync::broadcast;
 
 use crate::{
-    configuration::AnswersMeta,
     ordinary::{Locks, Observes, Releases},
     store::{Configures, OrchestrateStore, StoreError},
 };
@@ -127,49 +131,154 @@ impl Actor for NexusCore {
     }
 }
 
-impl Message<OrdinaryQuery> for NexusCore {
-    type Reply = Result<OrdinaryResponse, StoreError>;
+/// Each input is answered through its contract's generated dispatch,
+/// `input.answer(&answerer)`; a Lock taken or released is then announced to
+/// every subscriber.
+impl Message<OrdinaryInput> for NexusCore {
+    type Reply = Result<OrdinaryOutput, StoreError>;
 
     async fn handle(
         &mut self,
-        entering: OrdinaryQuery,
+        entering: OrdinaryInput,
         _: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let response = match entering {
-            OrdinaryQuery::Configure(configuration) => {
-                self.store.ordinary_configure(configuration)?
-            }
-            OrdinaryQuery::Lock(request) => self.store.lock(request)?,
-            OrdinaryQuery::Release(lock_id) => self.store.release(lock_id.0)?,
-            OrdinaryQuery::Observe(selection) => {
-                OrdinaryResponse::Observed(self.store.observe(selection)?)
-            }
-        };
+        let answerer = Answerer::over(&mut self.store);
+        let output = entering.answer(&answerer);
+        let output = answerer.concluded(output)?;
         if matches!(
-            response,
-            OrdinaryResponse::Locked(_) | OrdinaryResponse::Released(_)
+            output,
+            OrdinaryOutput::Locked(_) | OrdinaryOutput::Released(_)
         ) {
             let _ = self
                 .announcements
                 .send(self.store.observe(ObserveSelection::Locks)?);
         }
-        Ok(response)
+        Ok(output)
     }
 }
 
-impl Message<MetaQuery> for NexusCore {
-    type Reply = Result<MetaResponse, StoreError>;
+impl Message<MetaInput> for NexusCore {
+    type Reply = Result<MetaOutput, StoreError>;
 
     async fn handle(
         &mut self,
-        entering: MetaQuery,
+        entering: MetaInput,
         _: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let outcome = match entering {
-            MetaQuery::Configure(configuration) => self.store.meta_configure(configuration)?,
-            MetaQuery::ReverseMetaConfiguration => self.store.reverse_meta_configuration()?,
-        };
-        Ok(outcome.meta_response())
+        let answerer = Answerer::over(&mut self.store);
+        let output = entering.answer(&answerer);
+        answerer.concluded(output)
+    }
+}
+
+/// One input being answered against the store the core owns.
+///
+/// The generated `Answering` lends each capability `&self` and lets it refuse
+/// only with its contract's `Output`, so the store is reached through a cell,
+/// and a store that fails to commit, the one answer neither contract has an
+/// output for, is held here and answers the input in place of the output the
+/// dispatch returned. That output is `Unsent` and is never delivered.
+struct Answerer<'core> {
+    store: RefCell<&'core mut OrchestrateStore>,
+    failure: RefCell<Option<StoreError>>,
+}
+
+trait Answers<'core>: Sized {
+    fn over(store: &'core mut OrchestrateStore) -> Self;
+    /// Runs one store transition, holding its failure if it fails.
+    #[allow(clippy::result_large_err)]
+    fn attempt<Carried, Refusal: Unsent>(
+        &self,
+        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Refusal>, StoreError>,
+    ) -> Result<Carried, Refusal>;
+    /// The dispatch's output, or the store failure that answers in its place.
+    fn concluded<Answered>(self, output: Answered) -> Result<Answered, StoreError>;
+}
+
+impl<'core> Answers<'core> for Answerer<'core> {
+    fn over(store: &'core mut OrchestrateStore) -> Self {
+        Self {
+            store: RefCell::new(store),
+            failure: RefCell::new(None),
+        }
+    }
+
+    fn attempt<Carried, Refusal: Unsent>(
+        &self,
+        transition: impl FnOnce(&mut OrchestrateStore) -> Result<Result<Carried, Refusal>, StoreError>,
+    ) -> Result<Carried, Refusal> {
+        let mut store = self.store.borrow_mut();
+        match transition(&mut store) {
+            Ok(answered) => answered,
+            Err(failure) => {
+                self.failure.replace(Some(failure));
+                Err(Refusal::unsent())
+            }
+        }
+    }
+
+    fn concluded<Answered>(self, output: Answered) -> Result<Answered, StoreError> {
+        match self.failure.into_inner() {
+            Some(failure) => Err(failure),
+            None => Ok(output),
+        }
+    }
+}
+
+/// The output an input is left with when the store fails beneath it; the
+/// failure answers in its place, so it is never sent.
+trait Unsent {
+    fn unsent() -> Self;
+}
+
+impl Unsent for OrdinaryOutput {
+    fn unsent() -> Self {
+        Self::ConfigurationRefused(ConfigurationRejection {
+            configuration_rejection_reason: ConfigurationRejectionReason::InvalidConfiguration,
+        })
+    }
+}
+
+impl Unsent for MetaOutput {
+    fn unsent() -> Self {
+        Self::ConfigurationRejected(meta_signal_orchestrate::ConfigurationRejection {
+            configuration_rejection_reason:
+                meta_signal_orchestrate::ConfigurationRejectionReason::InvalidConfiguration,
+        })
+    }
+}
+
+impl signal_orchestrate::Answering for Answerer<'_> {
+    fn configure(
+        &self,
+        orchestrate_nexus_configuration: &OrchestrateNexusConfiguration,
+    ) -> Result<ConfigurationReceipt, OrdinaryOutput> {
+        self.attempt(|store| store.ordinary_configure(orchestrate_nexus_configuration.clone()))
+    }
+
+    fn lock(&self, lock_request: &LockRequest) -> Result<HeldLock, OrdinaryOutput> {
+        self.attempt(|store| store.lock(lock_request.clone()))
+    }
+
+    fn release(&self, lock_id: &LockId) -> Result<HeldLock, OrdinaryOutput> {
+        self.attempt(|store| store.release(*lock_id))
+    }
+
+    fn observe(&self, observe_selection: &ObserveSelection) -> Result<Observation, OrdinaryOutput> {
+        self.attempt(|store| store.observe(observe_selection.clone()).map(Ok))
+    }
+}
+
+impl meta_signal_orchestrate::Answering for Answerer<'_> {
+    fn configure(
+        &self,
+        orchestrate_nexus_configuration: &OrchestrateNexusConfiguration,
+    ) -> Result<ConfigurationReceipt, MetaOutput> {
+        self.attempt(|store| store.meta_configure(orchestrate_nexus_configuration.clone()))
+    }
+
+    fn reverse_meta_configuration(&self) -> Result<ConfigurationReceipt, MetaOutput> {
+        self.attempt(|store| store.reverse_meta_configuration().map(Ok))
     }
 }
 

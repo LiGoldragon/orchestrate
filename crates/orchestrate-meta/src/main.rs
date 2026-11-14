@@ -4,13 +4,13 @@
 mod generated_client;
 
 use datom_codec::{Actualizing, Budget, Datomizable, Potential};
-use generated_client::{ClientFailure, SocketPath, Unreachable};
-use meta_signal_orchestrate::{Query, Response};
+use generated_client::{ClientFailure, SocketPath, TransportError, Unreachable};
+use meta_signal_orchestrate::{Input, Output};
 use protos::{Compactable, Protosizable, ReaderBudget};
 use signal::{
-    Conclusion, Contracted, Delivery, Dispatch, ExchangeFault, ExchangeLedger, ExchangeMinting,
-    Exchanged, FrameCapacity, FrameReading, FrameWriting, Greeted, HandshakeReceipt,
-    HandshakeRejection, Opening, Restorable, Signal, Signalizable,
+    Conclusion, Contracted, Delivery, Dispatch, ExchangeLedger, ExchangeMinting, Exchanged,
+    FrameCapacity, FrameReading, FrameWriting, Greeted, HandshakeReceipt, Opening, Restorable,
+    Signal, Signalizable,
 };
 use std::{env, os::unix::net::UnixStream, process::ExitCode};
 
@@ -77,12 +77,12 @@ impl ClientConfiguring for Client {
 
 trait Querying {
     fn query_source(&self, source: String) -> ExitCode;
-    fn query(&self, query: &Query) -> Result<Response, ClientFailure>;
+    fn query(&self, input: &Input) -> Result<Output, ClientFailure>;
 }
 
 impl Querying for Client {
     fn query_source(&self, source: String) -> ExitCode {
-        let mut potential = Potential::<Query>::from(source);
+        let mut potential = Potential::<Input>::from(source);
         let mut budget = Budget {
             remaining: 10_000,
             reader: ReaderBudget::try_from(10_000usize).unwrap(),
@@ -92,7 +92,7 @@ impl Querying for Client {
         let result = potential
             .actualize(&mut budget)
             .map_err(ClientFailure::Unreadable)
-            .and_then(|query| self.query(&query));
+            .and_then(|input| self.query(&input));
         match result {
             Ok(response) => {
                 println!("{}", response.datom_text());
@@ -105,17 +105,9 @@ impl Querying for Client {
         }
     }
 
-    fn query(&self, query: &Query) -> Result<Response, ClientFailure> {
-        SignalConnection::connect(&self.socket_path)
-            .and_then(|mut connection| connection.ask(query.clone()))
-            .map_err(|error| match error {
-                TransportError::Refused(rejection) => ClientFailure::GreetingRefused(rejection),
-                TransportError::Faulted(fault) => ClientFailure::ExchangeFaulted(fault),
-                error => ClientFailure::Unreachable(Unreachable {
-                    socket_path: SocketPath(self.socket_path.clone()),
-                    transport_error: generated_client::TransportError(error.to_string()),
-                }),
-            })
+    fn query(&self, input: &Input) -> Result<Output, ClientFailure> {
+        SignalConnection::connect(SocketPath(self.socket_path.clone()))
+            .and_then(|mut connection| connection.ask(input.clone()))
     }
 }
 
@@ -133,20 +125,44 @@ where
 }
 
 /// One connection, greeted once, carrying the one exchange this CLI opens.
+///
+/// Every failure on it is the generated `ClientFailure`: a refused greeting
+/// and a faulted exchange as themselves, and anything else that kept the
+/// answer from arriving as `Unreachable`, the socket beside the
+/// `TransportError` text of what failed.
 struct SignalConnection {
+    socket_path: SocketPath,
     stream: UnixStream,
     ledger: ExchangeLedger,
 }
 
 trait Connecting: Sized {
-    fn connect(socket_path: &str) -> Result<Self, TransportError>;
+    fn connect(socket_path: SocketPath) -> Result<Self, ClientFailure>;
 }
 
 impl Connecting for SignalConnection {
-    fn connect(socket_path: &str) -> Result<Self, TransportError> {
-        Ok(Self {
-            stream: UnixStream::connect(socket_path)?,
-            ledger: ExchangeLedger::default(),
+    fn connect(socket_path: SocketPath) -> Result<Self, ClientFailure> {
+        match UnixStream::connect(&socket_path.0) {
+            Ok(stream) => Ok(Self {
+                socket_path,
+                stream,
+                ledger: ExchangeLedger::default(),
+            }),
+            Err(error) => Err(socket_path.unreachable(format!("Unix socket I/O failed: {error}"))),
+        }
+    }
+}
+
+/// A socket names where a failure happened when the answer did not arrive.
+trait Unreaching {
+    fn unreachable(&self, transport_error: String) -> ClientFailure;
+}
+
+impl Unreaching for SocketPath {
+    fn unreachable(&self, transport_error: String) -> ClientFailure {
+        ClientFailure::Unreachable(Unreachable {
+            socket_path: self.clone(),
+            transport_error: TransportError(transport_error),
         })
     }
 }
@@ -154,45 +170,77 @@ impl Connecting for SignalConnection {
 /// Whole frames of signal's exchange layer. Framing is `signal`'s: this
 /// client owns no length prefix of its own.
 trait Framing {
-    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), TransportError>
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), ClientFailure>
     where
         Dispatch<Q>: Signalizable;
-    fn receive<R>(&mut self) -> Result<Delivery<R>, TransportError>
+    fn receive<R>(&mut self) -> Result<Delivery<R>, ClientFailure>
     where
         R: rkyv::Archive,
         Signal<Delivery<R>>: Restorable<Delivery<R>>;
+    fn unexpected(&self) -> ClientFailure;
+    fn concluded(&self, conclusion: Conclusion) -> ClientFailure;
 }
 
 impl Framing for SignalConnection {
-    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), TransportError>
+    fn send<Q>(&mut self, dispatch: &Dispatch<Q>) -> Result<(), ClientFailure>
     where
         Dispatch<Q>: Signalizable,
     {
-        let signal = dispatch.signalize().map_err(|_| TransportError::Archive)?;
-        self.stream.write_frame(&signal, FrameCapacity::default())?;
-        Ok(())
+        let signal = dispatch.signalize().map_err(|_| {
+            self.socket_path
+                .unreachable("Signal archive validation failed".to_owned())
+        })?;
+        self.stream
+            .write_frame(&signal, FrameCapacity::default())
+            .map_err(|error| {
+                self.socket_path
+                    .unreachable(format!("Signal frame: {error}"))
+            })
     }
 
-    fn receive<R>(&mut self) -> Result<Delivery<R>, TransportError>
+    fn receive<R>(&mut self) -> Result<Delivery<R>, ClientFailure>
     where
         R: rkyv::Archive,
         Signal<Delivery<R>>: Restorable<Delivery<R>>,
     {
-        let body = self.stream.read_frame(FrameCapacity::default())?;
+        let body = self
+            .stream
+            .read_frame(FrameCapacity::default())
+            .map_err(|error| {
+                self.socket_path
+                    .unreachable(format!("Signal frame: {error}"))
+            })?;
         Signal::<Delivery<R>>::from(Vec::from(body))
             .restore()
-            .map_err(|_| TransportError::Archive)
+            .map_err(|_| {
+                self.socket_path
+                    .unreachable("Signal archive validation failed".to_owned())
+            })
+    }
+
+    fn unexpected(&self) -> ClientFailure {
+        self.socket_path
+            .unreachable("the Nexus sent a frame for no exchange this client opened".to_owned())
+    }
+
+    fn concluded(&self, conclusion: Conclusion) -> ClientFailure {
+        match conclusion {
+            Conclusion::Faulted(fault) => ClientFailure::ExchangeFaulted(fault),
+            Conclusion::Completed => self
+                .socket_path
+                .unreachable("the exchange ended without an answer".to_owned()),
+        }
     }
 }
 
 trait Asking {
-    /// Greet once, open one exchange with the query, and read its answer.
+    /// Greet once, open one exchange with the input, and read its answer.
     ///
     /// Exactly one answer is read even where the Nexus would go on writing:
     /// an `Observe` opens a stream there. A CLI that takes one argument and
     /// prints one value ends at the state on open; closing the connection is
     /// how it leaves the stream.
-    fn ask<Q, R>(&mut self, query: Q) -> Result<R, TransportError>
+    fn ask<Q, R>(&mut self, input: Q) -> Result<R, ClientFailure>
     where
         Q: Contracted,
         Dispatch<Q>: Signalizable,
@@ -201,7 +249,7 @@ trait Asking {
 }
 
 impl Asking for SignalConnection {
-    fn ask<Q, R>(&mut self, query: Q) -> Result<R, TransportError>
+    fn ask<Q, R>(&mut self, input: Q) -> Result<R, ClientFailure>
     where
         Q: Contracted,
         Dispatch<Q>: Signalizable,
@@ -213,13 +261,15 @@ impl Asking for SignalConnection {
             Delivery::Greeted(HandshakeReceipt::Greeted(digest))
                 if digest == Q::contract_digest() =>
             {
-                self.ledger.greet().map_err(TransportError::Faulted)?
+                self.ledger
+                    .greet()
+                    .map_err(ClientFailure::ExchangeFaulted)?
             }
             Delivery::Greeted(HandshakeReceipt::GreetingRefused(rejection)) => {
-                return Err(TransportError::Refused(rejection));
+                return Err(ClientFailure::GreetingRefused(rejection));
             }
             Delivery::Greeted(HandshakeReceipt::Greeted(_)) => {
-                return Err(TransportError::Unexpected);
+                return Err(self.unexpected());
             }
             // A socket that will not admit this peer says so unprompted, as
             // an answer against the connection itself.
@@ -227,13 +277,16 @@ impl Asking for SignalConnection {
                 return Ok(answer.response);
             }
             Delivery::End(ending) if ending.is_connection_wide() => {
-                return Err(ending.conclusion.into());
+                return Err(self.concluded(ending.conclusion));
             }
-            Delivery::End(_) => return Err(TransportError::Unexpected),
-            Delivery::Answer(_) => return Err(TransportError::Unexpected),
+            Delivery::End(_) => return Err(self.unexpected()),
+            Delivery::Answer(_) => return Err(self.unexpected()),
         }
-        let exchange = self.ledger.open().map_err(TransportError::Faulted)?;
-        self.send(&Dispatch::Open(Opening { exchange, query }))?;
+        let exchange = self.ledger.open().map_err(ClientFailure::ExchangeFaulted)?;
+        self.send(&Dispatch::Open(Opening {
+            exchange,
+            query: input,
+        }))?;
         match self.receive::<R>()? {
             Delivery::Answer(answer)
                 if answer.exchange() == exchange || answer.is_connection_wide() =>
@@ -243,39 +296,12 @@ impl Asking for SignalConnection {
             Delivery::End(ending)
                 if ending.exchange() == exchange || ending.is_connection_wide() =>
             {
-                Err(ending.conclusion.into())
+                Err(self.concluded(ending.conclusion))
             }
-            Delivery::End(_) => Err(TransportError::Unexpected),
-            Delivery::Answer(_) | Delivery::Greeted(_) => Err(TransportError::Unexpected),
+            Delivery::End(_) => Err(self.unexpected()),
+            Delivery::Answer(_) | Delivery::Greeted(_) => Err(self.unexpected()),
         }
     }
-}
-
-impl From<Conclusion> for TransportError {
-    fn from(conclusion: Conclusion) -> Self {
-        match conclusion {
-            Conclusion::Faulted(fault) => Self::Faulted(fault),
-            Conclusion::Completed => Self::Unanswered,
-        }
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum TransportError {
-    #[error("Unix socket I/O failed: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Signal frame: {0}")]
-    Frame(#[from] signal::FrameError),
-    #[error("Signal archive validation failed")]
-    Archive,
-    #[error("the Nexus refused the greeting: {0:?}")]
-    Refused(HandshakeRejection),
-    #[error("the exchange ended with a fault: {0:?}")]
-    Faulted(ExchangeFault),
-    #[error("the exchange ended without an answer")]
-    Unanswered,
-    #[error("the Nexus sent a frame for no exchange this client opened")]
-    Unexpected,
 }
 
 fn main() -> ExitCode {

@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use meta_signal_orchestrate::{Query, Response};
+use meta_signal_orchestrate::{Input, Output};
 use signal::{
     Answer, ContractDigest, Contracted, Delivery, Dispatch, Ending, ExchangeFault, ExchangeId,
     FrameCapacity, FrameError, FrameReading, FrameWriting, HandshakeReceipt, HandshakeRejection,
@@ -45,8 +45,8 @@ trait CreatesClientHarness: Sized {
     fn invoke(&self, argument: Option<&str>) -> Output;
     fn invoke_os(&self, argument: Option<&OsStr>) -> Output;
     fn invoke_with_socket(&self, socket: Option<&OsStr>, argument: Option<&OsStr>) -> Output;
-    fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query>;
-    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Query>;
+    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input>;
+    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Input>;
     fn end_greeting_on_an_exchange(&self) -> std::thread::JoinHandle<()>;
     fn refuse_greeting(&self, digest: ContractDigest) -> std::thread::JoinHandle<()>;
     fn greet_with_wrong_digest(&self, digest: ContractDigest) -> std::thread::JoinHandle<bool>;
@@ -54,21 +54,21 @@ trait CreatesClientHarness: Sized {
 
 /// The fixture's side of signal's exchange layer, framed with the shared crate.
 trait Answers {
-    fn dispatched(&mut self) -> Dispatch<Query>;
-    fn deliver(&mut self, delivery: Delivery<Response>);
+    fn dispatched(&mut self) -> Dispatch<Input>;
+    fn deliver(&mut self, delivery: Delivery<Output>);
 }
 
 impl Answers for std::os::unix::net::UnixStream {
-    fn dispatched(&mut self) -> Dispatch<Query> {
+    fn dispatched(&mut self) -> Dispatch<Input> {
         let body = self
             .read_frame(FrameCapacity::default())
             .expect("read a dispatch frame");
-        Signal::<Dispatch<Query>>::from(Vec::from(body))
+        Signal::<Dispatch<Input>>::from(Vec::from(body))
             .restore()
             .expect("restore the dispatch")
     }
 
-    fn deliver(&mut self, delivery: Delivery<Response>) {
+    fn deliver(&mut self, delivery: Delivery<Output>) {
         let signal = delivery.signalize().expect("archive the delivery");
         self.write_frame(&signal, FrameCapacity::default())
             .expect("write the delivery");
@@ -105,7 +105,7 @@ impl CreatesClientHarness for ClientHarness {
         command.output().expect("run meta client")
     }
 
-    fn answer_once(&self, response: Response) -> std::thread::JoinHandle<Query> {
+    fn answer_once(&self, response: Output) -> std::thread::JoinHandle<Input> {
         let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept meta client");
@@ -114,10 +114,10 @@ impl CreatesClientHarness for ClientHarness {
             };
             assert_eq!(
                 greeting,
-                Query::greeting(),
+                Input::greeting(),
                 "the client greets with the digest of the contract it was built from"
             );
-            stream.deliver(Delivery::Greeted(Query::receipt(&greeting)));
+            stream.deliver(Delivery::Greeted(Input::receipt(&greeting)));
             let Dispatch::Open(opening) = stream.dispatched() else {
                 panic!("then opens one exchange");
             };
@@ -129,14 +129,14 @@ impl CreatesClientHarness for ClientHarness {
         })
     }
 
-    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Query> {
+    fn end_query(&self, target: EndTarget) -> std::thread::JoinHandle<Input> {
         let listener = UnixListener::bind(&self.socket).expect("bind meta fixture socket");
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept meta client");
             let Dispatch::Greet(greeting) = stream.dispatched() else {
                 panic!("the client greets before anything else");
             };
-            stream.deliver(Delivery::Greeted(Query::receipt(&greeting)));
+            stream.deliver(Delivery::Greeted(Input::receipt(&greeting)));
             let Dispatch::Open(opening) = stream.dispatched() else {
                 panic!("then opens one exchange");
             };
@@ -237,7 +237,7 @@ fn client_actualizes_datoms_and_textualizes_typed_responses() {
         )),
         meta_socket_path: MetaSocketPath(ConfigurationPath("/tmp/meta.sock".to_owned())),
     };
-    let server = harness.answer_once(Response::Configured(ConfigurationReceipt {
+    let server = harness.answer_once(Output::Configured(ConfigurationReceipt {
         orchestrate_nexus_configuration: configure.clone(),
         meta_configure_done: MetaConfigureDone(true),
     }));
@@ -249,7 +249,7 @@ fn client_actualizes_datoms_and_textualizes_typed_responses() {
     );
     assert_eq!(
         server.join().expect("meta fixture server"),
-        Query::Configure(configure),
+        Input::Configure(configure),
     );
 }
 
@@ -285,7 +285,7 @@ fn a_refused_greeting_is_reported_as_vocabulary() {
 fn a_wrong_greeted_digest_never_opens_an_exchange() {
     let harness = ClientHarness::create();
     let server =
-        harness.greet_with_wrong_digest(ContractDigest(Query::contract_digest().0.wrapping_add(1)));
+        harness.greet_with_wrong_digest(ContractDigest(Input::contract_digest().0.wrapping_add(1)));
     let output = harness.invoke(Some(QUERY));
     assert!(!output.status.success());
     assert!(
@@ -319,7 +319,7 @@ fn an_end_for_no_exchange_the_client_opened_is_unexpected() {
 
 enum EitherEnding {
     Greeting(std::thread::JoinHandle<()>),
-    Query(std::thread::JoinHandle<Query>),
+    Query(std::thread::JoinHandle<Input>),
 }
 
 trait JoinsEnding {

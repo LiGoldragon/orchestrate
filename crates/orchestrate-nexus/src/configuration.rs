@@ -2,28 +2,10 @@
 //!
 //! The lifecycle rule itself is the standard one every Nexus keeps, and it
 //! lives in the `nexus` library; what belongs here is Orchestrate's own
-//! judgement of what a valid configuration is, and the shape of a privileged
-//! configuration transition's outcome.
+//! judgement of what a valid configuration is.
 
-use meta_signal_orchestrate::Response as MetaResponse;
-use signal_orchestrate::{
-    ConfigurationReceipt, ConfigurationRejectionReason, OrchestrateNexusConfiguration,
-};
+use signal_orchestrate::{ConfigurationRejectionReason, OrchestrateNexusConfiguration};
 use std::os::unix::net::SocketAddr;
-
-/// What a privileged configuration transition did.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ConfigurationOutcome {
-    Configured(Configured),
-    Invalid,
-}
-
-/// A privileged transition leaves ordinary Configure either closed or open.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Configured {
-    Closed(ConfigurationReceipt),
-    Reopened(ConfigurationReceipt),
-}
 
 /// A configuration says whether it is one this Nexus can bind.
 pub trait Validates {
@@ -45,28 +27,6 @@ impl Validates for OrchestrateNexusConfiguration {
             Ok(())
         } else {
             Err(ConfigurationRejectionReason::InvalidConfiguration)
-        }
-    }
-}
-
-/// A privileged outcome answers on the meta wire.
-pub trait AnswersMeta {
-    fn meta_response(self) -> MetaResponse;
-}
-
-impl AnswersMeta for ConfigurationOutcome {
-    fn meta_response(self) -> MetaResponse {
-        match self {
-            Self::Configured(Configured::Closed(receipt)) => MetaResponse::Configured(receipt),
-            Self::Configured(Configured::Reopened(receipt)) => {
-                MetaResponse::OrdinaryConfigurationReopened(receipt)
-            }
-            Self::Invalid => MetaResponse::ConfigurationRejected(
-                meta_signal_orchestrate::ConfigurationRejection {
-                    configuration_rejection_reason:
-                        meta_signal_orchestrate::ConfigurationRejectionReason::InvalidConfiguration,
-                },
-            ),
         }
     }
 }

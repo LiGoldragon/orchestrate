@@ -22,14 +22,18 @@ and state locations from XDG roots, persists the configuration on first open,
 and resumes the stored configuration afterward. The ordinary and meta
 listeners share one serialized `OrchestrateStore` owner.
 
-The clients open no database. They actualize one Query from Datom, form the
+The clients open no database. They actualize one Input from Datom, form the
 contract crate's typed Signal, exchange it over one socket, restore a typed
-Response, and textualize it through the open Datom → Protos → text chain.
+Output, and textualize it through the open Datom → Protos → text chain. Every
+failure a client reports is its generated `ClientFailure`, from
+`client.ethos`.
 
 ## Contract boundary
 
-`signal-orchestrate` declares the ordinary Query and Response roots.
-`meta-signal-orchestrate` declares the privileged roots. Generated records use
+`signal-orchestrate` declares the ordinary Input and Output roots, and
+`meta-signal-orchestrate` the privileged ones. Each also generates `Answering`,
+one capability per input, and `impl Answerable for Input`, the dispatch the
+Nexus answers through. Generated records use
 named Rust fields while Datom stays positional. The `signal` crate provides the
 trait-borne `Signalizable`, `ByteViewable`, and `Restorable` operations over a
 typed `Signal<T>`, and the frame that carries them: a four-byte big-endian
@@ -46,7 +50,13 @@ unit of consistency, so it gets one actor, and the only way anything reaches
 the store is a message.
 
 `Message<T>` is implemented once per contract this Nexus speaks: an object
-enters for the effect, and the response follows as an effect of it. That is
+enters for the effect, and the output follows as an effect of it. The handler
+answers through the contract's generated dispatch, `input.answer(&answerer)`:
+`Answerer` bears both contracts' `Answering` over the store, each capability
+one store transition yielding its output's payload or a refusal of its
+contract. A store that fails to commit has no output in either contract, so
+the answerer holds the failure and the handler returns it in place of the
+dispatch's output, which is never sent. That is
 what `Applies<Entering>` used to name in this repository; Kameo's `Message`
 is the same kind from the library the actor layer already is, so it is not
 named twice. `Attending` carries the other half — a subscriber receives the
@@ -83,7 +93,7 @@ bearing traits, generic over the contract's query root:
   its ceiling, the faults for a reused or unknown identifier — plus the task
   feeding each subscription, so `Abandon` and a closed connection stop the
   work done for it.
-- `SocketContract`, on `OrdinaryQuery` and `MetaQuery`, says what opening an
+- `SocketContract`, on `OrdinaryInput` and `MetaInput`, says what opening an
   exchange produces: `Opened::Answered`, or `Opened::Streaming` with the state
   on open and the `Announcements` that follow it.
 - `Inbound` reads frames as a task of its own, because a frame read is not
@@ -94,15 +104,15 @@ bearing traits, generic over the contract's query root:
 
 What separates the two doors is not the actor: it is the message type the
 session behind each can construct. A session serving the ordinary contract can
-only ever build an `OrdinaryQuery`, and the meta contract's operations are
+only ever build an `OrdinaryInput`, and the meta contract's operations are
 unreachable from it. Authority is therefore checked by the type system rather
 than by a runtime branch.
 
 The same rule decides what a refused peer is told: unprompted, as an answer
 against the connection rather than an exchange. A refusal is a value of the
 contract the socket bears — a frame written on a socket must be one its peer
-can restore — so `Refusing` is implemented on the response types. The meta
-response names the peer; the ordinary response has nothing to name it with,
+can restore — so `Refusing` is implemented on the output types. The meta
+output names the peer; the ordinary output has nothing to name it with,
 because the ordinary authority admits whoever the filesystem let through and
 so never refuses.
 
@@ -157,8 +167,14 @@ next process's to take.
 - the standard Nexus metadata tree — the desired configuration together with
   whether the privileged Configure was ever done, held in
   `nexus::ConfigurationState`, whose lifecycle rule is the shared one;
-- one row per active Lock;
+- one row per active Lock, the contract's `HeldLock` stored whole;
 - one monotonic next-Lock-ID row.
+
+The records are declared in `crates/orchestrate-nexus/memory.ethos`, a Memory
+root, and generated into `src/memory.rs` by ethos-zero; `build.rs` fails the
+build when the committed Rust is not what the file generates. The keys, the
+families and the open that declares them are hand-written in
+`store::record`.
 
 Every family the store keeps is declared to the engine's open
 (`DeclaresOrchestrateFamilies`), so the layout stamp, the versioning policy
@@ -167,9 +183,10 @@ a family, or a crash during it, leaves the store as it was. Lock acquisition
 reads only the held Locks the request conflicts with, through a Filter read
 plan whose predicate is the normalized request itself.
 
-The public contract types are not persisted directly. Stable storage records
-hold plain named fields, so wire generation changes do not silently redefine
-the database layout.
+A Lock is stored as the contract's own `HeldLock`, so a change to `HeldLock`
+in `signal-orchestrate` is a change to the store. `tests/memory_representation.rs`
+holds every record to the bytes the 0.38.0 hand-written record of its family
+wrote, so such a change fails there before it reaches a store.
 
 ## Cutover boundary
 

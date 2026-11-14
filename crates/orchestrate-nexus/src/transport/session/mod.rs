@@ -164,7 +164,7 @@ struct Exchanges<Q: SocketContract> {
     writing: OwnedWriteHalf,
     gate: GreetingGate<Q>,
     ledger: SessionLedger,
-    fed: mpsc::Sender<Delivery<Q::Response>>,
+    fed: mpsc::Sender<Delivery<Q::Output>>,
     core: ActorRef<NexusCore>,
     listening: AbortHandle,
 }
@@ -192,12 +192,12 @@ trait Delivering<R> {
     }
 }
 
-impl<Q> Delivering<Q::Response> for Exchanges<Q>
+impl<Q> Delivering<Q::Output> for Exchanges<Q>
 where
     Q: SocketContract,
-    Delivery<Q::Response>: Signalizable,
+    Delivery<Q::Output>: Signalizable,
 {
-    async fn deliver(&mut self, delivery: &Delivery<Q::Response>) -> Result<(), TransportError> {
+    async fn deliver(&mut self, delivery: &Delivery<Q::Output>) -> Result<(), TransportError> {
         let signal = delivery.signalize().map_err(|_| TransportError::Archive)?;
         self.writing
             .write_frame(&signal, FrameCapacity::default())
@@ -210,16 +210,13 @@ where
 /// change a subscription's feeder hands it.
 trait Dispatching<Q: SocketContract> {
     async fn dispatched(&mut self, dispatch: Dispatch<Q>) -> Result<Continuation, TransportError>;
-    async fn fed(
-        &mut self,
-        delivery: Delivery<Q::Response>,
-    ) -> Result<Continuation, TransportError>;
+    async fn fed(&mut self, delivery: Delivery<Q::Output>) -> Result<Continuation, TransportError>;
 }
 
 impl<Q> Dispatching<Q> for Exchanges<Q>
 where
     Q: SocketContract,
-    Delivery<Q::Response>: Signalizable,
+    Delivery<Q::Output>: Signalizable,
 {
     async fn dispatched(&mut self, dispatch: Dispatch<Q>) -> Result<Continuation, TransportError> {
         match dispatch {
@@ -288,10 +285,7 @@ where
         }
     }
 
-    async fn fed(
-        &mut self,
-        delivery: Delivery<Q::Response>,
-    ) -> Result<Continuation, TransportError> {
+    async fn fed(&mut self, delivery: Delivery<Q::Output>) -> Result<Continuation, TransportError> {
         let exchange = match &delivery {
             Delivery::Answer(answer) => answer.exchange(),
             Delivery::End(ending) => ending.exchange(),
@@ -332,14 +326,14 @@ trait Admitting {
 impl<Q> Admitting for Session<Q>
 where
     Q: SocketContract,
-    Delivery<Q::Response>: Signalizable,
+    Delivery<Q::Output>: Signalizable,
 {
     async fn admitted(&mut self) -> Result<bool, TransportError> {
         let peer_user = self.stream.peer_user()?;
         if self.authority.admits(peer_user, self.owner.user()) {
             return Ok(true);
         }
-        if let Some(response) = Q::Response::peer_refusal(peer_user) {
+        if let Some(response) = Q::Output::peer_refusal(peer_user) {
             let refusal = Delivery::Answer(Answer {
                 exchange: CONNECTION_EXCHANGE,
                 response,
@@ -363,7 +357,7 @@ impl<Q> ServesConnection for Session<Q>
 where
     Q: SocketContract + rkyv::Archive,
     Signal<Dispatch<Q>>: Restorable<Dispatch<Q>>,
-    Delivery<Q::Response>: Signalizable,
+    Delivery<Q::Output>: Signalizable,
 {
     async fn serve(mut self, core: ActorRef<NexusCore>) -> Result<(), TransportError> {
         if !self.admitted().await? {

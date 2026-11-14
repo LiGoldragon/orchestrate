@@ -6,14 +6,14 @@ use signal_orchestrate::{
 };
 use std::path::Path;
 
-use meta_signal_orchestrate::{Query as MetaQuery, Response as MetaResponse};
+use meta_signal_orchestrate::{Input as MetaInput, Output as MetaOutput};
 use orchestrate_nexus::{
     OpensStore, OrchestrateStore,
     core::{FoundedCore, Founding},
 };
 use signal_orchestrate::{
     ConfigurationReceipt, ConfigurationRejection, ConfigurationRejectionReason,
-    OrchestrateNexusConfiguration, Query as OrdinaryQuery, Response as OrdinaryResponse,
+    Input as OrdinaryInput, OrchestrateNexusConfiguration, Output as OrdinaryOutput,
 };
 
 trait Defaults {
@@ -61,10 +61,10 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     assert_eq!(
         founded
             .core()
-            .ask(OrdinaryQuery::Configure(ordinary.clone()))
+            .ask(OrdinaryInput::Configure(ordinary.clone()))
             .await
             .expect("ordinary Configure on a fresh store"),
-        OrdinaryResponse::ConfigurationAccepted(ConfigurationReceipt {
+        OrdinaryOutput::ConfigurationAccepted(ConfigurationReceipt {
             orchestrate_nexus_configuration: ordinary,
             meta_configure_done: MetaConfigureDone(false),
         }),
@@ -74,10 +74,10 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     assert_eq!(
         founded
             .core()
-            .ask(MetaQuery::Configure(privileged.clone()))
+            .ask(MetaInput::Configure(privileged.clone()))
             .await
             .expect("privileged Configure"),
-        MetaResponse::Configured(ConfigurationReceipt {
+        MetaOutput::Configured(ConfigurationReceipt {
             orchestrate_nexus_configuration: privileged.clone(),
             meta_configure_done: MetaConfigureDone(true),
         }),
@@ -86,12 +86,12 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     assert_eq!(
         founded
             .core()
-            .ask(OrdinaryQuery::Configure(
+            .ask(OrdinaryInput::Configure(
                 directory.path().socket_paths("refused")
             ))
             .await
             .expect("ordinary Configure after the privileged one"),
-        OrdinaryResponse::ConfigurationRefused(ConfigurationRejection {
+        OrdinaryOutput::ConfigurationRefused(ConfigurationRejection {
             configuration_rejection_reason: ConfigurationRejectionReason::MetaConfigureOccurred,
         }),
     );
@@ -99,10 +99,10 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     assert_eq!(
         founded
             .core()
-            .ask(MetaQuery::ReverseMetaConfiguration)
+            .ask(MetaInput::ReverseMetaConfiguration)
             .await
             .expect("reverse"),
-        MetaResponse::OrdinaryConfigurationReopened(ConfigurationReceipt {
+        MetaOutput::OrdinaryConfigurationReopened(ConfigurationReceipt {
             orchestrate_nexus_configuration: privileged,
             meta_configure_done: MetaConfigureDone(false),
         }),
@@ -111,10 +111,10 @@ async fn ordinary_configure_is_open_until_the_privileged_surface_closes_it() {
     assert_eq!(
         founded
             .core()
-            .ask(OrdinaryQuery::Configure(reopened.clone()))
+            .ask(OrdinaryInput::Configure(reopened.clone()))
             .await
             .expect("ordinary Configure after reversal"),
-        OrdinaryResponse::ConfigurationAccepted(ConfigurationReceipt {
+        OrdinaryOutput::ConfigurationAccepted(ConfigurationReceipt {
             orchestrate_nexus_configuration: reopened,
             meta_configure_done: MetaConfigureDone(false),
         }),
@@ -132,7 +132,7 @@ async fn whether_the_privileged_configure_occurred_survives_a_restart() {
     let founded = FoundedCore::found(store);
     founded
         .core()
-        .ask(MetaQuery::Configure(privileged.clone()))
+        .ask(MetaInput::Configure(privileged.clone()))
         .await
         .expect("privileged Configure");
     // The core owns the store, so the store is released when the core stops
@@ -150,12 +150,12 @@ async fn whether_the_privileged_configure_occurred_survives_a_restart() {
     assert_eq!(
         founded
             .core()
-            .ask(OrdinaryQuery::Configure(
+            .ask(OrdinaryInput::Configure(
                 directory.path().socket_paths("refused")
             ))
             .await
             .expect("ordinary Configure after restart"),
-        OrdinaryResponse::ConfigurationRefused(ConfigurationRejection {
+        OrdinaryOutput::ConfigurationRefused(ConfigurationRejection {
             configuration_rejection_reason: ConfigurationRejectionReason::MetaConfigureOccurred,
         }),
         "the record that the privileged Configure occurred is durable"
@@ -175,20 +175,20 @@ async fn an_unbindable_configuration_is_refused_on_both_surfaces() {
     assert_eq!(
         founded
             .core()
-            .ask(OrdinaryQuery::Configure(invalid.clone()))
+            .ask(OrdinaryInput::Configure(invalid.clone()))
             .await
             .expect("ordinary refusal"),
-        OrdinaryResponse::ConfigurationRefused(ConfigurationRejection {
+        OrdinaryOutput::ConfigurationRefused(ConfigurationRejection {
             configuration_rejection_reason: ConfigurationRejectionReason::InvalidConfiguration,
         }),
     );
     assert_eq!(
         founded
             .core()
-            .ask(MetaQuery::Configure(invalid))
+            .ask(MetaInput::Configure(invalid))
             .await
             .expect("privileged refusal"),
-        MetaResponse::ConfigurationRejected(meta_signal_orchestrate::ConfigurationRejection {
+        MetaOutput::ConfigurationRejected(meta_signal_orchestrate::ConfigurationRejection {
             configuration_rejection_reason:
                 meta_signal_orchestrate::ConfigurationRejectionReason::InvalidConfiguration,
         }),
